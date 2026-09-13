@@ -12,6 +12,7 @@ public sealed class NavigationWalkControllerTests
     private const float Frame = 1f / 30f;
     private const uint Target = 0x50000001u;
     private const uint Other = 0x50000002u;
+    private const uint Door = 0x7A000001u;
 
     [Fact]
     public void AWalkIsPlannedWalkedToItsGoalAndEndsFacingIt()
@@ -25,10 +26,9 @@ public sealed class NavigationWalkControllerTests
 
         Assert.Equal(sequence, report.Sequence);
         Assert.Equal(NavigationWalkState.Arrived, report.State);
-        Assert.InRange(
-            Vector2.Distance(body.Flat, new Vector2(60f, 75f)),
-            0f,
-            NavigationWalkController.DefaultArrivalMeters + 0.75f);
+        float left = Vector2.Distance(body.Flat, new Vector2(60f, 75f));
+        Assert.InRange(left, 0f, NavigationWalkController.DefaultArrivalMeters + 0.75f);
+        Assert.Equal(left, report.RemainingMeters, 1);
         Assert.False(body.Travelling);
         Assert.InRange(MathF.Abs(body.HeadingErrorTo(new Vector2(60f, 75f))), 0f, 10.5f);
     }
@@ -60,6 +60,7 @@ public sealed class NavigationWalkControllerTests
         walk.Tick();
 
         Assert.Equal(NavigationWalkState.Stopped, walk.Report.State);
+        Assert.Equal(150f - body.Position.Y, walk.Report.RemainingMeters, 1);
         Assert.False(body.Travelling);
         Assert.False(walk.IsBusy);
     }
@@ -81,17 +82,39 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
-    public void ACharacterThatCannotMovePlansAgainAndThenGivesUp()
+    public void ACharacterThatCannotMovePlansAgainThenGivesUpNamingWhatBlockedIt()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 0f)) { Stuck = true };
-        var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(40f, 150f, 0f) });
+        var goals = new Goals
+        {
+            [Target] = new Vector3(40f, 150f, 0f),
+            Blocker = new NavigationBlocker(Door, "Door", IsClosedDoor: true),
+        };
+        var walk = new NavigationWalkController(FlatWorld(), body, goals);
 
         walk.WalkTo(Target);
         NavigationWalkReport report = RunUntilSettled(walk, body);
 
         Assert.Equal(NavigationWalkState.Blocked, report.State);
         Assert.Equal(NavigationWalkController.MaximumReplans, report.Replans);
+        Assert.Equal(Door, report.BlockedByObjectId);
+        Assert.Contains("a closed door, Door (0x7A000001)", report.Reason);
+        Assert.Equal(110f, report.RemainingMeters, 1);
         Assert.False(body.Travelling);
+    }
+
+    [Fact]
+    public void AWalkPlansAroundTheSpotWhereItWasBlocked()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f)) { Obstacle = (new Vector2(40f, 60f), 0.3f) };
+        var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(40f, 80f, 0f) });
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.InRange(report.Replans, 1, NavigationWalkController.MaximumReplans);
+        Assert.InRange(Vector2.Distance(body.Flat, new Vector2(40f, 80f)), 0f, NavigationWalkController.DefaultArrivalMeters + 0.75f);
     }
 
     [Fact]
@@ -112,7 +135,7 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
-    public void AnObjectTheClientCannotPlaceHasNoRoute()
+    public void AnObjectTheClientCannotPlaceHasNoRouteAndNoDistance()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
         var walk = new NavigationWalkController(FlatWorld(), body, new Goals());
@@ -122,6 +145,7 @@ public sealed class NavigationWalkControllerTests
 
         Assert.Equal(NavigationWalkState.NoRoute, walk.Report.State);
         Assert.Contains("0x50000002", walk.Report.Reason);
+        Assert.True(float.IsNaN(walk.Report.RemainingMeters));
     }
 
     [Fact]
@@ -134,6 +158,7 @@ public sealed class NavigationWalkControllerTests
         walk.Tick();
 
         Assert.Equal(NavigationWalkState.NoRoute, walk.Report.State);
+        Assert.Equal(460f, walk.Report.RemainingMeters, 1);
         Assert.Equal(0, body.MovesBegun);
     }
 
@@ -199,20 +224,34 @@ public sealed class NavigationWalkControllerTests
 
     private sealed class Goals : Dictionary<uint, Vector3>, INavigationGoalSource
     {
+        public NavigationBlocker? Blocker { get; init; }
+
         public bool TryLocate(uint objectId, out Vector3 position) => TryGetValue(objectId, out position);
+
+        public bool TryFindBlocker(Vector3 position, float radius, out NavigationBlocker blocker)
+        {
+            blocker = Blocker ?? default;
+            return Blocker is not null;
+        }
     }
 
-    /// <summary>A body that carries out scripted moves the way the client does, at fixed speeds.</summary>
+    /// <summary>
+    /// A body that carries out scripted moves the way the client does, at fixed
+    /// speeds, sliding off a round obstacle and reporting a move blocked once it
+    /// stops making progress.
+    /// </summary>
     private sealed class SimulatedBody : INavigationWalkBody
     {
         private const float RunSpeed = 4f;
         private const float WalkSpeed = 1.5f;
         private const float TurnSpeed = 180f;
+        private const float StallSeconds = 1.5f;
 
         private long _sequence;
         private RuntimeMoveChannelSnapshot _travel;
         private RuntimeMoveChannelSnapshot _turn;
         private float _turnRemaining;
+        private float _stalledSeconds;
 
         public SimulatedBody(Vector3 position) => Position = position;
 
@@ -221,6 +260,8 @@ public sealed class NavigationWalkControllerTests
         public float Heading { get; private set; }
 
         public bool Stuck { get; init; }
+
+        public (Vector2 Centre, float Radius)? Obstacle { get; init; }
 
         public int MovesBegun { get; private set; }
 
@@ -251,6 +292,7 @@ public sealed class NavigationWalkControllerTests
             else
             {
                 _travel = begun;
+                _stalledSeconds = 0f;
             }
             return true;
         }
@@ -298,13 +340,31 @@ public sealed class NavigationWalkControllerTests
             }
             if (_travel.State != RuntimeScriptedMoveState.Moving)
                 return;
+
             float speed = _travel.Request.Pace == RuntimeMovePace.Run ? RunSpeed : WalkSpeed;
             float radians = Heading * MathF.PI / 180f;
-            if (!Stuck)
-                Position += new Vector3(MathF.Sin(radians), MathF.Cos(radians), 0f) * speed * seconds;
+            Vector3 intended = Position + (new Vector3(MathF.Sin(radians), MathF.Cos(radians), 0f) * speed * seconds);
+            Vector3 next = Stuck ? Position : SlideOffObstacle(intended);
+            float moved = Vector2.Distance(new Vector2(next.X, next.Y), Flat);
+            Position = next;
+            _stalledSeconds = moved < speed * seconds * 0.25f ? _stalledSeconds + seconds : 0f;
             _travel = _travel with { ElapsedSeconds = _travel.ElapsedSeconds + seconds };
-            if (Stuck && _travel.ElapsedSeconds > 1.5f)
+            if (_stalledSeconds > StallSeconds)
                 _travel = _travel with { State = RuntimeScriptedMoveState.Blocked };
+        }
+
+        private Vector3 SlideOffObstacle(Vector3 intended)
+        {
+            if (Obstacle is not { } obstacle)
+                return intended;
+            Vector2 offset = new Vector2(intended.X, intended.Y) - obstacle.Centre;
+            float distance = offset.Length();
+            if (distance >= obstacle.Radius)
+                return intended;
+            Vector2 pushed = distance > 1e-4f
+                ? obstacle.Centre + (offset / distance * obstacle.Radius)
+                : Flat;
+            return new Vector3(pushed, intended.Z);
         }
     }
 }

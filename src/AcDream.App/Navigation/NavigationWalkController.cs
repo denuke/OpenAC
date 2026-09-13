@@ -38,6 +38,11 @@ internal enum NavigationWalkState
 /// <summary>
 /// Where the most recent walk or route request stands. <paramref name="Sequence"/>
 /// grows by one for every request, so a caller can tell its own from a later one.
+/// <paramref name="RemainingMeters"/> is the length of route left while the walk
+/// goes on; once it has ended, the straight-line distance from the character to
+/// the goal, or NaN when that is unknown. <paramref name="BlockedByObjectId"/> is
+/// the server object beside the spot where the walk last stopped making progress,
+/// or zero.
 /// </summary>
 internal readonly record struct NavigationWalkReport(
     long Sequence,
@@ -45,7 +50,8 @@ internal readonly record struct NavigationWalkReport(
     uint ObjectId,
     float RemainingMeters,
     int Replans,
-    string Reason);
+    string Reason,
+    uint BlockedByObjectId = 0u);
 
 /// <summary>The local player's body on one frame, as a walk sees it.</summary>
 internal readonly record struct NavigationWalkBodySample(
@@ -54,6 +60,9 @@ internal readonly record struct NavigationWalkBodySample(
     NavBody Body,
     RuntimeScriptedMoveSnapshot Moves,
     bool InPortalSpace);
+
+/// <summary>A server object standing where a walk stopped making progress.</summary>
+internal readonly record struct NavigationBlocker(uint ObjectId, string Name, bool IsClosedDoor);
 
 /// <summary>The local player's body, as a walk samples and moves it.</summary>
 internal interface INavigationWalkBody
@@ -66,10 +75,20 @@ internal interface INavigationWalkBody
     bool StopMove(RuntimeMoveChannel channel);
 }
 
-/// <summary>Where objects stand in the physics world.</summary>
+/// <summary>Where objects stand in the physics world, and what stands in a walk's way.</summary>
 internal interface INavigationGoalSource
 {
     bool TryLocate(uint objectId, out Vector3 position);
+
+    /// <summary>
+    /// The server object, such as a closed door, whose edge comes nearest
+    /// <paramref name="position"/> within <paramref name="radius"/>.
+    /// </summary>
+    bool TryFindBlocker(Vector3 position, float radius, out NavigationBlocker blocker)
+    {
+        blocker = default;
+        return false;
+    }
 }
 
 /// <summary>
@@ -77,7 +96,8 @@ internal interface INavigationGoalSource
 /// and walks the local player along them with scripted moves. A grid covers a
 /// square region around the character and its goal and is built off the update
 /// thread. A walk that stops making progress plans again from where the
-/// character stands, a few times, before it gives up; a walk that arrives turns
+/// character stands, keeping out of the spot where it stuck, a few times before
+/// it gives up and names what stood beside that spot. A walk that arrives turns
 /// the character to face its goal.
 /// </summary>
 internal sealed class NavigationWalkController
@@ -92,6 +112,15 @@ internal sealed class NavigationWalkController
 
     /// <summary>The side of the grid kept around the character while the grid is shown and nothing is planned.</summary>
     internal const float ViewRegion = 128f;
+
+    /// <summary>
+    /// A walk that stops making progress keeps its next plans out of a spot this
+    /// far ahead of the character and this wide, and looks this far around that
+    /// spot for what blocked it.
+    /// </summary>
+    internal const float BlockedSpotAhead = 0.75f;
+    internal const float BlockedSpotRadius = 0.6f;
+    internal const float BlockerSearchRadius = 1.5f;
 
     /// <summary>A grid is used for a route only while the character and the goal are this far inside it.</summary>
     private const float CoverMargin = 8f;
@@ -258,7 +287,7 @@ internal sealed class NavigationWalkController
                 sequence,
                 NavigationWalkState.Planning,
                 objectId,
-                0f,
+                float.NaN,
                 0,
                 "waiting for the next frame");
             return sequence;
@@ -279,10 +308,11 @@ internal sealed class NavigationWalkController
         }
 
         request.Goal = goal;
+        request.GoalKnown = true;
         _active = request;
         Route = null;
         Goal = (goal, request.ArrivalMeters);
-        Publish(request, NavigationWalkState.Planning, "planning", 0f);
+        Publish(request, NavigationWalkState.Planning, "planning", float.NaN);
     }
 
     private void Advance(Request active, in NavigationWalkBodySample sample)
@@ -325,8 +355,9 @@ internal sealed class NavigationWalkController
         Vector3 from = sample.Position;
         Vector3 to = active.Goal;
         float arrival = active.ArrivalMeters;
+        NavAvoidance[] avoid = [.. active.Avoid];
         _routingFor = active;
-        _routing = Task.Run(() => NavRouter.Find(grid, from, to, arrival));
+        _routing = Task.Run(() => NavRouter.Find(grid, from, to, arrival, avoid));
     }
 
     private void Drive(Request active, RuntimeRouteDriver driver, in NavigationWalkBodySample sample)
@@ -350,18 +381,13 @@ internal sealed class NavigationWalkController
                 break;
             case RuntimeRouteDriveState.Arrived:
                 Face(active.Goal, sample);
-                End(active, NavigationWalkState.Arrived, "arrived");
-                break;
-            case RuntimeRouteDriveState.Blocked when active.Replans < MaximumReplans:
-                active.Replans++;
-                active.Builds = 0;
-                _driver = null;
-                string again = $"blocked, planning again ({active.Replans} of {MaximumReplans})";
-                Publish(active, NavigationWalkState.Planning, again, 0f);
-                _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {again}");
+                End(
+                    active,
+                    NavigationWalkState.Arrived,
+                    active.ArrivalReason is { } why ? $"arrived; {why}" : "arrived");
                 break;
             case RuntimeRouteDriveState.Blocked:
-                End(active, NavigationWalkState.Blocked, "the character stopped making progress");
+                Blocked(active, sample);
                 break;
             case RuntimeRouteDriveState.Interrupted:
                 End(active, NavigationWalkState.Interrupted, "the player moved the character");
@@ -370,6 +396,33 @@ internal sealed class NavigationWalkController
                 End(active, NavigationWalkState.Lost, "the character entered portal space");
                 break;
         }
+    }
+
+    /// <summary>
+    /// Keeps the next plans out of the spot ahead of a character that stopped
+    /// making progress, notes what stands beside it, and plans again or gives up.
+    /// </summary>
+    private void Blocked(Request active, in NavigationWalkBodySample sample)
+    {
+        float radians = sample.HeadingDegrees * (MathF.PI / 180f);
+        Vector3 spot = sample.Position
+            + (new Vector3(MathF.Sin(radians), MathF.Cos(radians), 0f) * BlockedSpotAhead);
+        active.Avoid.Add(new NavAvoidance(spot, BlockedSpotRadius));
+        active.BlockedBy = _goals.TryFindBlocker(spot, BlockerSearchRadius, out NavigationBlocker blocker)
+            ? blocker
+            : null;
+        if (active.Replans >= MaximumReplans)
+        {
+            End(active, NavigationWalkState.Blocked, BlockedReason(active));
+            return;
+        }
+
+        active.Replans++;
+        active.Builds = 0;
+        _driver = null;
+        string again = $"{BlockedReason(active)}; planning again ({active.Replans} of {MaximumReplans})";
+        Publish(active, NavigationWalkState.Planning, again, float.NaN);
+        _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {again}");
     }
 
     private bool Apply(in RuntimeRouteDriveStep step)
@@ -418,7 +471,10 @@ internal sealed class NavigationWalkController
             _active = null;
             _driver = null;
         }
-        Publish(request, state, reason, 0f);
+        float remaining = request.GoalKnown && _body.TrySample(out NavigationWalkBodySample sample)
+            ? HorizontalDistance(sample.Position, request.Goal)
+            : float.NaN;
+        Publish(request, state, reason, remaining);
         _say?.Invoke($"{(request.Walk ? "Walk" : "Route")} to 0x{request.ObjectId:X8}: {reason}");
     }
 
@@ -434,7 +490,8 @@ internal sealed class NavigationWalkController
                 request.ObjectId,
                 remainingMeters,
                 request.Replans,
-                reason);
+                reason,
+                request.BlockedBy?.ObjectId ?? 0u);
         }
     }
 
@@ -515,7 +572,10 @@ internal sealed class NavigationWalkController
         Route = route;
         if (route.Outcome != NavRouteOutcome.Routed)
         {
-            End(requester, NavigationWalkState.NoRoute, route.Reason);
+            if (requester.Replans > 0)
+                End(requester, NavigationWalkState.Blocked, $"{BlockedReason(requester)}, and no other way around it was found");
+            else
+                End(requester, NavigationWalkState.NoRoute, route.Reason);
             return;
         }
         _say?.Invoke(
@@ -533,9 +593,16 @@ internal sealed class NavigationWalkController
             End(requester, NavigationWalkState.Arrived, "already there");
             return;
         }
+        requester.ArrivalReason = route.Reason == "routed" ? null : route.Reason;
         _driver = new RuntimeRouteDriver(route.Legs);
         Publish(requester, NavigationWalkState.Walking, "walking", route.Length);
     }
+
+    private static string BlockedReason(Request request) =>
+        request.BlockedBy is { } blocker
+            ? $"the character stopped making progress beside {(blocker.IsClosedDoor ? "a closed door, " : string.Empty)}"
+                + $"{blocker.Name} (0x{blocker.ObjectId:X8})"
+            : "the character stopped making progress";
 
     private static float Remaining(RuntimeRouteDriver driver, Vector3 position)
     {
@@ -549,6 +616,9 @@ internal sealed class NavigationWalkController
         }
         return remaining;
     }
+
+    private static float HorizontalDistance(Vector3 from, Vector3 to) =>
+        Vector2.Distance(new Vector2(from.X, from.Y), new Vector2(to.X, to.Y));
 
     private static float Snap(float coordinate) =>
         MathF.Floor(coordinate / NavGrid.DefaultCellSize) * NavGrid.DefaultCellSize;
@@ -574,9 +644,20 @@ internal sealed class NavigationWalkController
 
         public Vector3 Goal { get; set; }
 
+        public bool GoalKnown { get; set; }
+
         public int Replans { get; set; }
 
         /// <summary>Grids built for the current plan.</summary>
         public int Builds { get; set; }
+
+        /// <summary>The spots where the walk stopped making progress, which later plans keep out of.</summary>
+        public List<NavAvoidance> Avoid { get; } = [];
+
+        /// <summary>What stood beside the spot where the walk last stopped making progress.</summary>
+        public NavigationBlocker? BlockedBy { get; set; }
+
+        /// <summary>Why the route ends farther from the goal than the arrival radius, when it does.</summary>
+        public string? ArrivalReason { get; set; }
     }
 }
