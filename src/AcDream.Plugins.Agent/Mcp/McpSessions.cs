@@ -35,5 +35,8 @@ internal sealed class McpSessions
 
     internal bool Remove(string id) => _sessions.TryRemove(id, out _);
 
+    /// <summary>Forgets every session, so no client can resume after the server stops.</summary>
+    internal void Clear() => _sessions.Clear();
+
     internal IReadOnlyList<McpSession> Snapshot() => _sessions.Values.ToArray();
 }

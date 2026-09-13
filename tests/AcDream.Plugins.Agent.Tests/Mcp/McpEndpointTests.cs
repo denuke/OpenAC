@@ -21,6 +21,7 @@ public sealed class McpEndpointTests
         Assert.Equal("2025-03-26", result.GetProperty("protocolVersion").GetString());
         Assert.Equal(McpEndpoint.ServerName, result.GetProperty("serverInfo").GetProperty("name").GetString());
         Assert.True(result.GetProperty("capabilities").TryGetProperty("tools", out _));
+        Assert.False(result.GetProperty("capabilities").TryGetProperty("logging", out _));
     }
 
     [Fact]
@@ -94,6 +95,7 @@ public sealed class McpEndpointTests
     [InlineData("""{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"missing"}}""", JsonRpc.InvalidParams)]
     [InlineData("""{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{}}""", JsonRpc.InvalidParams)]
     [InlineData("""{"jsonrpc":"2.0","id":6,"method":"resources/list"}""", JsonRpc.MethodNotFound)]
+    [InlineData("""{"jsonrpc":"2.0","id":6,"method":"logging/setLevel","params":{"level":"info"}}""", JsonRpc.MethodNotFound)]
     [InlineData("""{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"boom"}}""", JsonRpc.InternalError)]
     public async Task AFailedCallIsAnErrorWithItsCode(string body, int code)
     {
@@ -133,19 +135,18 @@ public sealed class McpEndpointTests
         Assert.Equal(404, response.Status);
     }
 
-    [Fact]
-    public async Task GetOpensAStreamOnlyForEventStreamClients()
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("PUT")]
+    public async Task OnlyPostAndDeleteAreServed(string method)
     {
         var (endpoint, sessions, _) = Build();
         McpSession session = sessions.Create("2025-06-18");
 
-        McpHttpResponse wrong = await Send(endpoint, "GET", session.Id, "application/json");
-        McpHttpResponse stream = await Send(endpoint, "GET", session.Id, "text/event-stream");
+        McpHttpResponse response = await Send(endpoint, method, session.Id, "text/event-stream");
 
-        Assert.Equal(406, wrong.Status);
-        Assert.Equal(200, stream.Status);
-        Assert.Equal("text/event-stream", stream.ContentType);
-        Assert.Same(session, stream.StreamSession);
+        Assert.Equal(405, response.Status);
+        Assert.Contains(response.Headers, header => header.Key == "Allow" && header.Value == "POST, DELETE");
     }
 
     [Fact]

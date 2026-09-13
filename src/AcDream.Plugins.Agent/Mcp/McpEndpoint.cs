@@ -5,8 +5,9 @@ namespace AcDream.Plugins.Agent.Mcp;
 
 /// <summary>
 /// The Model Context Protocol over Streamable HTTP, independent of any socket.
-/// POST carries one JSON-RPC message, GET opens a stream for pushes, and
-/// DELETE ends a session. Only loopback origins are served.
+/// POST carries one JSON-RPC message and DELETE ends a session. There is no
+/// server-initiated stream, so GET is refused as the transport allows. Only
+/// loopback origins are served.
 /// </summary>
 internal sealed class McpEndpoint
 {
@@ -50,11 +51,10 @@ internal sealed class McpEndpoint
         return request.Method.ToUpperInvariant() switch
         {
             "POST" => await PostAsync(request, cancellationToken).ConfigureAwait(false),
-            "GET" => Get(request),
             "DELETE" => Delete(request),
-            _ => Plain(405, "method not allowed") with
+            _ => Plain(405, "this endpoint takes POST, and DELETE to end a session; it offers no event stream") with
             {
-                Headers = [new("Allow", "GET, POST, DELETE")],
+                Headers = [new("Allow", "POST, DELETE")],
             },
         };
     }
@@ -84,7 +84,6 @@ internal sealed class McpEndpoint
         {
             "ping" => JsonRpc.Result(message.Id, new JsonObject()),
             "tools/list" => JsonRpc.Result(message.Id, new JsonObject { ["tools"] = _tools.List() }),
-            "logging/setLevel" => JsonRpc.Result(message.Id, new JsonObject()),
             "tools/call" => await CallAsync(message, session, cancellationToken).ConfigureAwait(false),
             _ => JsonRpc.Error(message.Id, JsonRpc.MethodNotFound,
                 $"method '{message.Method}' is not supported"),
@@ -105,7 +104,6 @@ internal sealed class McpEndpoint
             ["capabilities"] = new JsonObject
             {
                 ["tools"] = new JsonObject { ["listChanged"] = false },
-                ["logging"] = new JsonObject(),
             },
             ["serverInfo"] = new JsonObject
             {
@@ -147,21 +145,6 @@ internal sealed class McpEndpoint
         {
             return JsonRpc.Error(message.Id, JsonRpc.InternalError, $"the tool failed: {error.Message}");
         }
-    }
-
-    private McpHttpResponse Get(McpHttpRequest request)
-    {
-        if (request.Accept is null
-            || !request.Accept.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase))
-        {
-            return Plain(406, "a GET opens an event stream; send Accept: text/event-stream");
-        }
-        if (Session(request, out McpSession? session) is { } refusal)
-            return refusal;
-        return new McpHttpResponse(200, "text/event-stream", null, [])
-        {
-            StreamSession = session,
-        };
     }
 
     private McpHttpResponse Delete(McpHttpRequest request)

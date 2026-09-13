@@ -1,7 +1,10 @@
+using System.Globalization;
+using System.Net.Sockets;
 using AcDream.Plugin.Abstractions;
 using AcDream.Plugins.Agent.Contract;
 using AcDream.Plugins.Agent.Egress;
 using AcDream.Plugins.Agent.Intake;
+using AcDream.Plugins.Agent.Mcp;
 using AcDream.Plugins.Agent.State;
 using AcDream.Plugins.Agent.Verbs;
 
@@ -16,9 +19,13 @@ internal sealed class AgentService : IDisposable
 {
     internal const string Verb = "agent";
     internal const int RetainedRecords = 20_000;
+    internal const int DefaultPort = 31337;
+    internal const string PortSettingKey = "settings/listen-port";
 
     private static readonly string[] HelpLines =
     [
+        "/agent listen [port] - let AI clients on this computer connect over MCP (port 31337 unless given)",
+        "/agent stop - stop letting AI clients connect",
         "/agent status - whether AI clients can connect, and what is recorded",
         "/agent record <path> - write every record to a file, one JSON object per line",
         "/agent record off - stop writing the file",
@@ -31,6 +38,10 @@ internal sealed class AgentService : IDisposable
     private readonly AgentClock _clock = new();
     private readonly StateTracker _state;
     private readonly List<IEventProjection> _events = [];
+    private readonly Func<McpEndpoint, int, IMcpListener> _startListener;
+    private readonly McpSessions _sessions = new();
+    private readonly McpEndpoint _endpoint;
+    private IMcpListener? _listener;
     private IRecordSink? _recording;
     private string? _recordingPath;
     private bool _disposed;
@@ -42,12 +53,14 @@ internal sealed class AgentService : IDisposable
 
     internal AgentService(
         IPluginHost host,
-        Func<string, IRecordSink> openRecording)
+        Func<string, IRecordSink> openRecording,
+        Func<McpEndpoint, int, IMcpListener>? startListener = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(openRecording);
         _host = host;
         _openRecording = openRecording;
+        _startListener = startListener ?? (static (endpoint, port) => McpServer.Start(endpoint, port));
         Ring = new RecordRing(RetainedRecords, RecordKinds.State);
         Publisher = new Publisher(_clock, Ring);
         _state = new StateTracker(Publisher);
@@ -74,6 +87,8 @@ internal sealed class AgentService : IDisposable
         Commands.Register(new VendorVerbs(host, Publisher, Outcomes, _clock));
         Commands.Register(new AttackVerbs(host, Publisher, Outcomes));
         Context = new AgentContext(host, Commands, Ring, Outcomes, _clock, Publisher);
+        Tools = McpTools.Create(Context);
+        _endpoint = new McpEndpoint(_sessions, Tools);
     }
 
     internal RecordRing Ring { get; }
@@ -87,11 +102,17 @@ internal sealed class AgentService : IDisposable
     /// <summary>What consumers such as the MCP tools act and read through.</summary>
     internal AgentContext Context { get; }
 
+    /// <summary>The MCP tools, run from <see cref="OnTick"/>.</summary>
+    internal McpToolHost Tools { get; }
+
+    /// <summary>Where AI clients connect, or <see langword="null"/> when not listening.</summary>
+    internal string? ListenerUrl => _listener?.Url;
+
     /// <summary>Event polls or rebases that threw; the source is skipped for that tick.</summary>
     internal long EventFailures { get; private set; }
 
     /// <summary>Whether any consumer is attached, so records are worth building.</summary>
-    internal bool IsActive => _recording is not null;
+    internal bool IsActive => _recording is not null || _listener is not null;
 
     internal void HandleCommand(PluginCommand command)
     {
@@ -107,9 +128,13 @@ internal sealed class AgentService : IDisposable
                     Say(line);
                 break;
             case "status":
-                Say(_recording is null
-                    ? "Agent: not listening. Not recording."
-                    : $"Agent: not listening. Recording to {_recordingPath}.");
+                Status();
+                break;
+            case "listen":
+                Listen(rest);
+                break;
+            case "stop":
+                StopListening(announce: true);
                 break;
             case "record":
                 Record(rest);
@@ -144,6 +169,7 @@ internal sealed class AgentService : IDisposable
                 EventFailures++;
             }
         }
+        Tools.Tick();
     }
 
     internal void Add(IEventProjection source)
@@ -157,8 +183,123 @@ internal sealed class AgentService : IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        StopListening(announce: false);
         StopRecording(announce: false);
     }
+
+    private void Status()
+    {
+        string listening = _listener is null
+            ? "not listening"
+            : $"listening on {_listener.Url} with {Sessions(_sessions.Count)}";
+        string recording = _recording is null ? "Not recording." : $"Recording to {_recordingPath}.";
+        Say($"Agent: {listening}. {recording}");
+        if (_listener is not null)
+            Say(ConnectLine(_listener.Url));
+    }
+
+    private void Listen(string argument)
+    {
+        if (_listener is not null)
+        {
+            Say($"Agent: already listening on {_listener.Url}.");
+            return;
+        }
+        int port;
+        if (argument.Length == 0)
+        {
+            port = SavedPort() ?? DefaultPort;
+        }
+        else if (!int.TryParse(argument, NumberStyles.None, CultureInfo.InvariantCulture, out port)
+            || port is < 1 or > 65535)
+        {
+            Say("Usage: /agent listen [port], where the port is a number from 1 to 65535");
+            return;
+        }
+
+        IMcpListener listener;
+        try
+        {
+            listener = _startListener(_endpoint, port);
+        }
+        catch (SocketException error)
+        {
+            Say($"Agent: could not listen on port {port}: {error.Message}");
+            return;
+        }
+
+        if (argument.Length > 0)
+            SavePort(port);
+        bool wasActive = IsActive;
+        _listener = listener;
+        Activated(wasActive);
+        Say($"Agent: listening on {listener.Url}, reachable from this computer only.");
+        Say(ConnectLine(listener.Url));
+    }
+
+    private void StopListening(bool announce)
+    {
+        if (_listener is null)
+        {
+            if (announce)
+                Say("Agent: not listening.");
+            return;
+        }
+        IMcpListener listener = _listener;
+        _listener = null;
+        listener.Dispose();
+        Tools.EndAll("the agent stopped listening");
+        _sessions.Clear();
+        if (announce)
+            Say("Agent: stopped listening.");
+    }
+
+    /// <summary>
+    /// A consumer was attached: state is published again for it, and events
+    /// start from now when nothing was attached before.
+    /// </summary>
+    private void Activated(bool wasActive)
+    {
+        _state.PublishSnapshot(_clock.Now);
+        if (!wasActive)
+            RebaseEvents();
+    }
+
+    private int? SavedPort()
+    {
+        try
+        {
+            string? text = _host.Storage.IsAvailable ? _host.Storage.ReadText(PortSettingKey) : null;
+            return int.TryParse(text?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out int port)
+                && port is >= 1 and <= 65535
+                ? port
+                : null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private void SavePort(int port)
+    {
+        if (!_host.Storage.IsAvailable)
+            return;
+        try
+        {
+            _host.Storage.WriteText(PortSettingKey, port.ToString(CultureInfo.InvariantCulture));
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            _host.Log.Warn($"Agent could not save the listen port: {error.Message}");
+        }
+    }
+
+    private static string ConnectLine(string url) =>
+        $"Agent: connect an AI client with: claude mcp add --transport http openac {url}";
+
+    private static string Sessions(int count) =>
+        count == 1 ? "1 client session" : $"{count} client sessions";
 
     private void Do(string line)
     {
@@ -212,11 +353,11 @@ internal sealed class AgentService : IDisposable
             return;
         }
 
+        bool wasActive = IsActive;
         _recording = sink;
         _recordingPath = path;
         Publisher.Attach(sink);
-        _state.PublishSnapshot(_clock.Now);
-        RebaseEvents();
+        Activated(wasActive);
         Say($"Agent: recording to {path}.");
     }
 
