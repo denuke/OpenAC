@@ -24,6 +24,9 @@ internal static class RecordKinds
     internal const string TargetOutcome = "target-outcome";
     internal const string GoalAccepted = "goal-accepted";
     internal const string GoalResolved = "goal-resolved";
+    internal const string CastSent = "cast-sent";
+    internal const string CastRefused = "cast-refused";
+    internal const string CastOutcome = "cast-outcome";
 
     /// <summary>
     /// Kinds that describe current state. The latest record of each is kept

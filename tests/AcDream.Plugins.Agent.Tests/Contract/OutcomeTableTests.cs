@@ -10,6 +10,7 @@ public sealed class OutcomeTableTests
     {
         { RecordKinds.TargetOutcome, [.. TargetVerbs.OutcomeWords, .. OutcomeCorrelator.OutcomeWords] },
         { RecordKinds.GoalResolved, [.. MotorVerbs.OutcomeWords, .. OutcomeCorrelator.OutcomeWords] },
+        { RecordKinds.CastOutcome, [.. CastVerbs.OutcomeWords, .. OutcomeCorrelator.OutcomeWords] },
     };
 
     [Theory]
