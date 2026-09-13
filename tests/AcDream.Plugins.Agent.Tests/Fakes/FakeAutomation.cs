@@ -15,6 +15,7 @@ internal sealed class FakeAutomation : IAutomationSurface
     public IItemAutomation Items => FakeItems;
     public ILootAutomation Loot => FakeLoot;
     public IEquipmentAutomation Equipment => FakeEquipment;
+    public IProjectileAutomation Projectiles => FakeProjectiles;
     public ILoginAutomation Login => FakeLogin;
 
     internal FakeChat FakeChat { get; } = new();
@@ -27,6 +28,7 @@ internal sealed class FakeAutomation : IAutomationSurface
     internal FakeItems FakeItems { get; } = new();
     internal FakeLoot FakeLoot { get; } = new();
     internal FakeEquipment FakeEquipment { get; } = new();
+    internal FakeProjectiles FakeProjectiles { get; } = new();
     internal FakeLogin FakeLogin { get; } = new();
 }
 
@@ -59,6 +61,29 @@ internal sealed class FakeLogin : ILoginAutomation
     {
         LogOuts++;
         return LogOutStatus;
+    }
+}
+
+/// <summary>Traces every projectile path clear unless a result is set for its object and kind.</summary>
+internal sealed class FakeProjectiles : IProjectileAutomation
+{
+    internal Dictionary<(uint ObjectId, PluginProjectilePathKind Kind), PluginProjectilePathResult> Results { get; } = [];
+    internal List<(uint ObjectId, PluginProjectilePathKind Kind, PluginAttackHeight Aim)> Traced { get; } = [];
+
+    public bool IsAvailable => true;
+
+    public PluginProjectilePathResult EvaluatePath(
+        uint targetObjectId,
+        PluginProjectilePathKind kind,
+        PluginAttackHeight targetHeight,
+        float projectileRadius,
+        float stepDistance,
+        int maximumCollisionChecks)
+    {
+        Traced.Add((targetObjectId, kind, targetHeight));
+        return Results.TryGetValue((targetObjectId, kind), out PluginProjectilePathResult result)
+            ? result
+            : new PluginProjectilePathResult(PluginProjectilePathStatus.Clear);
     }
 }
 

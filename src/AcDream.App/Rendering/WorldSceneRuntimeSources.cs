@@ -95,15 +95,54 @@ internal sealed class RuntimeWorldScenePViewDiagnosticSource :
 internal interface IWorldSceneDebugStateSource
 {
     bool CollisionWireframesVisible { get; }
+
+    bool NavMeshVisible => false;
 }
 
 internal sealed class WorldSceneDebugState : IWorldSceneDebugStateSource
 {
     public bool CollisionWireframesVisible { get; private set; }
 
+    public bool NavMeshVisible { get; private set; }
+
+    /// <summary>Grows by one for every route asked for, so a new request can be told from an old one.</summary>
+    public int NavRouteRequests { get; private set; }
+
+    /// <summary>Grows by one every time the walk key is pressed, to walk to the selection or stop the walk under way.</summary>
+    public int NavWalkRequests { get; private set; }
+
+    /// <summary>Where navigation reports go besides the log, such as an on-screen message.</summary>
+    public Action<string>? NavigationReport { get; set; }
+
     public bool ToggleCollisionWireframes()
     {
         CollisionWireframesVisible = !CollisionWireframesVisible;
         return CollisionWireframesVisible;
+    }
+
+    public bool ToggleNavMesh()
+    {
+        NavMeshVisible = !NavMeshVisible;
+        return NavMeshVisible;
+    }
+
+    /// <summary>Asks for a route to the selected object, showing the navigation grid if it is hidden.</summary>
+    public void RequestNavRoute()
+    {
+        NavMeshVisible = true;
+        NavRouteRequests++;
+    }
+
+    /// <summary>Asks to walk to the selected object, or to stop the walk under way, showing the navigation grid if it is hidden.</summary>
+    public void RequestNavWalk()
+    {
+        NavMeshVisible = true;
+        NavWalkRequests++;
+    }
+
+    public void ReportNavigation(string message)
+    {
+        Console.WriteLine(message);
+        NavigationReport?.Invoke(message);
     }
 }

@@ -1120,6 +1120,7 @@ internal sealed class SessionPlayerCompositionPhase
                 live.WorldState,
                 d.PhysicsEngine),
             d.Log);
+        d.WorldSceneDebugState.NavigationReport = debugToast;
         var runtimeDiagnostics = new RuntimeDiagnosticCommandController(
             d.WorldEnvironment,
             d.WorldSceneDebugState,

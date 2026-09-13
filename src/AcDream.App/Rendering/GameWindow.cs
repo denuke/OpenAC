@@ -1114,6 +1114,8 @@ public sealed class GameWindow :
 
         _frameRootBindings = result.RuntimeBindings;
         _frameGraphPublication = result.FrameGraphPublication;
+        if (result.NavigationWalk is { } navigationWalk)
+            _automation?.BindNavigationWalk(navigationWalk);
     }
 
     private static void PublishCompositionOwner<T>(

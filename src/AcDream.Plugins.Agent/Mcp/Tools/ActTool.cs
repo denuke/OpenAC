@@ -10,7 +10,7 @@ internal sealed class ActTool(AgentContext context) : IMcpTool
         Name,
         "Do something (the only tool that sends)",
         "Runs one command line, such as 'use 0x70000010', 'buy prismatic taper 10', "
-        + "'cast Strength Self VI', 'target nearest monster', 'run forward 60s', 'turn left 10', 'attack', "
+        + "'cast Strength Self VI', 'target nearest monster', 'run forward 60s', 'turn left 10', 'go to target', 'attack', "
         + "'loot list' or 'say hello'. The read tools such as spells, inventory, vendor and nearby "
         + "list the names and ids to use. Returns a handle and a status: pending is not done, so "
         + "call outcome with the handle, or pass waitSeconds, to learn what actually happened. "

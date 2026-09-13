@@ -378,4 +378,13 @@ public enum InputAction
     ToggleCharacterOptionDisableDistanceFog,
     ToggleCharacterOptionShowCloak,
     ToggleCharacterOptionSideBySideVitals,
+
+    /// <summary>Shows or hides the navigation grid around the player (acdream-only).</summary>
+    AcdreamToggleNavMesh,
+
+    /// <summary>Plans a route over the navigation grid to the selected object (acdream-only).</summary>
+    AcdreamNavRouteToSelection,
+
+    /// <summary>Walks the player along a planned route to the selected object, or stops the walk under way (acdream-only).</summary>
+    AcdreamNavWalkToSelection,
 }
