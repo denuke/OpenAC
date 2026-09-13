@@ -9,9 +9,15 @@ internal sealed class FakeAutomation : IAutomationSurface
     public ISpellCatalog Spells => NoOpAutomationSurface.Instance.Spells;
     public IMagicCommands Magic => NoOpAutomationSurface.Instance.Magic;
     public IPluginChat Chat => FakeChat;
+    public INavigationAutomation Navigation => FakeNavigation;
+    public ICombatAutomation Combat => FakeCombat;
+    public IWorldObjectAutomation Objects => FakeObjects;
 
     internal FakeChat FakeChat { get; } = new();
     internal FakeCharacter FakeCharacter { get; } = new();
+    internal FakeNavigation FakeNavigation { get; } = new();
+    internal FakeCombat FakeCombat { get; } = new();
+    internal FakeObjects FakeObjects { get; } = new();
 }
 
 internal sealed class FakeChat : IPluginChat

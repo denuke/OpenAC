@@ -27,6 +27,7 @@ internal sealed class AgentService : IDisposable
     private readonly Func<string, IRecordSink> _openRecording;
     private readonly AgentClock _clock = new();
     private readonly StateTracker _state;
+    private readonly List<IEventProjection> _events = [];
     private IRecordSink? _recording;
     private string? _recordingPath;
     private bool _disposed;
@@ -48,11 +49,20 @@ internal sealed class AgentService : IDisposable
         Publisher = new Publisher(_clock, Ring);
         _state = new StateTracker(Publisher);
         _state.Add(new SessionProjection(host));
+        _state.Add(new BodyProjection(host));
+        _state.Add(new VitalsProjection(host));
+        _state.Add(new StatsProjection(host));
+        _state.Add(new TargetProjection(host));
+        _state.Add(new CombatModeProjection(host));
+        _events.Add(new VitalChangeEvents(host));
     }
 
     internal RecordRing Ring { get; }
 
     internal Publisher Publisher { get; }
+
+    /// <summary>Event polls or rebases that threw; the source is skipped for that tick.</summary>
+    internal long EventFailures { get; private set; }
 
     /// <summary>Whether any consumer is attached, so records are worth building.</summary>
     internal bool IsActive => _recording is not null;
@@ -92,6 +102,23 @@ internal sealed class AgentService : IDisposable
         if (!IsActive)
             return;
         _state.Tick(_clock.Now);
+        foreach (IEventProjection source in _events)
+        {
+            try
+            {
+                source.Poll(Publisher);
+            }
+            catch (Exception)
+            {
+                EventFailures++;
+            }
+        }
+    }
+
+    internal void Add(IEventProjection source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        _events.Add(source);
     }
 
     public void Dispose()
@@ -145,6 +172,7 @@ internal sealed class AgentService : IDisposable
         _recordingPath = path;
         Publisher.Attach(sink);
         _state.PublishSnapshot(_clock.Now);
+        RebaseEvents();
         Say($"Agent: recording to {path}.");
     }
 
@@ -162,6 +190,21 @@ internal sealed class AgentService : IDisposable
         if (announce)
             Say($"Agent: stopped recording to {_recordingPath}.");
         _recordingPath = null;
+    }
+
+    private void RebaseEvents()
+    {
+        foreach (IEventProjection source in _events)
+        {
+            try
+            {
+                source.Rebase();
+            }
+            catch (Exception)
+            {
+                EventFailures++;
+            }
+        }
     }
 
     private void Say(string text) =>

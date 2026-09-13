@@ -8,6 +8,7 @@ internal static class RecordKinds
     internal const string Stats = "stats";
     internal const string Target = "target";
     internal const string CombatMode = "combat-mode";
+    internal const string VitalChanged = "vital-changed";
 
     /// <summary>
     /// Kinds that describe current state. The latest record of each is kept

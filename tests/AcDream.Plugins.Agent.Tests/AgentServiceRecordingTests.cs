@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AcDream.Plugin.Abstractions;
+using AcDream.Plugins.Agent.Contract;
 using AcDream.Plugins.Agent.Tests.Fakes;
 
 namespace AcDream.Plugins.Agent.Tests;
@@ -32,7 +33,9 @@ public sealed class AgentServiceRecordingTests
 
         JsonElement session = Assert.Single(sink.OfKind("session"));
         Assert.Equal("in-world", session.GetProperty("state").GetString());
-        Assert.Equal(1, session.GetProperty("batch").GetProperty("count").GetInt32());
+        Assert.Equal(
+            RecordKinds.State.Count,
+            session.GetProperty("batch").GetProperty("count").GetInt32());
         Assert.Equal(
             $"Agent: recording to {Path.GetFullPath(FullPath)}.",
             host.FakeAutomation.FakeChat.SystemMessages.Last());
