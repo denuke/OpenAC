@@ -203,8 +203,8 @@ public readonly record struct PluginGoToReport(
     string? Reason)
 {
     /// <summary>
-    /// The server object, such as a closed door, beside the spot where the walk
-    /// last stopped making progress, or zero.
+    /// On a walk that ended blocked, the server object, such as a door that would
+    /// not open, beside the spot where it last stopped making progress; otherwise zero.
     /// </summary>
     public uint BlockedByObjectId { get; init; }
 }

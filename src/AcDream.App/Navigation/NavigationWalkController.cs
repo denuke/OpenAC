@@ -40,9 +40,9 @@ internal enum NavigationWalkState
 /// grows by one for every request, so a caller can tell its own from a later one.
 /// <paramref name="RemainingMeters"/> is the length of route left while the walk
 /// goes on; once it has ended, the straight-line distance from the character to
-/// the goal, or NaN when that is unknown. <paramref name="BlockedByObjectId"/> is
-/// the server object beside the spot where the walk last stopped making progress,
-/// or zero.
+/// where the goal stands then, or NaN when that is unknown. On a walk that ended
+/// blocked, <paramref name="BlockedByObjectId"/> is the server object beside the
+/// spot where it last stopped making progress; otherwise it is zero.
 /// </summary>
 internal readonly record struct NavigationWalkReport(
     long Sequence,
@@ -401,7 +401,7 @@ internal sealed class NavigationWalkController
 
         Vector3 from = sample.Position;
         Vector3 to = active.Goal;
-        float arrival = active.ArrivalMeters;
+        float arrival = PlanningRadius(active.ArrivalMeters);
         NavAvoidance[] avoid = [.. active.Avoid];
         _routingFor = active;
         _routing = Task.Run(() => NavRouter.Find(grid, from, to, arrival, avoid));
@@ -434,7 +434,7 @@ internal sealed class NavigationWalkController
                 Publish(active, NavigationWalkState.Walking, "walking", Remaining(driver, sample.Position));
                 break;
             case RuntimeRouteDriveState.Arrived:
-                Face(active.Goal, sample);
+                Face(Locate(active), sample);
                 End(
                     active,
                     NavigationWalkState.Arrived,
@@ -599,7 +599,7 @@ internal sealed class NavigationWalkController
             _driver = null;
         }
         float remaining = request.GoalKnown && _body.TrySample(out NavigationWalkBodySample sample)
-            ? HorizontalDistance(sample.Position, request.Goal)
+            ? HorizontalDistance(sample.Position, Locate(request))
             : float.NaN;
         Publish(request, state, reason, remaining);
         _say?.Invoke($"{(request.Walk ? "Walk" : "Route")} to 0x{request.ObjectId:X8}: {reason}");
@@ -618,7 +618,7 @@ internal sealed class NavigationWalkController
                 remainingMeters,
                 request.Replans,
                 reason,
-                request.BlockedBy?.ObjectId ?? 0u);
+                state == NavigationWalkState.Blocked ? request.BlockedBy?.ObjectId ?? 0u : 0u);
         }
     }
 
@@ -716,7 +716,7 @@ internal sealed class NavigationWalkController
         if (route.Legs.Count < 2)
         {
             if (_body.TrySample(out NavigationWalkBodySample sample))
-                Face(requester.Goal, sample);
+                Face(Locate(requester), sample);
             End(requester, NavigationWalkState.Arrived, "already there");
             return;
         }
@@ -730,6 +730,18 @@ internal sealed class NavigationWalkController
             ? $"the character stopped making progress beside {(blocker.IsClosedDoor ? "a closed door, " : string.Empty)}"
                 + $"{blocker.Name} (0x{blocker.ObjectId:X8})"
             : "the character stopped making progress";
+
+    /// <summary>
+    /// How near the goal a route must end for the character to stop within
+    /// <paramref name="arrivalMeters"/> of it, since the driver counts a leg's end
+    /// as reached a little before the character stands on it.
+    /// </summary>
+    internal static float PlanningRadius(float arrivalMeters) =>
+        MathF.Max(arrivalMeters - RuntimeRouteDriver.ArrivalRadius, NavGrid.DefaultCellSize);
+
+    /// <summary>Where a request's goal stands now, or where it stood when planned once the client has lost it.</summary>
+    private Vector3 Locate(Request request) =>
+        _goals.TryLocate(request.ObjectId, out Vector3 position) ? position : request.Goal;
 
     private static float Remaining(RuntimeRouteDriver driver, Vector3 position)
     {

@@ -27,10 +27,25 @@ public sealed class NavigationWalkControllerTests
         Assert.Equal(sequence, report.Sequence);
         Assert.Equal(NavigationWalkState.Arrived, report.State);
         float left = Vector2.Distance(body.Flat, new Vector2(60f, 75f));
-        Assert.InRange(left, 0f, NavigationWalkController.DefaultArrivalMeters + 0.75f);
+        Assert.InRange(left, 0f, NavigationWalkController.DefaultArrivalMeters + 0.05f);
         Assert.Equal(left, report.RemainingMeters, 1);
         Assert.False(body.Travelling);
         Assert.InRange(MathF.Abs(body.HeadingErrorTo(new Vector2(60f, 75f))), 0f, 10.5f);
+    }
+
+    [Theory]
+    [InlineData(1f)]
+    [InlineData(4f)]
+    public void AWalkEndsWithinTheDistanceItWasAskedToArriveWithin(float arrivalMeters)
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
+        var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(60f, 75f, 0f) });
+
+        walk.WalkTo(Target, arrivalMeters);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.InRange(report.RemainingMeters, 0f, arrivalMeters + 0.05f);
     }
 
     [Fact]
@@ -63,6 +78,23 @@ public sealed class NavigationWalkControllerTests
         Assert.Equal(150f - body.Position.Y, walk.Report.RemainingMeters, 1);
         Assert.False(body.Travelling);
         Assert.False(walk.IsBusy);
+    }
+
+    [Fact]
+    public void WhatIsLeftIsMeasuredToWhereTheObjectStandsWhenTheWalkEnds()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
+        var goals = new Goals { [Target] = new Vector3(40f, 150f, 0f) };
+        var walk = new NavigationWalkController(FlatWorld(), body, goals);
+        walk.WalkTo(Target);
+        RunUntil(walk, body, report => report.State == NavigationWalkState.Walking);
+
+        goals[Target] = new Vector3(40f, 120f, 0f);
+        walk.Stop();
+        walk.Tick(Frame);
+
+        Assert.Equal(NavigationWalkState.Stopped, walk.Report.State);
+        Assert.Equal(120f - body.Position.Y, walk.Report.RemainingMeters, 1);
     }
 
     [Fact]
@@ -107,13 +139,19 @@ public sealed class NavigationWalkControllerTests
     public void AWalkPlansAroundTheSpotWhereItWasBlocked()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 0f)) { Obstacle = (new Vector2(40f, 60f), 0.3f) };
-        var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(40f, 80f, 0f) });
+        var goals = new Goals
+        {
+            [Target] = new Vector3(40f, 80f, 0f),
+            Blocker = new NavigationBlocker(Other, "Barrel", IsClosedDoor: false),
+        };
+        var walk = new NavigationWalkController(FlatWorld(), body, goals);
 
         walk.WalkTo(Target);
         NavigationWalkReport report = RunUntilSettled(walk, body);
 
         Assert.Equal(NavigationWalkState.Arrived, report.State);
         Assert.InRange(report.Replans, 1, NavigationWalkController.MaximumReplans);
+        Assert.Equal(0u, report.BlockedByObjectId);
         Assert.InRange(Vector2.Distance(body.Flat, new Vector2(40f, 80f)), 0f, NavigationWalkController.DefaultArrivalMeters + 0.75f);
     }
 
