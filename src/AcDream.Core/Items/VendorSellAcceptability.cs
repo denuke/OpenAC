@@ -21,6 +21,9 @@ public enum VendorSellRejection
     /// (<c>pc:005d1af2</c>).
     /// </summary>
     TooCheap,
+
+    /// <summary>The item carries its own mark that it cannot be sold.</summary>
+    CannotBeSold,
 }
 
 public static class VendorSellAcceptability
@@ -35,12 +38,15 @@ public static class VendorSellAcceptability
         uint merchandiseItemTypes,
         uint merchandiseMinValue,
         uint merchandiseMaxValue,
-        uint publicWeenieBitfield = 0u)
+        uint publicWeenieBitfield = 0u,
+        bool sellable = true)
     {
         if (!ownedByPlayer)
             return VendorSellRejection.NotOwnedByPlayer;
         if (containedItemCount > 0)
             return VendorSellRejection.None;
+        if (!sellable)
+            return VendorSellRejection.CannotBeSold;
 
         bool retained = (publicWeenieBitfield & (uint)PublicWeenieFlags.Retained) != 0u;
         if ((itemTypeMask & merchandiseItemTypes) == 0u || retained)
@@ -71,6 +77,7 @@ public static class VendorSellAcceptability
         VendorSellRejection.TooCheap => "That item is too cheap to sell here",
         VendorSellRejection.TooValuable => "That item is too valuable to sell here",
         VendorSellRejection.WrongType => "You cannot sell that here",
+        VendorSellRejection.CannotBeSold => "This item cannot be sold",
         _ => "You cannot sell that here",
     };
 }

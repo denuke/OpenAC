@@ -225,4 +225,36 @@ public sealed class VendorSellAcceptabilityTests
     {
         Assert.Null(VendorSellAcceptability.MessageFor(VendorSellRejection.None));
     }
+
+    [Fact]
+    public void AnItemMarkedUnsellableIsRejectedWhateverTheVendorBuys()
+    {
+        VendorSellRejection rejection = VendorSellAcceptability.Evaluate(
+            ownedByPlayer: true,
+            containedItemCount: 0,
+            itemTypeMask: Armor,
+            perUnitValue: 100,
+            merchandiseItemTypes: Armor,
+            merchandiseMinValue: 0u,
+            merchandiseMaxValue: NoLimit,
+            sellable: false);
+
+        Assert.Equal(VendorSellRejection.CannotBeSold, rejection);
+        Assert.Equal("This item cannot be sold", VendorSellAcceptability.MessageFor(rejection));
+    }
+
+    [Fact]
+    public void AnItemWithoutTheMarkSellsAsBefore()
+    {
+        VendorSellRejection rejection = VendorSellAcceptability.Evaluate(
+            ownedByPlayer: true,
+            containedItemCount: 0,
+            itemTypeMask: Armor,
+            perUnitValue: 100,
+            merchandiseItemTypes: Armor,
+            merchandiseMinValue: 0u,
+            merchandiseMaxValue: NoLimit);
+
+        Assert.Equal(VendorSellRejection.None, rejection);
+    }
 }

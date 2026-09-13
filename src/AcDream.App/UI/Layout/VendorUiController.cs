@@ -1610,7 +1610,8 @@ public sealed class VendorUiController : IRetainedPanelController, IItemListDrag
             _vendor.Profile.MerchandiseItemTypes,
             _vendor.Profile.MerchandiseMinValue,
             _vendor.Profile.MerchandiseMaxValue,
-            item.PublicWeenieBitfield ?? 0u);
+            item.PublicWeenieBitfield ?? 0u,
+            sellable: item.Properties.GetBool((uint)PropertyBool.IsSellable, def: true));
 
         if (rejection == VendorSellRejection.None)
         {
