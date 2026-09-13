@@ -334,7 +334,11 @@ internal sealed class FrameRootCompositionPhase
             d.PhysicsEngine,
             new RuntimeNavigationWalkBody(d.PlayerController, d.Runtime.Portal),
             new RuntimeNavigationGoalSource(d.PhysicsEngine, d.Runtime, d.PlayerController),
-            d.WorldSceneDebugState.ReportNavigation);
+            d.WorldSceneDebugState.ReportNavigation,
+            new RuntimeNavigationDoors(
+                d.PhysicsEngine,
+                d.Runtime,
+                guid => interaction.LateBindings.Selection.SendUse(guid)));
         IWorldSceneFramePhase? worldSceneRenderer = null;
         CurrentRenderSceneOracle? currentRenderSceneOracle = null;
         RenderSceneShadowComparisonController? renderSceneShadowComparison = null;

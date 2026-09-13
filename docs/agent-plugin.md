@@ -123,8 +123,9 @@ nearest spot that can, up to 10 m away. When no reachable spot can see it, as
 through a window whose collision fills the opening, the walk ends at the nearest
 reachable spot up to 10 m away and says it has no line of sight. When the character stops making progress,
 the client plans again around the spot where it stuck; a walk that stays blocked
-names what stood beside that spot in `blockedBy`, such as a closed door to `use`
-before trying again. `remaining` is the straight-line distance still to go, and
+names what stood beside that spot in `blockedBy`, such as a door that would not
+open. A walk that meets a closed door on its way opens it first, as a player's
+click would, and goes on once it is open. `remaining` is the straight-line distance still to go, and
 `no-route` means nothing joins the character to the object. `stop`, `cancel` and
 the player's movement keys end a walk. Client
 commands that close the client, kill the character, or change its player-killer

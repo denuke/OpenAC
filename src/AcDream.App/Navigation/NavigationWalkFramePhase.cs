@@ -49,7 +49,7 @@ internal sealed class NavigationWalkFramePhase : IGameplayInputFramePhase
             else if (Selected() is { } target)
                 _walk.WalkTo(target);
         }
-        _walk.Tick();
+        _walk.Tick(timing.SimulationDeltaSeconds);
         _input.Tick(timing);
     }
 

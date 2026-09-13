@@ -139,3 +139,74 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
         return true;
     }
 }
+
+/// <summary>
+/// Doors as the client sees them. A door is closed while its physics still
+/// collides, and using one goes through the client's own use, which walks the
+/// character into the door's use range first.
+/// </summary>
+internal sealed class RuntimeNavigationDoors : INavigationDoors
+{
+    /// <summary>A door more than this far above or below the character is not on its way.</summary>
+    private const float DoorHeightReach = 3f;
+
+    private readonly PhysicsEngine _physics;
+    private readonly GameRuntime _runtime;
+    private readonly Action<uint> _use;
+
+    public RuntimeNavigationDoors(PhysicsEngine physics, GameRuntime runtime, Action<uint> use)
+    {
+        _physics = physics ?? throw new ArgumentNullException(nameof(physics));
+        _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
+        _use = use ?? throw new ArgumentNullException(nameof(use));
+    }
+
+    public bool TryFindClosedDoor(Vector3 from, Vector3 to, float corridor, out NavigationDoor door)
+    {
+        var start = new Vector2(from.X, from.Y);
+        Vector2 along = new Vector2(to.X, to.Y) - start;
+        float lengthSquared = along.LengthSquared();
+        uint nearestId = 0u;
+        float nearestAhead = float.PositiveInfinity;
+        foreach (ShadowEntry entry in _physics.ShadowObjects.AllEntriesForDebug())
+        {
+            if (MathF.Abs(entry.Position.Z - from.Z) > DoorHeightReach
+                || !_runtime.EntityObjects.Entities.TryGetByLocalId(entry.EntityId, out RuntimeEntityRecord record)
+                || record.FinalPhysicsState.HasFlag(PhysicsStateFlags.Ethereal)
+                || !IsDoor(record.ServerGuid))
+            {
+                continue;
+            }
+            var at = new Vector2(entry.Position.X, entry.Position.Y);
+            float t = lengthSquared > 1e-6f ? Vector2.Dot(at - start, along) / lengthSquared : 0f;
+            if (t < 0f)
+                continue;
+            t = MathF.Min(t, 1f);
+            if (Vector2.Distance(at, start + (along * t)) > corridor)
+                continue;
+            float ahead = t * MathF.Sqrt(lengthSquared);
+            if (ahead < nearestAhead)
+            {
+                nearestAhead = ahead;
+                nearestId = record.ServerGuid;
+            }
+        }
+        if (nearestId == 0u)
+        {
+            door = default;
+            return false;
+        }
+        door = new NavigationDoor(nearestId, _runtime.InventoryOwner.Objects.Get(nearestId)?.Name ?? $"0x{nearestId:X8}");
+        return true;
+    }
+
+    public bool IsOpen(uint doorId) =>
+        _runtime.EntityObjects.Entities.TryGetActive(doorId, out RuntimeEntityRecord record)
+        && record.FinalPhysicsState.HasFlag(PhysicsStateFlags.Ethereal);
+
+    public void Use(uint doorId) => _use(doorId);
+
+    private bool IsDoor(uint objectId) =>
+        _runtime.InventoryOwner.Objects.Get(objectId) is { } item
+        && ((PublicWeenieFlags)(item.PublicWeenieBitfield ?? 0u) & PublicWeenieFlags.Door) != 0;
+}

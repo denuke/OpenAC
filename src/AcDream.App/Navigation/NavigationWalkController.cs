@@ -64,6 +64,24 @@ internal readonly record struct NavigationWalkBodySample(
 /// <summary>A server object standing where a walk stopped making progress.</summary>
 internal readonly record struct NavigationBlocker(uint ObjectId, string Name, bool IsClosedDoor);
 
+/// <summary>A door a walk can open.</summary>
+internal readonly record struct NavigationDoor(uint ObjectId, string Name);
+
+/// <summary>The doors a walk meets, as the client sees and opens them.</summary>
+internal interface INavigationDoors
+{
+    /// <summary>
+    /// The closed door nearest <paramref name="from"/> whose position lies ahead of it,
+    /// within <paramref name="corridor"/> of the straight line from it to <paramref name="to"/>.
+    /// </summary>
+    bool TryFindClosedDoor(Vector3 from, Vector3 to, float corridor, out NavigationDoor door);
+
+    bool IsOpen(uint doorId);
+
+    /// <summary>Asks the client to use a door, walking into its use range first as a player's click would.</summary>
+    void Use(uint doorId);
+}
+
 /// <summary>The local player's body, as a walk samples and moves it.</summary>
 internal interface INavigationWalkBody
 {
@@ -97,8 +115,10 @@ internal interface INavigationGoalSource
 /// square region around the character and its goal and is built off the update
 /// thread. A walk that stops making progress plans again from where the
 /// character stands, keeping out of the spot where it stuck, a few times before
-/// it gives up and names what stood beside that spot. A walk that arrives turns
-/// the character to face its goal.
+/// it gives up and names what stood beside that spot. A walk that meets a closed
+/// door on its way, or stops making progress beside one, has the client open it
+/// and plans again once it is open. A walk that arrives turns the character to
+/// face its goal.
 /// </summary>
 internal sealed class NavigationWalkController
 {
@@ -129,10 +149,24 @@ internal sealed class NavigationWalkController
     private const int ViewRetryTicks = 120;
     private const float FaceToleranceDegrees = 10f;
 
+    /// <summary>
+    /// While walking, a closed door within this far ahead along the leg and this
+    /// near the line to it is opened before the character reaches it. The check
+    /// runs every few frames. A door is waited on this long to open, since the
+    /// client may walk the character into its use range first, and a door that
+    /// closes again before the walk is through is used at most this often.
+    /// </summary>
+    internal const float DoorLookAheadMeters = 3f;
+    internal const float DoorCorridorMeters = 1.2f;
+    internal const float DoorOpenWaitSeconds = 5f;
+    internal const int MaximumDoorUses = 2;
+    private const int DoorCheckTicks = 5;
+
     private readonly PhysicsEngine _physics;
     private readonly INavigationWalkBody _body;
     private readonly INavigationGoalSource _goals;
     private readonly Action<string>? _say;
+    private readonly INavigationDoors? _doors;
     private readonly object _gate = new();
 
     private Request? _incoming;
@@ -143,6 +177,7 @@ internal sealed class NavigationWalkController
     private NavGrid? _grid;
     private Task<NavGrid>? _building;
     private long _tick;
+    private double _seconds;
     private long _viewRetryTick;
 
     private Request? _active;
@@ -154,12 +189,14 @@ internal sealed class NavigationWalkController
         PhysicsEngine physics,
         INavigationWalkBody body,
         INavigationGoalSource goals,
-        Action<string>? say = null)
+        Action<string>? say = null,
+        INavigationDoors? doors = null)
     {
         _physics = physics ?? throw new ArgumentNullException(nameof(physics));
         _body = body ?? throw new ArgumentNullException(nameof(body));
         _goals = goals ?? throw new ArgumentNullException(nameof(goals));
         _say = say;
+        _doors = doors;
     }
 
     /// <summary>Whether to keep a grid built around the character while nothing is planned.</summary>
@@ -218,10 +255,15 @@ internal sealed class NavigationWalkController
         }
     }
 
-    /// <summary>Advances planning and walking by one update frame. Call it on the thread that owns the physics world.</summary>
-    public void Tick()
+    /// <summary>
+    /// Advances planning and walking by one update frame, <paramref name="elapsedSeconds"/> long.
+    /// Call it on the thread that owns the physics world.
+    /// </summary>
+    public void Tick(double elapsedSeconds)
     {
         _tick++;
+        if (elapsedSeconds > 0d && double.IsFinite(elapsedSeconds))
+            _seconds += elapsedSeconds;
         CollectBuild();
         CollectRoute();
 
@@ -317,6 +359,11 @@ internal sealed class NavigationWalkController
 
     private void Advance(Request active, in NavigationWalkBodySample sample)
     {
+        if (active.WaitingOn is { } wait)
+        {
+            WaitForDoor(active, wait, sample);
+            return;
+        }
         if (_driver is { } driver)
         {
             Drive(active, driver, sample);
@@ -362,6 +409,13 @@ internal sealed class NavigationWalkController
 
     private void Drive(Request active, RuntimeRouteDriver driver, in NavigationWalkBodySample sample)
     {
+        if (_doors is not null && _tick % DoorCheckTicks == 0 && ClosedDoorAhead(driver, sample) is { } door)
+        {
+            Apply(driver.Cancel());
+            _driver = null;
+            OpenDoor(active, door);
+            return;
+        }
         RuntimeRouteDriveStep step = driver.Advance(new RuntimeRouteDriveSample(
             sample.Position,
             sample.HeadingDegrees,
@@ -399,18 +453,25 @@ internal sealed class NavigationWalkController
     }
 
     /// <summary>
-    /// Keeps the next plans out of the spot ahead of a character that stopped
-    /// making progress, notes what stands beside it, and plans again or gives up.
+    /// Opens a closed door beside the spot ahead of a character that stopped making
+    /// progress. Otherwise keeps the next plans out of that spot, notes what stands
+    /// beside it, and plans again or gives up.
     /// </summary>
     private void Blocked(Request active, in NavigationWalkBodySample sample)
     {
         float radians = sample.HeadingDegrees * (MathF.PI / 180f);
         Vector3 spot = sample.Position
             + (new Vector3(MathF.Sin(radians), MathF.Cos(radians), 0f) * BlockedSpotAhead);
-        active.Avoid.Add(new NavAvoidance(spot, BlockedSpotRadius));
         active.BlockedBy = _goals.TryFindBlocker(spot, BlockerSearchRadius, out NavigationBlocker blocker)
             ? blocker
             : null;
+        if (_doors is not null && active.BlockedBy is { IsClosedDoor: true } door)
+        {
+            _driver = null;
+            OpenDoor(active, new NavigationDoor(door.ObjectId, door.Name));
+            return;
+        }
+        active.Avoid.Add(new NavAvoidance(spot, BlockedSpotRadius));
         if (active.Replans >= MaximumReplans)
         {
             End(active, NavigationWalkState.Blocked, BlockedReason(active));
@@ -423,6 +484,72 @@ internal sealed class NavigationWalkController
         string again = $"{BlockedReason(active)}; planning again ({active.Replans} of {MaximumReplans})";
         Publish(active, NavigationWalkState.Planning, again, float.NaN);
         _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {again}");
+    }
+
+    /// <summary>A closed door within the look-ahead along the leg the character is walking, if there is one.</summary>
+    private NavigationDoor? ClosedDoorAhead(RuntimeRouteDriver driver, in NavigationWalkBodySample sample)
+    {
+        if (driver.LegIndex >= driver.Legs.Count)
+            return null;
+        var from = new Vector2(sample.Position.X, sample.Position.Y);
+        Vector3 end = driver.Legs[driver.LegIndex];
+        Vector2 toward = new Vector2(end.X, end.Y) - from;
+        float length = toward.Length();
+        if (length < 1e-3f)
+            return null;
+        Vector2 ahead = from + (toward * (MathF.Min(length, DoorLookAheadMeters) / length));
+        return _doors!.TryFindClosedDoor(sample.Position, new Vector3(ahead, end.Z), DoorCorridorMeters, out NavigationDoor door)
+            ? door
+            : null;
+    }
+
+    /// <summary>
+    /// Has the client open a closed door the walk has stopped at and waits for it
+    /// to open, or ends the walk blocked by a door that keeps closing.
+    /// </summary>
+    private void OpenDoor(Request active, NavigationDoor door)
+    {
+        int uses = active.DoorUses.GetValueOrDefault(door.ObjectId);
+        if (uses >= MaximumDoorUses)
+        {
+            BlockedAtDoor(active, door, "a door kept closing");
+            return;
+        }
+        active.DoorUses[door.ObjectId] = uses + 1;
+        active.WaitingOn = new DoorWait(door, _seconds + DoorOpenWaitSeconds);
+        _doors!.Use(door.ObjectId);
+        string opening = $"opening {door.Name} (0x{door.ObjectId:X8})";
+        Publish(active, NavigationWalkState.Walking, opening, float.NaN);
+        _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {opening}");
+    }
+
+    /// <summary>
+    /// Plans again once the door is open. A door still closed when the wait runs
+    /// out ends the walk blocked, since using a door again closes one that opened late.
+    /// </summary>
+    private void WaitForDoor(Request active, DoorWait wait, in NavigationWalkBodySample sample)
+    {
+        if (sample.InPortalSpace)
+        {
+            End(active, NavigationWalkState.Lost, "the character entered portal space");
+            return;
+        }
+        if (_doors!.IsOpen(wait.Door.ObjectId))
+        {
+            active.WaitingOn = null;
+            active.Builds = 0;
+            Publish(active, NavigationWalkState.Planning, $"{wait.Door.Name} is open, planning again", float.NaN);
+            return;
+        }
+        if (_seconds >= wait.DeadlineSeconds)
+            BlockedAtDoor(active, wait.Door, "a closed door would not open");
+    }
+
+    private void BlockedAtDoor(Request active, NavigationDoor door, string why)
+    {
+        active.WaitingOn = null;
+        active.BlockedBy = new NavigationBlocker(door.ObjectId, door.Name, IsClosedDoor: true);
+        End(active, NavigationWalkState.Blocked, $"{why}: {door.Name} (0x{door.ObjectId:X8})");
     }
 
     private bool Apply(in RuntimeRouteDriveStep step)
@@ -623,6 +750,8 @@ internal sealed class NavigationWalkController
     private static float Snap(float coordinate) =>
         MathF.Floor(coordinate / NavGrid.DefaultCellSize) * NavGrid.DefaultCellSize;
 
+    private readonly record struct DoorWait(NavigationDoor Door, double DeadlineSeconds);
+
     private sealed class Request
     {
         public Request(long sequence, uint objectId, float arrivalMeters, bool walk)
@@ -659,5 +788,11 @@ internal sealed class NavigationWalkController
 
         /// <summary>Why the route ends farther from the goal than the arrival radius, when it does.</summary>
         public string? ArrivalReason { get; set; }
+
+        /// <summary>The door the walk is waiting on to open, if any.</summary>
+        public DoorWait? WaitingOn { get; set; }
+
+        /// <summary>How often the walk has used each door.</summary>
+        public Dictionary<uint, int> DoorUses { get; } = [];
     }
 }

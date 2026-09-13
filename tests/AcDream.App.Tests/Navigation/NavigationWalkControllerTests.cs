@@ -57,7 +57,7 @@ public sealed class NavigationWalkControllerTests
         Run(walk, body, seconds: 1f);
 
         walk.Stop();
-        walk.Tick();
+        walk.Tick(Frame);
 
         Assert.Equal(NavigationWalkState.Stopped, walk.Report.State);
         Assert.Equal(150f - body.Position.Y, walk.Report.RemainingMeters, 1);
@@ -75,7 +75,7 @@ public sealed class NavigationWalkControllerTests
         Run(walk, body, seconds: 1f);
 
         body.Interrupt();
-        walk.Tick();
+        walk.Tick(Frame);
 
         Assert.Equal(NavigationWalkState.Interrupted, walk.Report.State);
         Assert.False(walk.IsBusy);
@@ -141,7 +141,7 @@ public sealed class NavigationWalkControllerTests
         var walk = new NavigationWalkController(FlatWorld(), body, new Goals());
 
         walk.WalkTo(Other);
-        walk.Tick();
+        walk.Tick(Frame);
 
         Assert.Equal(NavigationWalkState.NoRoute, walk.Report.State);
         Assert.Contains("0x50000002", walk.Report.Reason);
@@ -155,7 +155,7 @@ public sealed class NavigationWalkControllerTests
         var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(40f, 500f, 0f) });
 
         walk.WalkTo(Target);
-        walk.Tick();
+        walk.Tick(Frame);
 
         Assert.Equal(NavigationWalkState.NoRoute, walk.Report.State);
         Assert.Equal(460f, walk.Report.RemainingMeters, 1);
@@ -179,6 +179,76 @@ public sealed class NavigationWalkControllerTests
         Assert.False(NavigationWalkController.TryChooseRegion(from, new Vector3(400f, 10f, 0f), out _, out _, out _));
     }
 
+    [Fact]
+    public void AClosedDoorOnTheRouteIsOpenedAndWalkedThrough()
+    {
+        var doors = new FakeDoors(new NavigationDoor(Door, "Door"), new Vector2(40f, 60f), opens: true);
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f))
+        {
+            Obstacle = (new Vector2(40f, 60f), 0.3f),
+            ObstacleActive = () => !doors.Open,
+        };
+        var walk = new NavigationWalkController(
+            FlatWorld(),
+            body,
+            new Goals { [Target] = new Vector3(40f, 80f, 0f) },
+            doors: doors);
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.Equal(1, doors.Uses);
+        Assert.Equal(0, report.Replans);
+        Assert.True(body.Position.Y > 60f);
+    }
+
+    [Fact]
+    public void ADoorThatWillNotOpenEndsTheWalkBlockedNamingIt()
+    {
+        var doors = new FakeDoors(new NavigationDoor(Door, "Door"), new Vector2(40f, 60f), opens: false);
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f)) { Obstacle = (new Vector2(40f, 60f), 0.3f) };
+        var walk = new NavigationWalkController(
+            FlatWorld(),
+            body,
+            new Goals { [Target] = new Vector3(40f, 80f, 0f) },
+            doors: doors);
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Blocked, report.State);
+        Assert.Equal(Door, report.BlockedByObjectId);
+        Assert.Contains("would not open: Door (0x7A000001)", report.Reason);
+        Assert.Equal(1, doors.Uses);
+        Assert.False(body.Travelling);
+    }
+
+    [Fact]
+    public void AWalkThatStopsBesideAClosedDoorItDidNotSeeAheadOpensIt()
+    {
+        var doors = new FakeDoors(new NavigationDoor(Door, "Door"), new Vector2(40f, 60f), opens: true) { SeenAhead = false };
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f))
+        {
+            Obstacle = (new Vector2(40f, 60f), 0.3f),
+            ObstacleActive = () => !doors.Open,
+        };
+        var goals = new Goals
+        {
+            [Target] = new Vector3(40f, 80f, 0f),
+            Blocker = new NavigationBlocker(Door, "Door", IsClosedDoor: true),
+        };
+        var walk = new NavigationWalkController(FlatWorld(), body, goals, doors: doors);
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.Equal(1, doors.Uses);
+        Assert.Equal(0, report.Replans);
+        Assert.True(body.Position.Y > 60f);
+    }
+
     private static PhysicsEngine FlatWorld()
     {
         var physics = new PhysicsEngine();
@@ -198,7 +268,7 @@ public sealed class NavigationWalkControllerTests
         float simulated = 0f;
         while (simulated < 120f && wall.Elapsed < TimeSpan.FromSeconds(60))
         {
-            walk.Tick();
+            walk.Tick(Frame);
             NavigationWalkReport report = walk.Report;
             if (done(report))
                 return report;
@@ -217,7 +287,7 @@ public sealed class NavigationWalkControllerTests
     {
         for (float simulated = 0f; simulated < seconds; simulated += Frame)
         {
-            walk.Tick();
+            walk.Tick(Frame);
             body.Integrate(Frame);
         }
     }
@@ -232,6 +302,58 @@ public sealed class NavigationWalkControllerTests
         {
             blocker = Blocker ?? default;
             return Blocker is not null;
+        }
+    }
+
+    /// <summary>A single door that opens a few frames after it is used, or never.</summary>
+    private sealed class FakeDoors : INavigationDoors
+    {
+        private int _pollsUntilOpen = -1;
+
+        public FakeDoors(NavigationDoor door, Vector2 at, bool opens)
+        {
+            Door = door;
+            At = at;
+            Opens = opens;
+        }
+
+        public NavigationDoor Door { get; }
+
+        public Vector2 At { get; }
+
+        public bool Opens { get; }
+
+        /// <summary>Whether a walk looking ahead along its leg finds the door.</summary>
+        public bool SeenAhead { get; init; } = true;
+
+        public bool Open { get; private set; }
+
+        public int Uses { get; private set; }
+
+        public bool TryFindClosedDoor(Vector3 from, Vector3 to, float corridor, out NavigationDoor door)
+        {
+            door = Door;
+            if (Open || !SeenAhead)
+                return false;
+            var start = new Vector2(from.X, from.Y);
+            Vector2 along = new Vector2(to.X, to.Y) - start;
+            float lengthSquared = along.LengthSquared();
+            float t = lengthSquared > 1e-6f ? Vector2.Dot(At - start, along) / lengthSquared : 0f;
+            return t >= 0f && Vector2.Distance(At, start + (along * MathF.Min(t, 1f))) <= corridor;
+        }
+
+        public bool IsOpen(uint doorId)
+        {
+            if (_pollsUntilOpen > 0 && --_pollsUntilOpen == 0)
+                Open = true;
+            return Open;
+        }
+
+        public void Use(uint doorId)
+        {
+            Uses++;
+            if (Opens)
+                _pollsUntilOpen = 10;
         }
     }
 
@@ -262,6 +384,9 @@ public sealed class NavigationWalkControllerTests
         public bool Stuck { get; init; }
 
         public (Vector2 Centre, float Radius)? Obstacle { get; init; }
+
+        /// <summary>Whether the obstacle is there, for one that can go away, such as a door that opens.</summary>
+        public Func<bool>? ObstacleActive { get; init; }
 
         public int MovesBegun { get; private set; }
 
@@ -355,7 +480,7 @@ public sealed class NavigationWalkControllerTests
 
         private Vector3 SlideOffObstacle(Vector3 intended)
         {
-            if (Obstacle is not { } obstacle)
+            if (Obstacle is not { } obstacle || ObstacleActive?.Invoke() == false)
                 return intended;
             Vector2 offset = new Vector2(intended.X, intended.Y) - obstacle.Centre;
             float distance = offset.Length();
