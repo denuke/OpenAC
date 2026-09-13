@@ -10,6 +10,8 @@ internal static class RecordKinds
     internal const string CombatMode = "combat-mode";
     internal const string VitalChanged = "vital-changed";
     internal const string Chat = "chat";
+    internal const string CommandOutcome = "command-outcome";
+    internal const string GoalRefused = "goal-refused";
 
     /// <summary>
     /// Kinds that describe current state. The latest record of each is kept

@@ -1,7 +1,9 @@
 using AcDream.Plugin.Abstractions;
 using AcDream.Plugins.Agent.Contract;
 using AcDream.Plugins.Agent.Egress;
+using AcDream.Plugins.Agent.Intake;
 using AcDream.Plugins.Agent.State;
+using AcDream.Plugins.Agent.Verbs;
 
 namespace AcDream.Plugins.Agent;
 
@@ -20,6 +22,7 @@ internal sealed class AgentService : IDisposable
         "/agent status - whether AI clients can connect, and what is recorded",
         "/agent record <path> - write every record to a file, one JSON object per line",
         "/agent record off - stop writing the file",
+        "/agent do <line> - run one agent command line, as an AI client would",
         "/agent help - this list",
     ];
 
@@ -56,11 +59,16 @@ internal sealed class AgentService : IDisposable
         _state.Add(new CombatModeProjection(host));
         _events.Add(new VitalChangeEvents(host));
         _events.Add(new ChatEvents(host));
+        Commands = new CommandDispatcher(host, Publisher);
+        Commands.Register(new ChatVerbs(host));
+        Commands.Register(new UnavailableVerbs(Publisher));
     }
 
     internal RecordRing Ring { get; }
 
     internal Publisher Publisher { get; }
+
+    internal CommandDispatcher Commands { get; }
 
     /// <summary>Event polls or rebases that threw; the source is skipped for that tick.</summary>
     internal long EventFailures { get; private set; }
@@ -88,6 +96,9 @@ internal sealed class AgentService : IDisposable
                 break;
             case "record":
                 Record(rest);
+                break;
+            case "do":
+                Do(rest);
                 break;
             default:
                 Say($"Unknown /agent command '{subcommand}'. Use /agent help.");
@@ -128,6 +139,19 @@ internal sealed class AgentService : IDisposable
             return;
         _disposed = true;
         StopRecording(announce: false);
+    }
+
+    private void Do(string line)
+    {
+        if (line.Length == 0)
+        {
+            Say("Usage: /agent do <command line>");
+            return;
+        }
+        CommandReceipt receipt = Commands.Deliver(line, "chat");
+        Say(receipt.Reason is null
+            ? $"Agent [{receipt.Id}]: {receipt.Outcome}."
+            : $"Agent [{receipt.Id}]: {receipt.Outcome}, {receipt.Reason}.");
     }
 
     private void Record(string argument)

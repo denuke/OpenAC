@@ -110,6 +110,35 @@ public sealed class AgentServiceStateTests
         Assert.Empty(sink.OfKind(RecordKinds.Chat));
     }
 
+    [Fact]
+    public void AgentDoRunsOneLineAndEchoesItsOutcome()
+    {
+        var host = new FakePluginHost();
+        using var service = new AgentService(host, _ => new RecordingSink());
+
+        Run(service, "do say hello");
+
+        Assert.Equal(["hello"], host.FakeAutomation.FakeChat.Submitted);
+        Assert.Equal(
+            "Agent [1]: handled.",
+            host.FakeAutomation.FakeChat.SystemMessages.Last());
+    }
+
+    [Fact]
+    public void AgentDoNeverSpeaksAReservedWord()
+    {
+        var host = new FakePluginHost();
+        using var service = new AgentService(host, _ => new RecordingSink());
+
+        Run(service, "do go to Mite Maze");
+
+        Assert.Empty(host.FakeAutomation.FakeChat.Submitted);
+        Assert.StartsWith(
+            "Agent [1]: refused",
+            host.FakeAutomation.FakeChat.SystemMessages.Last(),
+            StringComparison.Ordinal);
+    }
+
     private static void Run(AgentService service, string arguments) =>
         service.HandleCommand(new PluginCommand("agent", arguments, "/agent " + arguments));
 
