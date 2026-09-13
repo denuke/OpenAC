@@ -102,4 +102,89 @@ internal sealed class FakeObjects : IWorldObjectAutomation
         Properties.TryGetValue(objectId, out properties);
 
     internal void Add(PluginWorldObject value) => Known[value.ObjectId] = value;
+
+    internal List<uint> Uses { get; } = [];
+    internal PluginItemCommandStatus UseStatus { get; set; } = PluginItemCommandStatus.Started;
+
+    public PluginItemCommandResult Use(uint objectId)
+    {
+        Uses.Add(objectId);
+        return new PluginItemCommandResult(UseStatus);
+    }
+}
+
+internal sealed class FakeItems : IItemAutomation
+{
+    public bool IsAvailable => true;
+    public bool IsBusy { get; set; }
+    public uint ActiveVendorObjectId { get; set; }
+    public PluginItemUseCompletion LastCompletion { get; set; }
+    public PluginInventoryCompletion LastInventoryCompletion { get; set; }
+
+    internal List<PluginInventoryItem> Owned { get; } = [];
+    internal List<PluginVendorItem> Stock { get; } = [];
+    internal List<string> Calls { get; } = [];
+    internal PluginItemCommandStatus NextStatus { get; set; } = PluginItemCommandStatus.Started;
+
+    public IReadOnlyList<PluginInventoryItem> CaptureOwnedItems() => Owned.ToArray();
+
+    public IReadOnlyList<PluginVendorItem> CaptureVendorStock() => Stock.ToArray();
+
+    public PluginItemCommandResult Use(uint objectId) => Record($"use:{objectId:X8}");
+
+    public PluginItemCommandResult Apply(uint objectId, uint targetObjectId) =>
+        Record($"apply:{objectId:X8}:{targetObjectId:X8}");
+
+    public PluginItemCommandResult MoveToContainer(
+        uint objectId,
+        uint containerObjectId,
+        uint amount = 0u,
+        int placement = 0) =>
+        Record($"move:{objectId:X8}:{containerObjectId:X8}:{amount}");
+
+    public PluginItemCommandResult Drop(uint objectId, uint amount = 0u) =>
+        Record($"drop:{objectId:X8}:{amount}");
+
+    public PluginItemCommandResult Give(uint objectId, uint targetObjectId, uint amount = 0u) =>
+        Record($"give:{objectId:X8}:{targetObjectId:X8}:{amount}");
+
+    public PluginItemCommandResult Sell(uint objectId, uint amount = 0u) =>
+        Record($"sell:{objectId:X8}:{amount}");
+
+    public PluginItemCommandResult Buy(uint objectId, uint amount = 1u) =>
+        Record($"buy:{objectId:X8}:{amount}");
+
+    private PluginItemCommandResult Record(string call)
+    {
+        Calls.Add(call);
+        return new PluginItemCommandResult(NextStatus);
+    }
+}
+
+internal sealed class FakeLoot : ILootAutomation
+{
+    public bool IsAvailable => true;
+    public uint CurrentContainerId { get; set; }
+
+    internal List<PluginLootContainer> Corpses { get; } = [];
+    internal List<PluginInventoryItem> Contents { get; } = [];
+    internal List<string> Calls { get; } = [];
+    internal PluginItemCommandStatus NextStatus { get; set; } = PluginItemCommandStatus.Started;
+
+    public IReadOnlyList<PluginLootContainer> CaptureCorpses(float maximumDistance) =>
+        Corpses.Where(corpse => corpse.Distance <= maximumDistance).ToArray();
+
+    public IReadOnlyList<PluginInventoryItem> CaptureCurrentContents() => Contents.ToArray();
+
+    public PluginItemCommandResult Open(uint containerObjectId)
+    {
+        Calls.Add($"open:{containerObjectId:X8}");
+        return new PluginItemCommandResult(NextStatus);
+    }
+
+    public PluginItemCommandResult Pickup(uint objectId, bool mainPack = false)
+    {
+        Calls.Add($"pickup:{objectId:X8}");
+        return new PluginItemCommandResult(NextStatus);
+    }
 }

@@ -11,6 +11,8 @@ public sealed class OutcomeTableTests
         { RecordKinds.TargetOutcome, [.. TargetVerbs.OutcomeWords, .. OutcomeCorrelator.OutcomeWords] },
         { RecordKinds.GoalResolved, [.. MotorVerbs.OutcomeWords, .. OutcomeCorrelator.OutcomeWords] },
         { RecordKinds.CastOutcome, [.. CastVerbs.OutcomeWords, .. OutcomeCorrelator.OutcomeWords] },
+        { RecordKinds.ObjectOutcome, [.. ObjectVerbs.OutcomeWords, .. OutcomeCorrelator.OutcomeWords] },
+        { RecordKinds.InventoryOutcome, [.. InventoryOutcomes.Words, .. OutcomeCorrelator.OutcomeWords] },
     };
 
     [Theory]

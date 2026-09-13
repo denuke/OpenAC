@@ -12,6 +12,8 @@ internal sealed class FakeAutomation : IAutomationSurface
     public INavigationAutomation Navigation => FakeNavigation;
     public ICombatAutomation Combat => FakeCombat;
     public IWorldObjectAutomation Objects => FakeObjects;
+    public IItemAutomation Items => FakeItems;
+    public ILootAutomation Loot => FakeLoot;
 
     internal FakeChat FakeChat { get; } = new();
     internal FakeCharacter FakeCharacter { get; } = new();
@@ -20,6 +22,8 @@ internal sealed class FakeAutomation : IAutomationSurface
     internal FakeObjects FakeObjects { get; } = new();
     internal FakeSpells FakeSpells { get; } = new();
     internal FakeMagic FakeMagic { get; } = new();
+    internal FakeItems FakeItems { get; } = new();
+    internal FakeLoot FakeLoot { get; } = new();
 }
 
 internal sealed class FakeChat : IPluginChat

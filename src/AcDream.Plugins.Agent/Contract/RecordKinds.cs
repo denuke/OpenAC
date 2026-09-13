@@ -27,6 +27,14 @@ internal static class RecordKinds
     internal const string CastSent = "cast-sent";
     internal const string CastRefused = "cast-refused";
     internal const string CastOutcome = "cast-outcome";
+    internal const string ObjectAction = "object-action";
+    internal const string ObjectRefused = "object-refused";
+    internal const string ObjectOutcome = "object-outcome";
+    internal const string ContainerContents = "container-contents";
+    internal const string Corpses = "corpses";
+    internal const string InventoryAction = "inventory-action";
+    internal const string InventoryRefused = "inventory-refused";
+    internal const string InventoryOutcome = "inventory-outcome";
 
     /// <summary>
     /// Kinds that describe current state. The latest record of each is kept

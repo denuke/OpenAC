@@ -24,6 +24,14 @@ internal static class OutcomeTable
         [(RecordKinds.CastOutcome, "unattributable")] = OutcomeClass.Unattributable,
         [(RecordKinds.CastOutcome, "unconfirmed")] = OutcomeClass.Unconfirmed,
         [(RecordKinds.CastOutcome, "lost")] = OutcomeClass.Lost,
+        [(RecordKinds.ObjectOutcome, "completed")] = OutcomeClass.Confirmed,
+        [(RecordKinds.ObjectOutcome, "refused")] = OutcomeClass.Refused,
+        [(RecordKinds.ObjectOutcome, "unconfirmed")] = OutcomeClass.Unconfirmed,
+        [(RecordKinds.ObjectOutcome, "lost")] = OutcomeClass.Lost,
+        [(RecordKinds.InventoryOutcome, "completed")] = OutcomeClass.Confirmed,
+        [(RecordKinds.InventoryOutcome, "refused")] = OutcomeClass.Refused,
+        [(RecordKinds.InventoryOutcome, "unconfirmed")] = OutcomeClass.Unconfirmed,
+        [(RecordKinds.InventoryOutcome, "lost")] = OutcomeClass.Lost,
     };
 
     internal static IEnumerable<string> WordsFor(string kind) =>
