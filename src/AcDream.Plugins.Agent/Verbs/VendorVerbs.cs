@@ -19,7 +19,7 @@ internal sealed class VendorVerbs : IVerbFamily
 
     /// <summary>Listings shown unless a read asks for more.</summary>
     internal const int DefaultListingRows = 100;
-    private const string NoVendor = "no vendor is open; 'use <vendor id>' opens one";
+    internal const string NoVendor = "no vendor is open; 'use <vendor id>' opens one";
 
     private readonly IPluginHost _host;
     private readonly Publisher _publisher;

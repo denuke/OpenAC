@@ -21,6 +21,14 @@ internal sealed class AttackVerbs : IVerbFamily
 
     internal const string WrongStance =
         "enter a melee or missile stance first: 'stance combat' with a melee or missile weapon wielded";
+
+    internal const string NotHostile = "the client does not count it as a hostile creature";
+
+    /// <summary>Why an attack on an object would be refused, or null when it would be taken.</summary>
+    internal static string? AttackProblem(PluginCombatMode stance, bool hostile) =>
+        stance is not (PluginCombatMode.Melee or PluginCombatMode.Missile)
+            ? WrongStance
+            : hostile ? null : NotHostile;
     internal const float DefaultPower = 0.5f;
     internal const string Ended = "ended";
     internal const string Refused = "refused";

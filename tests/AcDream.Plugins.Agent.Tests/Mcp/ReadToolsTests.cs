@@ -30,6 +30,9 @@ public sealed class ReadToolsTests
     [InlineData("inventory", """{"limit":3}""", "inventory limit 3")]
     [InlineData("vendor", """{"limit":20}""", "vendor limit 20")]
     [InlineData("container", """{"limit":2}""", "loot list limit 2")]
+    [InlineData("capabilities", "{}", "capabilities")]
+    [InlineData("capabilities", """{"guid":"  "}""", "capabilities")]
+    [InlineData("capabilities", """{"guid":"0x70000001"}""", "capabilities 0x70000001")]
     public async Task EachReadRunsItsLine(string tool, string arguments, string line)
     {
         using var harness = new McpToolHarness();
@@ -56,6 +59,7 @@ public sealed class ReadToolsTests
     [InlineData("inventory", """{"limit":501}""")]
     [InlineData("vendor", """{"limit":2.5}""")]
     [InlineData("container", """{"limit":"all"}""")]
+    [InlineData("capabilities", """{"guid":"everything"}""")]
     public async Task BadArgumentsAreAnErrorAndRunNothing(string tool, string arguments)
     {
         using var harness = new McpToolHarness();
@@ -133,6 +137,17 @@ public sealed class ReadToolsTests
 
         Assert.Equal(CharacterReadVerbs.DefaultSpellRows + 7, record.GetProperty("matched").GetInt32());
         Assert.Equal(CharacterReadVerbs.DefaultSpellRows, record.GetProperty("shown").GetInt32());
+    }
+
+    [Fact]
+    public async Task ACapabilitiesGuidThatIsNotAnIdSaysToLeaveItOut()
+    {
+        using var harness = new McpToolHarness();
+
+        JsonObject result = await harness.CallAsync("capabilities", new JsonObject { ["guid"] = "all" });
+
+        Assert.True(McpToolHarness.IsError(result));
+        Assert.Contains("leave it out", result.ToJsonString());
     }
 
     [Fact]

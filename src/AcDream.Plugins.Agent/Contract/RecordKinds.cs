@@ -46,6 +46,8 @@ internal static class RecordKinds
     internal const string LoginSent = "login-sent";
     internal const string LoginRefused = "login-refused";
     internal const string LoginOutcome = "login-outcome";
+    internal const string Capabilities = "capabilities";
+    internal const string PlayerCapabilities = "player-capabilities";
 
     /// <summary>
     /// Kinds that describe current state. The latest record of each is kept

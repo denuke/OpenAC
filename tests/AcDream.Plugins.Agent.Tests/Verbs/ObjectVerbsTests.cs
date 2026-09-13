@@ -127,6 +127,17 @@ public sealed class ObjectVerbsTests
     }
 
     [Fact]
+    public void OpeningAnObjectThatDoesNotOpenIsRefusedBeforeAnythingIsSent()
+    {
+        var (host, verbs, _, _, ring) = Build();
+
+        Assert.Equal("refused", verbs.Handle(Line($"open 0x{Shopkeeper:X8}")).Outcome);
+
+        Assert.Empty(host.FakeAutomation.FakeLoot.Calls);
+        Assert.Contains("does not open", Records(ring, RecordKinds.ObjectRefused).Single().GetProperty("reason").GetString());
+    }
+
+    [Fact]
     public void CloseIsRefusedWithAReason()
     {
         var (_, verbs, _, _, ring) = Build();

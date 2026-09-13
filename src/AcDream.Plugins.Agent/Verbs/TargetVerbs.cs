@@ -99,6 +99,10 @@ internal sealed class TargetVerbs : IVerbFamily
         return VerbResult.Handled;
     }
 
+    /// <summary>Why targeting an object would be refused, or null when it would be taken.</summary>
+    internal static string? TargetProblem(IAutomationSurface automation, uint id) =>
+        automation.Objects.TryGet(id, out _) ? null : NoSuchObject;
+
     private void Sent(CommandLine line, uint? id, string? name) =>
         _publisher.Publish(RecordKinds.TargetSent, new JsonObject
         {

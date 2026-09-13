@@ -257,6 +257,10 @@ internal sealed class FakeItems : IItemAutomation
     public PluginItemCommandResult Sell(uint objectId, uint amount = 0u) =>
         Record($"sell:{objectId:X8}:{amount}");
 
+    internal PluginItemCommandResult SaleCheck { get; set; } = new(PluginItemCommandStatus.Started);
+
+    public PluginItemCommandResult CheckSell(uint objectId, uint amount = 0u) => SaleCheck;
+
     public PluginItemCommandResult Buy(uint objectId, uint amount = 1u) =>
         Record($"buy:{objectId:X8}:{amount}");
 

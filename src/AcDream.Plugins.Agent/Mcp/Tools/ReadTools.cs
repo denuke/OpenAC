@@ -69,6 +69,20 @@ internal static class ReadTools
 
     internal static IEnumerable<IMcpTool> Create(AgentContext context) =>
     [
+        new ReadTool(context, "capabilities", "What can I do?",
+            "Everything around the character in one answer, nearest first: each object with the command lines this "
+            + "client would take for it now, graded available, unavailable with the reason, or unknown with what is "
+            + "missing, and with its sight. Lines graded alike for every object are said once in legend, with <guid> "
+            + "in place of the id. The character's own lines, such as buy at the open vendor, stance combat or "
+            + "logout, come under character. Pass guid to ask about one object, including one the character carries. "
+            + "Send a line through act as written, filling any <placeholder>."
+            + Nothing,
+            () => new JsonObject
+            {
+                ["guid"] = Property("string", "An object id such as 0x70000001; leave it out to ask about everything around the character."),
+            },
+            [],
+            Capabilities),
         new ReadTool(context, "nearby", "What is around me?",
             "Objects in the world around the character, nearest first, with distance in meters, "
             + "compass bearing, how far to turn to face each, and what kind of thing it is. Counts every "
@@ -205,6 +219,18 @@ internal static class ReadTools
         return guid is not null && Guids.TryParse(guid, out _)
             ? ReadLine.Of("inspect " + guid)
             : ReadLine.Refuse("guid must be an object id such as 0x70000001");
+    }
+
+    private static ReadLine Capabilities(JsonObject arguments)
+    {
+        string? guid = ToolArguments.Text(arguments, "guid")?.Trim()
+            ?? ToolArguments.Whole(arguments, "guid")?.ToString(CultureInfo.InvariantCulture);
+        if (string.IsNullOrEmpty(guid))
+            return ReadLine.Of("capabilities");
+        return Guids.TryParse(guid, out _)
+            ? ReadLine.Of("capabilities " + guid)
+            : ReadLine.Refuse(
+                "guid must be an object id such as 0x70000001; leave it out to ask about everything around the character");
     }
 
     private static ReadLine Corpses(JsonObject arguments) =>

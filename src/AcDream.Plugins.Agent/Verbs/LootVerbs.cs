@@ -15,6 +15,8 @@ internal sealed class LootVerbs : IVerbFamily
 {
     internal const float DefaultCorpseRangeMeters = 30f;
 
+    internal const string NoContainer = "no container is open; 'open <container id>' first";
+
     /// <summary>Items in the open container shown unless a read asks for more.</summary>
     internal const int DefaultContentRows = 100;
 
@@ -56,7 +58,7 @@ internal sealed class LootVerbs : IVerbFamily
         ILootAutomation loot = _host.Automation.Loot;
         uint container = loot.CurrentContainerId;
         if (container == 0u)
-            return Refuse(line, "no container is open; 'open <container id>' first");
+            return Refuse(line, NoContainer);
         IReadOnlyList<PluginInventoryItem> contents = loot.CaptureCurrentContents();
         JsonArray items = ItemRows.Rows(contents.Take(limit));
         var fields = new JsonObject
@@ -108,7 +110,7 @@ internal sealed class LootVerbs : IVerbFamily
             return Refuse(line, "usage: loot list, loot corpses [range], or loot <item id>");
         uint container = automation.Loot.CurrentContainerId;
         if (container == 0u)
-            return Refuse(line, "no container is open; 'open <container id>' first");
+            return Refuse(line, NoContainer);
         long baseline = automation.Items.LastInventoryCompletion.Revision;
         PluginItemCommandResult result = automation.Loot.Pickup(id);
         if (!result.Accepted)

@@ -61,6 +61,10 @@ internal sealed class MotorVerbs : IVerbFamily
     internal const string Blocked = "blocked";
     internal const string NoRoute = "no-route";
 
+    internal const string NoOwnPosition = "the client has no position for its own body";
+    internal const string NoObjectPosition = "the client holds no position for that object";
+    internal const string InPortalSpace = "the character is in portal space";
+
     internal static readonly IReadOnlyList<string> OutcomeWords = [Completed, Cancelled, Blocked, NoRoute];
 
     private readonly IPluginHost _host;
@@ -164,11 +168,11 @@ internal sealed class MotorVerbs : IVerbFamily
         if (!Guids.TryParse(line.Arguments, out uint id))
             return Refuse(line, "face needs an object id such as 0x70000001");
         IAutomationSurface automation = _host.Automation;
-        if (!automation.Objects.TryGet(id, out PluginWorldObject value) || !value.HasPosition)
-            return Refuse(line, "the client holds no position for that object");
+        if (!automation.Objects.TryGet(id, out PluginWorldObject value))
+            return Refuse(line, NoObjectPosition);
         PluginNavigationSnapshot self = automation.Navigation.Snapshot;
-        if (!self.IsAvailable)
-            return Refuse(line, "the client has no position for its own body");
+        if (FaceProblem(self, value) is { } problem)
+            return Refuse(line, problem);
         return TurnToward(line, Geometry.BearingDegrees(self.Position, value.Position), Facts.Hex(id));
     }
 
@@ -177,7 +181,7 @@ internal sealed class MotorVerbs : IVerbFamily
     {
         PluginNavigationSnapshot self = _host.Automation.Navigation.Snapshot;
         if (!self.IsAvailable)
-            return Refuse(line, "the client has no position for its own body");
+            return Refuse(line, NoOwnPosition);
         var aim = new JsonObject
         {
             ["heading"] = Math.Round(heading, 1),
@@ -239,14 +243,14 @@ internal sealed class MotorVerbs : IVerbFamily
         IAutomationSurface automation = _host.Automation;
         PluginNavigationSnapshot self = automation.Navigation.Snapshot;
         if (!self.IsAvailable)
-            return Refuse(line, "the client has no position for its own body");
+            return Refuse(line, NoOwnPosition);
         if (self.IsPortalSpace)
-            return Refuse(line, "the character is in portal space");
+            return Refuse(line, InPortalSpace);
         if (!TryFindGoal(automation, self, named, out PluginWorldObject goal, out string problem))
             return Refuse(line, problem);
+        if (GoToProblem(self, goal) is { } refusal)
+            return Refuse(line, refusal);
         double distance = Geometry.DistanceMeters(self.Position, goal.Position);
-        if (distance > MaximumGoToMeters)
-            return Refuse(line, $"{goal.Name} is {distance:0} m away, and a walk is planned to at most {MaximumGoToMeters:0} m");
 
         INavigationAutomation navigation = automation.Navigation;
         PluginNavigationCommandStatus status = navigation.GoTo(goal.ObjectId, arrival);
@@ -305,6 +309,25 @@ internal sealed class MotorVerbs : IVerbFamily
     private static string? ArrivalNote(string? reason) =>
         string.IsNullOrEmpty(reason) || reason.Equals("arrived", StringComparison.Ordinal) ? null : reason;
 
+    /// <summary>Why facing an object would be refused, or null when it would be taken.</summary>
+    internal static string? FaceProblem(in PluginNavigationSnapshot self, in PluginWorldObject value) =>
+        !value.HasPosition ? NoObjectPosition : !self.IsAvailable ? NoOwnPosition : null;
+
+    /// <summary>Why a walk to an object would be refused, or null when it would be taken.</summary>
+    internal static string? GoToProblem(in PluginNavigationSnapshot self, in PluginWorldObject goal)
+    {
+        if (!self.IsAvailable)
+            return NoOwnPosition;
+        if (self.IsPortalSpace)
+            return InPortalSpace;
+        if (!goal.HasPosition)
+            return NoObjectPosition;
+        double distance = Geometry.DistanceMeters(self.Position, goal.Position);
+        return distance > MaximumGoToMeters
+            ? $"{goal.Name} is {distance:0} m away, and a walk is planned to at most {MaximumGoToMeters:0} m"
+            : null;
+    }
+
     private bool TryFindGoal(
         IAutomationSurface automation,
         PluginNavigationSnapshot self,
@@ -341,7 +364,7 @@ internal sealed class MotorVerbs : IVerbFamily
 
         if (!automation.Objects.TryGet(id, out goal) || !goal.HasPosition)
         {
-            problem = "the client holds no position for that object";
+            problem = NoObjectPosition;
             return false;
         }
         problem = string.Empty;
@@ -359,9 +382,9 @@ internal sealed class MotorVerbs : IVerbFamily
         INavigationAutomation navigation = _host.Automation.Navigation;
         PluginNavigationSnapshot self = navigation.Snapshot;
         if (!self.IsAvailable)
-            return Refuse(line, "the client has no position for its own body");
+            return Refuse(line, NoOwnPosition);
         if (self.IsPortalSpace)
-            return Refuse(line, "the character is in portal space");
+            return Refuse(line, InPortalSpace);
 
         PluginNavigationCommandStatus status = navigation.Move(direction, pace, amount.Value, amount.Unit);
         if (status != PluginNavigationCommandStatus.Accepted)

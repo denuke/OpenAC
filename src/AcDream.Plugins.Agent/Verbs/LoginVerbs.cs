@@ -23,6 +23,7 @@ internal sealed class LoginVerbs : IVerbFamily
 
     internal const string Completed = "completed";
     internal const string Refused = "refused";
+    internal const string MidAir = "the character cannot log out in mid-air";
 
     internal static readonly IReadOnlyList<string> OutcomeWords = [Completed, Refused];
 
@@ -138,7 +139,7 @@ internal sealed class LoginVerbs : IVerbFamily
         if (!(automation.IsAvailable && automation.Character.IsInWorld))
             return Refuse(line, "no character is in the world");
         if (automation.Navigation.Snapshot is { IsAvailable: true, IsAirborne: true })
-            return Refuse(line, "the character cannot log out in mid-air");
+            return Refuse(line, MidAir);
         uint objectId = automation.Character.ObjectId;
         string name = automation.Character.Name;
 

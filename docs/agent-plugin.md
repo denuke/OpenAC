@@ -21,7 +21,7 @@ claude mcp add --transport http openac http://127.0.0.1:31337/mcp
 At the character list, ask for a character by name: the model reads the list
 with `characters` and enters the world by acting `login <name>`. Then ask for
 something, such as "open the nearest vendor and buy ten prismatic
-tapers". The model finds the vendor with `nearby`, opens it by acting
+tapers". The model finds the vendor, and the lines that work on it, with `capabilities`, opens it by acting
 `use <vendor id>`, reads the listings with `vendor`, buys by acting
 `buy prismatic taper 10`, and checks the purchase with `outcome`. Any MCP client
 that speaks Streamable HTTP connects the same way.
@@ -47,6 +47,7 @@ Only `act` can make the character do anything. Every other tool only reads.
 | Tool | Answers with |
 |---|---|
 | `observe` | The latest session, body, vitals, stats, target and combat-mode records, the actions still pending, and the most recent outcomes. |
+| `capabilities` | Everything around the character in one answer, each object with the lines this client would take for it now and whether each would be taken; with `guid`, one object. |
 | `act` | Runs one command line and returns a handle with a status: `pending`, `done`, `refused` or `sent-as-chat`. |
 | `outcome` | How the line with a handle ended: its outcome word, its shared class, and every record it produced. |
 | `events` | Records after a cursor. With `waitSeconds` it waits for the next one, and `until` wakes it on a condition. |
@@ -61,6 +62,16 @@ Only `act` can make the character do anything. Every other tool only reads.
 | `container` | The items in the open corpse or container. |
 | `corpses` | Corpses in range, and whether each has been opened. |
 | `characters` | The account's characters at the character list, and where the client stands in logging in. |
+
+`capabilities` answers what the character can do in one call. It lists everything around the
+character, nearest first, each object with the lines this client would take for it now, such as
+`use 0x70000002` or `attack 0x70000001`, graded `available`, `unavailable` with the reason, or
+`unknown` with what is missing, by the same checks the verbs make before they send. Lines graded
+alike for every object are said once in `legend`, with `<guid>` in place of the id. The lines that
+act on the character itself, such as `buy` at the open vendor, `stance combat` or `logout`, come
+under `character`. With `guid` it answers for one object, including one the character carries. A
+line graded `available` can still be refused by the server, and that answer arrives on the line's
+own outcome.
 
 `spells` shows at most 50 rows, and `inventory`, `vendor` and `container` at most 100, unless
 `limit` asks for another number up to 500. Each answer says how many rows matched, how many are
@@ -89,7 +100,7 @@ the read tools print, such as `0x70000001`.
 | Family | Lines |
 |---|---|
 | Session | `characters`, `login <name or id>`, `logout` |
-| Read | `vitals`, `stats`, `location`, `snapshot`, `skills`, `buffs`, `spells [search] [limit <n>]`, `nearby [kind] [range]`, `inspect <id>`, `inventory [search] [limit <n>]`, `equipment`, `vendor [limit <n>]`, `loot list [limit <n>]`, `loot corpses [range]` |
+| Read | `vitals`, `stats`, `location`, `snapshot`, `capabilities [id]`, `skills`, `buffs`, `spells [search] [limit <n>]`, `nearby [kind] [range]`, `inspect <id>`, `inventory [search] [limit <n>]`, `equipment`, `vendor [limit <n>]`, `loot list [limit <n>]`, `loot corpses [range]` |
 | Chat | `say <text>`, `tell <name>, <message>`, `emote <text>` |
 | Target | `target <id>`, `target nearest [kind]`, `untarget` |
 | Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `go to <id, name or target> [within <meters>]`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance combat\|peace`, `cancel` |
