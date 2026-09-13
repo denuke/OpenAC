@@ -37,6 +37,79 @@ protocol, and exposes a plugin API the original never had.
 
 OpenAC does not ship any game data. You supply your own data files.
 
+## What's different in this fork
+
+This fork adds AI play through the Model Context Protocol, plus the movement,
+pathfinding, and line-of-sight work that makes it possible.
+
+### AI play through MCP (bundled Agent plugin)
+
+An MCP server built into the client, listening on `127.0.0.1:31337` from
+launch. Connect with `claude mcp add --transport http openac
+http://127.0.0.1:31337/mcp`.
+
+- **Read tools:** `observe`, `nearby`, `inspect`, `spells`, `skills`,
+  `buffs`, `inventory`, `equipment`, `vendor`, `container`, `corpses`,
+  `characters`, plus `events`, which can wait for a condition, and
+  `outcome`.
+- **Semantic command lines through `act`:**
+  - Session: `characters`, `login <name>`, `logout`
+  - Targeting: `target <id>`, `target nearest <kind>`, `untarget`
+  - Objects: `use <id>`, `use <item> on <id>`, `open <id>`
+  - Items: `loot`, `drop`, `give`, `move`, `equip`, `unequip`
+  - Vendors: `buy <item> [quantity]`, `sell <item> [amount]`
+  - Magic and combat: `cast <spell> [on <id>]`, `attack [id] [power]
+    [height]`, `stance peace|melee|missile|magic`
+  - Chat: `say`, `tell`, `emote`
+- Every action ends in an **outcome** that says what actually happened —
+  `completed`, `refused`, `blocked`, or `unconfirmed` — with a reason.
+  Anything the client hasn't been told is reported as `unknown`, never
+  guessed.
+- **In-game commands:** `/agent status`, `/agent record <path>` for a
+  JSON-lines record of everything the agent saw and did, and `/agent do
+  <line>`.
+
+See [docs/agent-plugin.md](docs/agent-plugin.md).
+
+### Movement API
+
+- `walk`, `run`, `strafe`, and `turn` by distance, angle, or time,
+  combining the way held keys do. Also `turn to <heading>`, `face <id>`,
+  `jump [power]`, `stop`, and `cancel`.
+- Turns land on their exact angle, and the player's heading is reported
+  precisely — no rounding to the nearest key press.
+- Plugin API: `INavigationAutomation.Move`, `StopMoving`, `Jump`,
+  `MoveReport`.
+
+### Navigation and A* pathfinding
+
+- A navmesh built from the client's own collision — terrain, building
+  interiors and shells, and static objects. It's a 0.25 m grid that
+  respects step heights and headroom, and it spans landblock boundaries.
+- A* route planning, with paths straightened so the body stays clear of
+  walls. Routes go through doorways, up and down stairs and ramps, across
+  landblocks, and into dungeons.
+- `go to <id | name | target> [within <m>]`:
+  - Walks the route and opens closed doors on the way.
+  - Re-plans around any spot where the character gets stuck.
+  - Arrives where the target is actually in view, and faces it.
+  - Ends `completed`, `no-route`, or `blocked`, with remaining distance and
+    what (if anything) blocked it.
+- Debug keys: **F4** shows the navmesh, **F5** draws a route to the
+  selection, and **F6** walks there. On the retail keymap, add Ctrl.
+- Plugin API: `INavigationAutomation.GoTo`, `StopGoTo`, `GoToReport`.
+
+### Line of sight
+
+`nearby` and `inspect` carry a hit-or-blocked verdict for an arc spell, a
+war bolt, and an arrow, computed from the client's own projectile physics.
+A blocked shot names what's in the way, such as a closed door or a wall.
+
+### Login automation for plugins
+
+`ILoginAutomation.Snapshot`, `EnterWorld`, `LogOut` — the same login and
+character-selection flow the Agent plugin uses, available to any plugin.
+
 ## Status
 
 OpenAC is in **beta**: it is fully playable against an ACEmulator server, and
