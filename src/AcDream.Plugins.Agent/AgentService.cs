@@ -73,6 +73,7 @@ internal sealed class AgentService : IDisposable
         Commands.Register(new InventoryVerbs(host, Publisher, Outcomes));
         Commands.Register(new VendorVerbs(host, Publisher, Outcomes, _clock));
         Commands.Register(new AttackVerbs(host, Publisher, Outcomes));
+        Context = new AgentContext(host, Commands, Ring, Outcomes, _clock, Publisher);
     }
 
     internal RecordRing Ring { get; }
@@ -82,6 +83,9 @@ internal sealed class AgentService : IDisposable
     internal CommandDispatcher Commands { get; }
 
     internal OutcomeCorrelator Outcomes { get; }
+
+    /// <summary>What consumers such as the MCP tools act and read through.</summary>
+    internal AgentContext Context { get; }
 
     /// <summary>Event polls or rebases that threw; the source is skipped for that tick.</summary>
     internal long EventFailures { get; private set; }

@@ -80,6 +80,24 @@ internal sealed class RecordRing
         }
     }
 
+    /// <summary>The newest <paramref name="count"/> records of the given kinds, oldest first.</summary>
+    internal IReadOnlyList<AgentRecord> Recent(int count, IReadOnlySet<string>? kinds = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+        lock (_gate)
+        {
+            var found = new List<AgentRecord>(count);
+            for (int index = _count - 1; index >= 0 && found.Count < count; index--)
+            {
+                AgentRecord record = _slots[(_head + index) % _slots.Length]!;
+                if (kinds is null || kinds.Contains(record.Kind))
+                    found.Add(record);
+            }
+            found.Reverse();
+            return found.ToArray();
+        }
+    }
+
     internal AgentRecord? Latest(string kind)
     {
         lock (_gate)

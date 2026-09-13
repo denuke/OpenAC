@@ -38,6 +38,10 @@ internal static class OutcomeTable
         [(RecordKinds.AttackOutcome, "lost")] = OutcomeClass.Lost,
     };
 
+    /// <summary>Every record kind that carries an outcome word.</summary>
+    internal static IReadOnlyCollection<string> Kinds =>
+        Rows.Keys.Select(key => key.Kind).Distinct(StringComparer.Ordinal).ToArray();
+
     internal static IEnumerable<string> WordsFor(string kind) =>
         Rows.Keys.Where(key => key.Kind == kind).Select(key => key.Word);
 

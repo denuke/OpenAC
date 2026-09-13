@@ -38,6 +38,10 @@ internal sealed class OutcomeCorrelator
 
     internal int PendingCount => _pending.Count;
 
+    /// <summary>The actions still waiting for an answer, oldest first.</summary>
+    internal IReadOnlyList<(long Id, string Verb, string OutcomeKind)> PendingActions =>
+        _pending.Select(pending => (pending.Id, pending.Verb, pending.OutcomeKind)).ToArray();
+
     /// <summary>Probes that threw; the action is ended as unconfirmed.</summary>
     internal long ProbeFailures { get; private set; }
 

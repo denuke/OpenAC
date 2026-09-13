@@ -18,7 +18,9 @@ internal sealed class McpEndpoint
 
     internal const string Instructions =
         "You are playing Asheron's Call through the OpenAC game client. "
-        + "Use observe to see the character's state and nearby to see what is around it. "
+        + "Use observe to see the character's state and nearby to see what is around it; "
+        + "spells, skills, buffs, inventory, equipment, vendor, container and corpses list what "
+        + "the character has and the names and ids to act on. "
         + "act runs one command line and returns a handle; call outcome with the handle to learn "
         + "what actually happened, because an accepted action is not a finished one. "
         + "events waits for records, so you never need to poll. "
