@@ -55,6 +55,33 @@ public sealed class AttackVerbsTests
     }
 
     [Fact]
+    public void WithRepeatAttacksTheOutcomeWaitsForTheSwingsToStopAndCountsThem()
+    {
+        var (host, verbs, correlator, _, ring) = Build(PluginCombatMode.Melee);
+        FakeCombat combat = host.FakeAutomation.FakeCombat;
+        verbs.Handle(Line($"attack 0x{Drudge:X8}"));
+
+        combat.Snapshot = combat.Snapshot with { CompletionRevision = 1, RepeatAttackInProgress = true };
+        correlator.Tick(inWorld: true);
+        combat.Snapshot = combat.Snapshot with { CompletionRevision = 3 };
+        correlator.Tick(inWorld: true);
+        Assert.Empty(Records(ring, RecordKinds.AttackOutcome));
+
+        combat.Snapshot = combat.Snapshot with
+        {
+            CompletionRevision = 4,
+            RepeatAttackInProgress = false,
+            CompletionWeenieError = 0x0036u,
+        };
+        correlator.Tick(inWorld: true);
+
+        JsonElement outcome = Records(ring, RecordKinds.AttackOutcome).Single();
+        Assert.Equal("ended", outcome.GetProperty("outcome").GetString());
+        Assert.Equal(4, outcome.GetProperty("swings").GetInt32());
+        Assert.Contains("0x0036", outcome.GetProperty("reason").GetString());
+    }
+
+    [Fact]
     public void OutsideAMeleeOrMissileStanceTheAttackIsRefused()
     {
         var (host, verbs, _, _, ring) = Build(PluginCombatMode.Peace);
