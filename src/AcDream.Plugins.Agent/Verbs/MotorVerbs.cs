@@ -12,11 +12,12 @@ namespace AcDream.Plugins.Agent.Verbs;
 /// Moving and turning the character: <c>walk</c> and <c>run</c> forward or
 /// backward, <c>strafe left|right</c> and <c>turn left|right</c>, each for a
 /// distance, an angle, a time, or until <c>stop</c>; <c>turn to &lt;heading&gt;</c>,
-/// <c>face &lt;guid&gt;</c>, <c>jump</c>, <c>stance &lt;mode&gt;</c> and <c>cancel</c>.
-/// Walking or running, strafing and turning combine the way held movement keys
-/// do, and a new move replaces only a move of its own kind. The client carries
-/// out each move and ends it; these verbs ask for it and report how it ended.
-/// Travel to a named place is not provided.
+/// <c>face &lt;guid&gt;</c>, <c>go to &lt;object&gt;</c>, <c>jump</c>,
+/// <c>stance &lt;mode&gt;</c> and <c>cancel</c>. Walking or running, strafing and
+/// turning combine the way held movement keys do, and a new move replaces only
+/// a move of its own kind. <c>go to</c> walks to an object along a route the
+/// client plans. The client carries out each move and ends it; these verbs ask
+/// for it and report how it ended.
 /// </summary>
 internal sealed class MotorVerbs : IVerbFamily
 {
@@ -41,11 +42,26 @@ internal sealed class MotorVerbs : IVerbFamily
     internal const double SlowestDegreesPerSecond = 30d;
     internal const double MoveWindowSlackSeconds = 5d;
 
+    /// <summary>A walk to an object ends this near it unless the line says how near.</summary>
+    internal const float DefaultArrivalMeters = 2.5f;
+    internal const float MaximumArrivalMeters = 50f;
+
+    /// <summary>The farthest object a walk is planned to.</summary>
+    internal const double MaximumGoToMeters = 250d;
+
+    /// <summary>
+    /// A walk's report is waited for as long as planning takes, plus the straight
+    /// distance at this slow a pace, since a route bends around what is in the way.
+    /// </summary>
+    internal const double GoToPlanningSeconds = 30d;
+    internal const double GoToSlowestMetersPerSecond = 0.5d;
+
     internal const string Completed = "completed";
     internal const string Cancelled = "cancelled";
     internal const string Blocked = "blocked";
+    internal const string NoRoute = "no-route";
 
-    internal static readonly IReadOnlyList<string> OutcomeWords = [Completed, Cancelled, Blocked];
+    internal static readonly IReadOnlyList<string> OutcomeWords = [Completed, Cancelled, Blocked, NoRoute];
 
     private static readonly Dictionary<string, PluginCombatMode> Stances =
         new(StringComparer.OrdinalIgnoreCase)
@@ -71,7 +87,7 @@ internal sealed class MotorVerbs : IVerbFamily
     }
 
     public IReadOnlyCollection<string> ReservedWords { get; } =
-        ["walk", "run", "strafe", "turn", "face", "jump", "stop", "stance", "cancel"];
+        ["walk", "run", "strafe", "turn", "face", "go", "goto", "jump", "stop", "stance", "cancel"];
 
     public VerbResult Handle(CommandLine line)
     {
@@ -82,6 +98,7 @@ internal sealed class MotorVerbs : IVerbFamily
             "walk" or "run" or "strafe" => Travel(line),
             "turn" => Turn(line),
             "face" => Face(line),
+            "go" or "goto" => GoTo(line),
             "jump" => Jump(line),
             "stop" => Stop(line),
             "stance" => Stance(line),
@@ -192,6 +209,152 @@ internal sealed class MotorVerbs : IVerbFamily
             PluginMovePace.Run,
             new Amount((float)Math.Abs(delta), PluginMoveUnit.MetersOrDegrees),
             aim);
+    }
+
+    /// <summary>
+    /// Asks the client to walk to an object, named by id, by name among the
+    /// objects around the character, or as <c>target</c> for the selection, and
+    /// resolves from the client's own report of how the walk ended.
+    /// </summary>
+    private VerbResult GoTo(CommandLine line)
+    {
+        const string usage = "usage: go to <object id, name, or 'target'> [within <meters>]";
+        string[] words = Words(line);
+        int first = 0;
+        if (line.Verb == "go")
+        {
+            if (words.Length == 0 || !words[0].Equals("to", StringComparison.OrdinalIgnoreCase))
+                return Refuse(line, usage);
+            first = 1;
+        }
+        int end = words.Length;
+        float arrival = DefaultArrivalMeters;
+        if (end - first >= 3 && words[end - 2].Equals("within", StringComparison.OrdinalIgnoreCase))
+        {
+            int index = end - 1;
+            if (!TryAmount(words, ref index, turn: false, out Amount within)
+                || within.Unit != PluginMoveUnit.MetersOrDegrees
+                || !(within.Value > 0f && within.Value <= MaximumArrivalMeters))
+            {
+                return Refuse(line, $"within must be more than 0 and at most {MaximumArrivalMeters:0} meters");
+            }
+            arrival = within.Value;
+            end -= 2;
+        }
+        if (end <= first)
+            return Refuse(line, usage);
+        string named = string.Join(' ', words[first..end]);
+
+        IAutomationSurface automation = _host.Automation;
+        PluginNavigationSnapshot self = automation.Navigation.Snapshot;
+        if (!self.IsAvailable)
+            return Refuse(line, "the client has no position for its own body");
+        if (self.IsPortalSpace)
+            return Refuse(line, "the character is in portal space");
+        if (!TryFindGoal(automation, self, named, out PluginWorldObject goal, out string problem))
+            return Refuse(line, problem);
+        double distance = Geometry.DistanceMeters(self.Position, goal.Position);
+        if (distance > MaximumGoToMeters)
+            return Refuse(line, $"{goal.Name} is {distance:0} m away, and a walk is planned to at most {MaximumGoToMeters:0} m");
+
+        INavigationAutomation navigation = automation.Navigation;
+        PluginNavigationCommandStatus status = navigation.GoTo(goal.ObjectId, arrival);
+        if (status != PluginNavigationCommandStatus.Accepted)
+        {
+            return Refuse(line, status == PluginNavigationCommandStatus.Unavailable
+                ? "this client cannot plan a walk for a plugin"
+                : "the client did not accept the walk");
+        }
+
+        long sequence = navigation.GoToReport.Sequence;
+        Accepted(line, new JsonObject
+        {
+            ["target"] = Facts.Hex(goal.ObjectId),
+            ["name"] = goal.Name,
+            ["meters"] = Math.Round(distance, 1),
+            ["within"] = Math.Round(arrival, 1),
+            ["from"] = Coordinates.Describe(self.Position),
+        });
+        double window = Math.Min(
+            MaximumMoveSeconds * 2d,
+            GoToPlanningSeconds + (distance / GoToSlowestMetersPerSecond));
+        _outcomes.Watch(line.Id, line.Verb, RecordKinds.GoalResolved, window, () =>
+        {
+            PluginGoToReport report = navigation.GoToReport;
+            if (report.Sequence != sequence)
+                return new Resolution(Cancelled, "a later walk replaced it");
+            if (report.State is PluginGoToState.Planning or PluginGoToState.Walking)
+                return null;
+            var fields = new JsonObject
+            {
+                ["remaining"] = float.IsFinite(report.RemainingMeters)
+                    ? Math.Round(report.RemainingMeters, 1)
+                    : (double?)null,
+                ["replans"] = report.Replans,
+                ["blockedBy"] = report.BlockedByObjectId != 0u ? Facts.Hex(report.BlockedByObjectId) : null,
+            };
+            return report.State switch
+            {
+                PluginGoToState.Arrived => new Resolution(Completed, ArrivalNote(report.Reason), fields),
+                PluginGoToState.NoRoute => new Resolution(NoRoute, report.Reason, fields),
+                PluginGoToState.Blocked => new Resolution(Blocked, report.Reason, fields),
+                PluginGoToState.Stopped => new Resolution(Cancelled, report.Reason, fields),
+                PluginGoToState.Interrupted => new Resolution(Cancelled, "the player moved the character", fields),
+                PluginGoToState.Lost => new Resolution(OutcomeCorrelator.Lost, report.Reason, fields),
+                _ => new Resolution(OutcomeCorrelator.Unconfirmed, "the client lost track of the walk", fields),
+            };
+        });
+        return VerbResult.Handled;
+    }
+
+    /// <summary>
+    /// What the client said of an arrival beyond having arrived, such as a route
+    /// that ends short of the object or without a line of sight to it.
+    /// </summary>
+    private static string? ArrivalNote(string? reason) =>
+        string.IsNullOrEmpty(reason) || reason.Equals("arrived", StringComparison.Ordinal) ? null : reason;
+
+    private bool TryFindGoal(
+        IAutomationSurface automation,
+        PluginNavigationSnapshot self,
+        string named,
+        out PluginWorldObject goal,
+        out string problem)
+    {
+        uint id;
+        if (named.Equals("target", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_host.Selection.SelectedObjectId is not { } selected)
+            {
+                goal = default;
+                problem = "nothing is targeted";
+                return false;
+            }
+            id = selected;
+        }
+        else if (!Guids.TryParse(named, out id))
+        {
+            foreach (PlacedObject placed in WorldQuery.Around(automation, self, null))
+            {
+                if (placed.Value.Name.Equals(named, StringComparison.OrdinalIgnoreCase))
+                {
+                    goal = placed.Value;
+                    problem = string.Empty;
+                    return true;
+                }
+            }
+            goal = default;
+            problem = $"nothing called '{named}' is nearby";
+            return false;
+        }
+
+        if (!automation.Objects.TryGet(id, out goal) || !goal.HasPosition)
+        {
+            problem = "the client holds no position for that object";
+            return false;
+        }
+        problem = string.Empty;
+        return true;
     }
 
     /// <summary>Asks the client for a move and resolves it from the client's own report of how it ended.</summary>
@@ -319,6 +482,7 @@ internal sealed class MotorVerbs : IVerbFamily
         {
             return Refuse(line, "usage: stop, or stop walking|running|strafing|turning");
         }
+        navigation.StopGoTo();
         if (status != PluginNavigationCommandStatus.Accepted)
             return Refuse(line, "the client did not accept the stop");
         Accepted(line, new JsonObject { ["stopped"] = stopped });
@@ -346,6 +510,7 @@ internal sealed class MotorVerbs : IVerbFamily
     private VerbResult Cancel(CommandLine line)
     {
         IAutomationSurface automation = _host.Automation;
+        automation.Navigation.StopGoTo();
         automation.Navigation.StopMoving();
         automation.Navigation.ClearMovementIntent();
         automation.Combat.AbortPhysicalAttack();

@@ -71,6 +71,7 @@ internal sealed class AppAutomationSurface
         Array.Empty<PluginProjectileDebugSample>();
     private long _projectileDebugSamplesExpireAt;
     private CurrentGameRuntimeAdapter? _sessionCommands;
+    private AcDream.App.Navigation.NavigationWalkController? _navigationWalk;
     private IDisposable? _communicationSubscription;
     private readonly List<PluginChatMessage> _chatMessages = [];
     private ulong _pluginChatSequence;
@@ -451,6 +452,13 @@ internal sealed class AppAutomationSurface
         ArgumentNullException.ThrowIfNull(commands);
         lock (_gate)
             _sessionCommands = commands;
+    }
+
+    public void BindNavigationWalk(AcDream.App.Navigation.NavigationWalkController walk)
+    {
+        ArgumentNullException.ThrowIfNull(walk);
+        lock (_gate)
+            _navigationWalk = walk;
     }
 
     public void BindSpeciesNameResolver(Func<int, string> resolver)
@@ -1360,18 +1368,20 @@ internal sealed class AppAutomationSurface
 
         try
         {
-            return EvaluateProjectilePath(
+            return WithServerIds(runtime, EvaluateProjectilePath(
                 physics,
                 localId,
                 localBody,
-                targetObjectId,
+                target.Key?.LocalEntityId ?? targetObjectId,
                 targetBody,
                 kind,
                 targetHeight,
                 projectileRadius,
                 stepDistance,
                 maximumCollisionChecks,
-                captureDiagnostics);
+                runtime.CharacterOwner.Options.GetOptionBit(
+                    AcDream.Core.Net.Messages.CharacterOptionId.UseFastMissiles),
+                captureDiagnostics));
         }
         catch (Exception error)
         {
@@ -1385,13 +1395,14 @@ internal sealed class AppAutomationSurface
         PhysicsEngine physics,
         uint localObjectId,
         PhysicsBody local,
-        uint targetObjectId,
+        uint targetCollisionId,
         PhysicsBody target,
         PluginProjectilePathKind kind,
         PluginAttackHeight targetHeight,
         float radius,
         float stepDistance,
         int maximumChecks,
+        bool fastMissiles,
         bool captureDiagnostics)
     {
         System.Numerics.Vector3 baseDelta = target.Position - local.Position;
@@ -1435,7 +1446,7 @@ internal sealed class AppAutomationSurface
         float speed = kind switch
         {
             PluginProjectilePathKind.Arc => 37.5185f,
-            PluginProjectilePathKind.Missile => 46f,
+            PluginProjectilePathKind.Missile => fastMissiles ? 46f : 23f,
             _ => 100f,
         };
         float totalTime = horizontalDistance / speed;
@@ -1497,7 +1508,7 @@ internal sealed class AppAutomationSurface
                 moverFlags: ObjectInfoState.PathClipped,
                 movingEntityId: localObjectId,
                 localSphereOrigin: System.Numerics.Vector3.Zero,
-                designatedTargetId: targetObjectId);
+                designatedTargetId: targetCollisionId);
             float requestedDistance = System.Numerics.Vector3.Distance(current, next);
             float deliveredDistance = System.Numerics.Vector3.Distance(
                 current,
@@ -1507,7 +1518,7 @@ internal sealed class AppAutomationSurface
                 || resolved.LastCollidedObjectId != 0u
                 || resolved.CollisionNormalValid
                 || deliveredDistance + 0.01f < requestedDistance;
-            bool targetHit = resolved.LastCollidedObjectId == targetObjectId;
+            bool targetHit = resolved.LastCollidedObjectId == targetCollisionId;
             debugSamples?.Add(new PluginProjectileDebugSample(
                 resolved.Position,
                 targetHit || !stopped,
@@ -1518,7 +1529,7 @@ internal sealed class AppAutomationSurface
                     new(
                         PluginProjectilePathStatus.Clear,
                         check,
-                        targetObjectId),
+                        targetCollisionId),
                     debugSamples);
             }
             if (stopped)
@@ -1551,6 +1562,17 @@ internal sealed class AppAutomationSurface
         List<PluginProjectileDebugSample>? samples) => samples is null
             ? result
             : result with { DebugSamples = samples.ToArray() };
+
+    /// <summary>
+    /// The result naming its blocking object by server id. Live objects collide
+    /// under the client's own ids, so a collision's id is mapped back to the
+    /// object's record.
+    /// </summary>
+    private static PluginProjectilePathResult WithServerIds(GameRuntime runtime, PluginProjectilePathResult result) =>
+        result.BlockingObjectId != 0u
+        && runtime.EntityObjects.Entities.TryGetByLocalId(result.BlockingObjectId, out RuntimeEntityRecord record)
+            ? result with { BlockingObjectId = record.ServerGuid }
+            : result;
 
     // ── INavigationAutomation ─────────────────────────────────────────────
     PluginNavigationSnapshot INavigationAutomation.Snapshot
@@ -1852,6 +1874,69 @@ internal sealed class AppAutomationSurface
         }
     }
 
+    /// <summary>The farthest from its object a walk may be asked to end.</summary>
+    internal const float MaximumGoToArrivalMeters = 50f;
+
+    public PluginNavigationCommandStatus GoTo(uint objectId, float arrivalMeters)
+    {
+        AcDream.App.Navigation.NavigationWalkController? walk;
+        lock (_gate)
+            walk = _navigationWalk;
+        if (walk is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        if (objectId == 0u || !(arrivalMeters > 0f) || arrivalMeters > MaximumGoToArrivalMeters)
+            return PluginNavigationCommandStatus.Rejected;
+        walk.WalkTo(objectId, arrivalMeters);
+        return PluginNavigationCommandStatus.Accepted;
+    }
+
+    public PluginNavigationCommandStatus StopGoTo()
+    {
+        AcDream.App.Navigation.NavigationWalkController? walk;
+        lock (_gate)
+            walk = _navigationWalk;
+        if (walk is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        if (!walk.IsBusy)
+            return PluginNavigationCommandStatus.Rejected;
+        walk.Stop();
+        return PluginNavigationCommandStatus.Accepted;
+    }
+
+    public PluginGoToReport GoToReport
+    {
+        get
+        {
+            AcDream.App.Navigation.NavigationWalkController? walk;
+            lock (_gate)
+                walk = _navigationWalk;
+            return walk is null || !IsAvailable ? default : ProjectGoToReport(walk.Report);
+        }
+    }
+
+    internal static PluginGoToReport ProjectGoToReport(in AcDream.App.Navigation.NavigationWalkReport report) =>
+        new(
+            report.Sequence,
+            report.State switch
+            {
+                AcDream.App.Navigation.NavigationWalkState.Planning => PluginGoToState.Planning,
+                AcDream.App.Navigation.NavigationWalkState.Walking => PluginGoToState.Walking,
+                AcDream.App.Navigation.NavigationWalkState.Arrived => PluginGoToState.Arrived,
+                AcDream.App.Navigation.NavigationWalkState.NoRoute => PluginGoToState.NoRoute,
+                AcDream.App.Navigation.NavigationWalkState.Blocked => PluginGoToState.Blocked,
+                AcDream.App.Navigation.NavigationWalkState.Stopped => PluginGoToState.Stopped,
+                AcDream.App.Navigation.NavigationWalkState.Interrupted => PluginGoToState.Interrupted,
+                AcDream.App.Navigation.NavigationWalkState.Lost => PluginGoToState.Lost,
+                _ => PluginGoToState.None,
+            },
+            report.ObjectId,
+            report.RemainingMeters,
+            report.Replans,
+            report.Reason)
+        {
+            BlockedByObjectId = report.BlockedByObjectId,
+        };
+
     internal static RuntimeMoveRequest? ProjectMoveRequest(
         PluginMoveDirection direction,
         PluginMovePace pace,
@@ -2075,7 +2160,9 @@ internal sealed class AppAutomationSurface
             HasAppraisalData = item is not null && HasPropertyData(item.Properties),
             LastIdTime = item?.LastAppraisalTimeMs ?? 0,
             IsDoorOpen = (publicFlags & (uint)PublicWeenieFlags.Door) != 0u
-                && (item?.Properties.GetBool((uint)PropertyBool.Open) ?? false),
+                && (record is not null
+                    ? record.FinalPhysicsState.HasFlag(PhysicsStateFlags.Ethereal)
+                    : item?.Properties.GetBool((uint)PropertyBool.Open) ?? false),
             StackSize = Math.Max(1, item?.StackSize ?? 1),
             ItemsCapacity = item?.ItemsCapacity ?? 0,
             ContainersCapacity = item?.ContainersCapacity ?? 0,

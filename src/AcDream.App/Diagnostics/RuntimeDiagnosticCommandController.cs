@@ -307,6 +307,16 @@ internal sealed class RuntimeDiagnosticCommandController : IRuntimeDiagnosticCom
             case InputAction.AcdreamToggleCollisionWires:
                 ToggleCollisionWireframes();
                 return true;
+            case InputAction.AcdreamToggleNavMesh:
+                _toast?.Invoke(_sceneDebug.ToggleNavMesh() ? "Navmesh shown" : "Navmesh hidden");
+                return true;
+            case InputAction.AcdreamNavRouteToSelection:
+                _sceneDebug.RequestNavRoute();
+                _toast?.Invoke("Routing to the selected object");
+                return true;
+            case InputAction.AcdreamNavWalkToSelection:
+                _sceneDebug.RequestNavWalk();
+                return true;
             case InputAction.AcdreamDumpNearby:
                 _nearby.Dump();
                 return true;

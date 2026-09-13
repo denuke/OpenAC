@@ -133,6 +133,86 @@ public sealed class WorldReadVerbsTests
         Assert.Equal("unknown", inspected.GetProperty("properties").GetProperty("presence").GetString());
     }
 
+    [Fact]
+    public void NearbyCarriesASightVerdictPerProjectileKindAimedAtItsOwnHeight()
+    {
+        var (host, verbs, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Drudge Skulker", PluginObjectClass.Monster, 0.01, 0d));
+        FakeProjectiles projectiles = host.FakeAutomation.FakeProjectiles;
+        projectiles.Results[(0x70000001u, PluginProjectilePathKind.Straight)] =
+            new(PluginProjectilePathStatus.Blocked, 12, 0x7A000001u);
+        projectiles.Results[(0x70000001u, PluginProjectilePathKind.Missile)] = new(PluginProjectilePathStatus.Blocked, 9);
+
+        verbs.Handle(Line("nearby"));
+
+        JsonElement sight = Latest(ring, RecordKinds.Nearby).GetProperty("entities")[0].GetProperty("sight");
+        Assert.Equal("visible", sight.GetProperty("arc").GetString());
+        Assert.Equal("blocked", sight.GetProperty("bolt").GetString());
+        Assert.Equal("blocked", sight.GetProperty("arrow").GetString());
+        Assert.Equal("0x7A000001", sight.GetProperty("blockedBy").GetProperty("bolt").GetString());
+        Assert.False(sight.GetProperty("blockedBy").TryGetProperty("arrow", out _));
+        Assert.Equal(JsonValueKind.Null, sight.GetProperty("because").ValueKind);
+        Assert.Equal(
+            [
+                (0x70000001u, PluginProjectilePathKind.Arc, PluginAttackHeight.High),
+                (0x70000001u, PluginProjectilePathKind.Straight, PluginAttackHeight.Medium),
+                (0x70000001u, PluginProjectilePathKind.Missile, PluginAttackHeight.Low),
+            ],
+            projectiles.Traced);
+    }
+
+    [Fact]
+    public void ASightTheClientCannotTraceIsCannotSayWithTheReasonAndNeverVisible()
+    {
+        var (host, verbs, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Drudge Skulker", PluginObjectClass.Monster, 0.01, 0d));
+        foreach (PluginProjectilePathKind kind in Enum.GetValues<PluginProjectilePathKind>())
+            host.FakeAutomation.FakeProjectiles.Results[(0x70000001u, kind)] = new(PluginProjectilePathStatus.Unavailable);
+
+        verbs.Handle(Line("nearby"));
+
+        JsonElement sight = Latest(ring, RecordKinds.Nearby).GetProperty("entities")[0].GetProperty("sight");
+        foreach (string kind in new[] { "arc", "bolt", "arrow" })
+            Assert.Equal("cannot-say", sight.GetProperty(kind).GetString());
+        Assert.Contains("cannot trace", sight.GetProperty("because").GetString());
+    }
+
+    [Fact]
+    public void OnlyTheNearestObjectsInRangeAreTracedAndTheRestSayWhy()
+    {
+        var (host, verbs, ring) = Build();
+        for (uint index = 0; index < Sight.TracedObjects + 2; index++)
+        {
+            host.FakeAutomation.FakeObjects.Add(
+                Placed(0x70000100u + index, $"Drudge {index}", PluginObjectClass.Monster, 0.001 * (index + 1), 0d));
+        }
+
+        verbs.Handle(Line("nearby"));
+
+        JsonElement[] rows = [.. Latest(ring, RecordKinds.Nearby).GetProperty("entities").EnumerateArray()];
+        Assert.Equal(Sight.TracedObjects * Sight.Kinds.Count, host.FakeAutomation.FakeProjectiles.Traced.Count);
+        Assert.Equal("visible", rows[0].GetProperty("sight").GetProperty("bolt").GetString());
+        JsonElement untraced = rows[Sight.TracedObjects].GetProperty("sight");
+        Assert.Equal("cannot-say", untraced.GetProperty("bolt").GetString());
+        Assert.Contains("inspect", untraced.GetProperty("because").GetString());
+    }
+
+    [Fact]
+    public void InspectCarriesASightVerdictPerProjectileKind()
+    {
+        var (host, verbs, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Shopkeeper", PluginObjectClass.Vendor, 0.01, 0d));
+        host.FakeAutomation.FakeProjectiles.Results[(0x70000001u, PluginProjectilePathKind.Arc)] =
+            new(PluginProjectilePathStatus.Blocked);
+
+        verbs.Handle(Line("inspect 0x70000001"));
+
+        JsonElement sight = Latest(ring, RecordKinds.EntityInspected).GetProperty("sight");
+        Assert.Equal("blocked", sight.GetProperty("arc").GetString());
+        Assert.Equal("visible", sight.GetProperty("bolt").GetString());
+        Assert.Equal("visible", sight.GetProperty("arrow").GetString());
+    }
+
     private static PluginWorldObject Placed(
         uint id,
         string name,

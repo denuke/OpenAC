@@ -68,7 +68,9 @@ internal static class ReadTools
         new ReadTool(context, "nearby", "What is around me?",
             "Objects in the world around the character, nearest first, with distance in meters, "
             + "compass bearing, how far to turn to face each, and what kind of thing it is. Counts every "
-            + "kind in range and anything unclassified, so a short list never reads as an empty world."
+            + "kind in range and anything unclassified, so a short list never reads as an empty world. "
+            + "The nearest objects carry a sight verdict for an arc spell, a war bolt and an arrow: visible, "
+            + "blocked with what blocked it, such as a closed door, or cannot-say with the reason."
             + Nothing,
             () => new JsonObject
             {
@@ -79,8 +81,9 @@ internal static class ReadTools
             Nearby),
         new ReadTool(context, "inspect", "What is this thing?",
             "Everything the client holds about one object, by id: its kind, whether it is carried, "
-            + "where it is and how far, whether it has been appraised, and its properties. An id the "
-            + "client does not hold is refused, never guessed."
+            + "where it is and how far, whether an arc spell, a war bolt and an arrow can reach it, whether "
+            + "it has been appraised, and its properties. An id the client does not hold is refused, never "
+            + "guessed."
             + Nothing,
             () => new JsonObject { ["guid"] = Property("string", "An object id such as 0x70000001.") },
             ["guid"],

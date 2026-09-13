@@ -84,6 +84,9 @@ public sealed class KeyBindings
         b.Add(new(new KeyChord(Key.F9, ModifierMask.None), InputAction.AcdreamSensitivityUp));
         b.Add(new(new KeyChord(Key.M,  ModifierMask.Ctrl), InputAction.AcdreamToggleAudioMute));
         b.Add(new(new KeyChord(Key.F10, ModifierMask.None), InputAction.AcdreamCycleWeather));
+        b.Add(new(new KeyChord(Key.F4, ModifierMask.None), InputAction.AcdreamToggleNavMesh));
+        b.Add(new(new KeyChord(Key.F5, ModifierMask.None), InputAction.AcdreamNavRouteToSelection));
+        b.Add(new(new KeyChord(Key.F6, ModifierMask.None), InputAction.AcdreamNavWalkToSelection));
         b.Add(new(new KeyChord(Key.Tab, ModifierMask.None), InputAction.AcdreamTogglePlayerMode));
         b.Add(new(new KeyChord(Key.Escape, ModifierMask.None), InputAction.EscapeKey));
 
@@ -277,6 +280,9 @@ public sealed class KeyBindings
         b.Add(new(new KeyChord(Key.F8,  ModifierMask.Ctrl), InputAction.AcdreamSensitivityDown));
         b.Add(new(new KeyChord(Key.F9,  ModifierMask.Ctrl), InputAction.AcdreamSensitivityUp));
         b.Add(new(new KeyChord(Key.F10, ModifierMask.Ctrl), InputAction.AcdreamCycleWeather));
+        b.Add(new(new KeyChord(Key.F4,  ModifierMask.Ctrl), InputAction.AcdreamToggleNavMesh));
+        b.Add(new(new KeyChord(Key.F5,  ModifierMask.Ctrl), InputAction.AcdreamNavRouteToSelection));
+        b.Add(new(new KeyChord(Key.F6,  ModifierMask.Ctrl), InputAction.AcdreamNavWalkToSelection));
         b.Add(new(new KeyChord(Key.M,   ModifierMask.Ctrl), InputAction.AcdreamToggleAudioMute));
 
 

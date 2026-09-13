@@ -50,8 +50,8 @@ Only `act` can make the character do anything. Every other tool only reads.
 | `act` | Runs one command line and returns a handle with a status: `pending`, `done`, `refused` or `sent-as-chat`. |
 | `outcome` | How the line with a handle ended: its outcome word, its shared class, and every record it produced. |
 | `events` | Records after a cursor. With `waitSeconds` it waits for the next one, and `until` wakes it on a condition. |
-| `nearby` | Objects around the character, nearest first, with distance, bearing and kind. |
-| `inspect` | Everything the client holds about one object. |
+| `nearby` | Objects around the character, nearest first, with distance, bearing, kind and sight. |
+| `inspect` | Everything the client holds about one object, with its sight. |
 | `spells` | Known spells, narrowed by `search`, including whether their components are carried. |
 | `skills` | Skills with their training and values. |
 | `buffs` | Enchantments on the character with the time remaining. |
@@ -88,7 +88,7 @@ the read tools print, such as `0x70000001`.
 | Read | `vitals`, `stats`, `location`, `snapshot`, `skills`, `buffs`, `spells [search]`, `nearby [kind] [range]`, `inspect <id>`, `inventory [search]`, `equipment`, `vendor`, `loot list`, `loot corpses [range]` |
 | Chat | `say <text>`, `tell <name>, <message>`, `emote <text>` |
 | Target | `target <id>`, `target nearest [kind]`, `untarget` |
-| Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance peace\|melee\|missile\|magic`, `cancel` |
+| Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `go to <id, name or target> [within <meters>]`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance peace\|melee\|missile\|magic`, `cancel` |
 | Magic | `cast <spell name or id> [on <id>]` |
 | Objects | `use <id>`, `use <item id> on <id>`, `open <id>` |
 | Items | `loot <item id>`, `drop <item id> [amount]`, `give <item id> to <id> [amount]`, `move <item id> to <container id> [amount]`, `equip <item id>`, `unequip <item id>` |
@@ -112,12 +112,36 @@ without stopping it, and a new move replaces only a move of its own kind. The
 client carries out each move itself, lands a turn on its exact angle, and
 reports a move as blocked when the character stops making progress. A move
 without an amount keeps going until `stop`, for at most thirty seconds, and the
-player's own movement keys end every move at once. `go` and `goto` are refused,
-because finding a route to a named place is not part of this plugin. Client
+player's own movement keys end every move at once.
+
+`go to` walks to an object along a route the client plans from its own
+collision world: around walls and objects, through doorways, and up and down
+ramps and stairs. A walk arrives within `within` meters of the object, 2.5 by
+default, only where no wall stands between the character and the object, and
+ends facing it. When nothing that near can both be reached and see the object,
+such as a vendor behind a counter, the walk ends at the nearest spot that can,
+up to 10 m away. When no reachable spot can see it, as through a window whose
+collision fills the opening, the walk ends at the nearest reachable spot up to
+10 m away. A walk that ends short in either way still completes, and its
+`reason` says why. A walk that meets a closed door on its way opens it first,
+as a player's click would, and goes on once it is open. When the character
+stops making progress, the client plans again around the spot where it stuck; a
+walk that stays blocked names what stood beside that spot in `blockedBy`, such
+as a door that would not open. `remaining` is the straight-line distance from
+the character to where the object stands, and `no-route` means nothing joins
+the character to the object. `stop`, `cancel` and the player's movement keys
+end a walk. Client
 commands that close the client, kill the character, or change its player-killer
-status are refused too, and `logout` is how a model leaves the world. Any other
-line is handed to the client as chat or a
+status are refused, and `logout` is how a model leaves the world. Any other line is handed to the client as chat or a
 client command, so a model can make the character speak.
+
+Objects in `nearby` and `inspect` carry `sight`: a verdict for an arc spell, a war
+bolt and an arrow, each `visible`, `blocked`, or `cannot-say` with `because`. The
+three fly different paths, so an arc can clear a ledge that stops a bolt, and
+`blockedBy` names what stopped a blocked shot, such as a closed door. The client
+traces each path through its own collision world, as a prediction: the server
+still decides at launch. One `nearby` answer traces its nearest twelve objects
+within 80 m, and `inspect` traces any one.
 
 ## Records
 
