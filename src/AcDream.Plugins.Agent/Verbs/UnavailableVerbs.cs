@@ -19,31 +19,24 @@ internal sealed class UnavailableVerbs : IVerbFamily
         _publisher = publisher;
     }
 
-    public IReadOnlyCollection<string> ReservedWords { get; } =
-        ["walk", "run", "go", "goto", "strafe", "stop", "logout"];
+    public IReadOnlyCollection<string> ReservedWords { get; } = ["go", "goto", "logout"];
 
     public VerbResult Handle(CommandLine line)
     {
-        switch (line.Verb)
+        if (line.Verb == "logout")
+            return VerbResult.Refused("ending the session is left to the player");
+
+        const string reason =
+            "going to a place needs navigation, which this plugin does not provide; "
+            + "'walk', 'run' and 'strafe' move for a distance or a time, and 'turn' and 'face' aim the character";
+        _publisher.Publish(RecordKinds.GoalRefused, new JsonObject
         {
-            case "logout":
-                return VerbResult.Refused("ending the session is left to the player");
-            case "stop":
-                return VerbResult.Refused(
-                    "'stop' is ambiguous; use 'cancel' to stop moving or attacking");
-            default:
-                const string reason =
-                    "moving to a place needs navigation, which this plugin does not provide; "
-                    + "'turn to <heading>', 'jump' and 'cancel' are available";
-                _publisher.Publish(RecordKinds.GoalRefused, new JsonObject
-                {
-                    ["id"] = line.Id,
-                    ["verb"] = line.Verb,
-                    ["line"] = line.Text,
-                    ["rung"] = "navigation",
-                    ["reason"] = reason,
-                });
-                return VerbResult.Refused(reason);
-        }
+            ["id"] = line.Id,
+            ["verb"] = line.Verb,
+            ["line"] = line.Text,
+            ["rung"] = "navigation",
+            ["reason"] = reason,
+        });
+        return VerbResult.Refused(reason);
     }
 }

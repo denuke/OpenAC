@@ -148,10 +148,7 @@ public sealed class AgentServiceStateTests
         using var service = new AgentService(host, _ => new RecordingSink());
 
         long id = service.Commands.Deliver("turn to 90", "mcp").Id;
-        host.FakeAutomation.FakeNavigation.Snapshot = host.FakeAutomation.FakeNavigation.Snapshot with
-        {
-            Position = new PluginNavigationPosition(0u, 0d, 0d, 0d, 90f, true),
-        };
+        host.FakeAutomation.FakeNavigation.End(PluginMoveChannel.Turn, PluginMoveState.Completed, covered: 90f);
         service.OnTick(0.016);
 
         AgentRecord resolved = Assert.Single(

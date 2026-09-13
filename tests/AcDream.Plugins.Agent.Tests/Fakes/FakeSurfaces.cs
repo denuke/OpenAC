@@ -34,6 +34,72 @@ internal sealed class FakeNavigation : INavigationAutomation
         Headings.Add(headingDegrees);
         return PluginNavigationCommandStatus.Accepted;
     }
+
+    internal List<(PluginMoveDirection Direction, PluginMovePace Pace, float Amount, PluginMoveUnit Unit)> Moves { get; } = [];
+    internal List<float> Jumps { get; } = [];
+
+    /// <summary>Each stop asked for: a channel, or null for every move.</summary>
+    internal List<PluginMoveChannel?> Stops { get; } = [];
+    internal PluginNavigationCommandStatus MoveStatus { get; set; } = PluginNavigationCommandStatus.Accepted;
+    private long _sequence;
+
+    public PluginMoveReport MoveReport { get; set; }
+
+    public PluginNavigationCommandStatus Move(
+        PluginMoveDirection direction,
+        PluginMovePace pace,
+        float amount,
+        PluginMoveUnit unit = PluginMoveUnit.MetersOrDegrees)
+    {
+        Moves.Add((direction, pace, amount, unit));
+        if (MoveStatus == PluginNavigationCommandStatus.Accepted)
+        {
+            SetProgress(
+                PluginMoveReport.ChannelOf(direction),
+                new PluginMoveProgress(++_sequence, PluginMoveState.Moving, direction, pace, amount, unit, 0f, 0f));
+        }
+        return MoveStatus;
+    }
+
+    /// <summary>Ends the move on a channel the way the client would report it.</summary>
+    internal void End(PluginMoveChannel channel, PluginMoveState state, float covered = 0f, float seconds = 0f) =>
+        SetProgress(channel, MoveReport[channel] with { State = state, Covered = covered, ElapsedSeconds = seconds });
+
+    public PluginNavigationCommandStatus StopMoving()
+    {
+        Stops.Add(null);
+        foreach (PluginMoveChannel channel in Enum.GetValues<PluginMoveChannel>())
+            StopChannel(channel);
+        return PluginNavigationCommandStatus.Accepted;
+    }
+
+    public PluginNavigationCommandStatus StopMoving(PluginMoveChannel channel)
+    {
+        Stops.Add(channel);
+        StopChannel(channel);
+        return PluginNavigationCommandStatus.Accepted;
+    }
+
+    public PluginNavigationCommandStatus Jump(float power)
+    {
+        Jumps.Add(power);
+        MoveReport = MoveReport with { JumpSequence = MoveReport.JumpSequence + 1, JumpCharging = true };
+        return PluginNavigationCommandStatus.Accepted;
+    }
+
+    private void StopChannel(PluginMoveChannel channel)
+    {
+        if (MoveReport[channel].State == PluginMoveState.Moving)
+            End(channel, PluginMoveState.Stopped);
+    }
+
+    private void SetProgress(PluginMoveChannel channel, PluginMoveProgress progress) =>
+        MoveReport = channel switch
+        {
+            PluginMoveChannel.Travel => MoveReport with { Travel = progress },
+            PluginMoveChannel.Strafe => MoveReport with { Strafe = progress },
+            _ => MoveReport with { Turn = progress },
+        };
 }
 
 internal sealed class FakeCombat : ICombatAutomation

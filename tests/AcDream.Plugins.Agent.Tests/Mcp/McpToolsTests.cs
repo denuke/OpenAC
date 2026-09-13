@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using AcDream.Plugin.Abstractions;
 using AcDream.Plugins.Agent.Mcp;
 using AcDream.Plugins.Agent.Tests.Fakes;
 
@@ -58,7 +59,7 @@ public sealed class McpToolsTests
         Assert.Equal("pending", act.GetProperty("status").GetString());
         Assert.Equal(JsonValueKind.Null, act.GetProperty("confirmed").ValueKind);
 
-        harness.Host.FakeAutomation.FakeNavigation.Snapshot = McpToolHarness.Body(heading: 90f);
+        harness.Host.FakeAutomation.FakeNavigation.End(PluginMoveChannel.Turn, PluginMoveState.Completed, covered: 90f);
         harness.Tick();
 
         JsonElement outcome = McpToolHarness.Structured(await harness.CallAsync("outcome",
@@ -77,7 +78,7 @@ public sealed class McpToolsTests
         harness.Tick();
         Assert.False(call.IsCompleted);
 
-        harness.Host.FakeAutomation.FakeNavigation.Snapshot = McpToolHarness.Body(heading: 90f);
+        harness.Host.FakeAutomation.FakeNavigation.End(PluginMoveChannel.Turn, PluginMoveState.Completed, covered: 90f);
         harness.Tick();
 
         Assert.True(call.IsCompleted);

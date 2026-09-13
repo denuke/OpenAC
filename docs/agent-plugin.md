@@ -87,18 +87,25 @@ the read tools print, such as `0x70000001`.
 | Read | `vitals`, `stats`, `location`, `snapshot`, `skills`, `buffs`, `spells [search]`, `nearby [kind] [range]`, `inspect <id>`, `inventory [search]`, `equipment`, `vendor`, `loot list`, `loot corpses [range]` |
 | Chat | `say <text>`, `tell <name>, <message>`, `emote <text>` |
 | Target | `target <id>`, `target nearest [kind]`, `untarget` |
-| Motion | `turn to <degrees>`, `face <id>`, `jump`, `stance peace\|melee\|missile\|magic`, `cancel` |
+| Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance peace\|melee\|missile\|magic`, `cancel` |
 | Magic | `cast <spell name or id> [on <id>]` |
 | Objects | `use <id>`, `use <item id> on <id>`, `open <id>` |
 | Items | `loot <item id>`, `drop <item id> [amount]`, `give <item id> to <id> [amount]`, `move <item id> to <container id> [amount]`, `equip <item id>`, `unequip <item id>` |
 | Vendor | `buy <listing id or name> [quantity]`, `sell <item id> [amount]` |
 | Combat | `attack [id] [power from 0 to 1] [high\|medium\|low]` |
 
-`walk`, `run`, `go`, `goto`, `strafe` and `stop` are refused, because navigation
-is not part of this plugin. Client commands that end the session, kill the
-character, or change its player-killer status are refused too. Any other line is
-handed to the client as chat or a client command, so a model can make the
-character speak.
+An amount is meters, or degrees for a turn, or seconds when written like `20s`.
+Walking or running, strafing and turning combine the way movement keys do:
+after `run forward 60s`, `turn left 5` and `strafe right 2s` steer the run
+without stopping it, and a new move replaces only a move of its own kind. The
+client carries out each move itself, lands a turn on its exact angle, and
+reports a move as blocked when the character stops making progress. A move
+without an amount keeps going until `stop`, for at most thirty seconds, and the
+player's own movement keys end every move at once. `go` and `goto` are refused,
+because finding a route to a named place is not part of this plugin. Client
+commands that end the session, kill the character, or change its player-killer
+status are refused too. Any other line is handed to the client as chat or a
+client command, so a model can make the character speak.
 
 ## Records
 
@@ -132,7 +139,7 @@ how many were dropped and where the stream resumes.
 
 ## Not included
 
-Navigation and routing, autonomous combat, the headless host, and pushes from the
+Finding routes, autonomous combat, the headless host, and pushes from the
 server are not part of this plugin. `GET /mcp` is refused, so clients do not open
 an event stream; `events` with `waitSeconds` covers waiting for something to
 happen.

@@ -19,6 +19,7 @@ internal static class OutcomeTable
         [(RecordKinds.GoalResolved, "cancelled")] = OutcomeClass.Withdrawn,
         [(RecordKinds.GoalResolved, "unconfirmed")] = OutcomeClass.Unconfirmed,
         [(RecordKinds.GoalResolved, "lost")] = OutcomeClass.Lost,
+        [(RecordKinds.GoalResolved, "blocked")] = OutcomeClass.Unreachable,
         [(RecordKinds.CastOutcome, "accepted")] = OutcomeClass.Confirmed,
         [(RecordKinds.CastOutcome, "refused")] = OutcomeClass.Refused,
         [(RecordKinds.CastOutcome, "unattributable")] = OutcomeClass.Unattributable,
