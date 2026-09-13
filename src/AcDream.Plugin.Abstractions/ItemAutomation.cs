@@ -83,6 +83,24 @@ public readonly record struct PluginItemProperties(
     IReadOnlyDictionary<uint, uint> DataIds,
     IReadOnlyDictionary<uint, uint> InstanceIds);
 
+/// <summary>
+/// One listing in the vendor that is currently open. <see cref="UnitPrice"/>
+/// is what one unit costs the player in the vendor's currency.
+/// </summary>
+public readonly record struct PluginVendorItem(
+    uint ObjectId,
+    uint WeenieClassId,
+    string Name,
+    uint ItemType,
+    int UnitPrice,
+    int StockCount)
+{
+    /// <summary>The vendor sells this listing without a stock limit.</summary>
+    public bool IsUnlimited => StockCount < 0;
+    public string PluralName { get; init; } = string.Empty;
+    public uint IconId { get; init; }
+}
+
 /// <summary>One server <c>UseDone</c> for a plugin-issued item action.</summary>
 public readonly record struct PluginItemUseCompletion(
     long Revision,
@@ -189,5 +207,16 @@ public interface IItemAutomation
         new(PluginItemCommandStatus.Unavailable);
 
     PluginItemCommandResult Sell(uint objectId, uint amount = 0u) =>
+        new(PluginItemCommandStatus.Unavailable);
+
+    /// <summary>Listings of the vendor that is currently open, or empty.</summary>
+    IReadOnlyList<PluginVendorItem> CaptureVendorStock() =>
+        Array.Empty<PluginVendorItem>();
+
+    /// <summary>
+    /// Buy <paramref name="amount"/> units of one listing from the vendor that
+    /// is currently open.
+    /// </summary>
+    PluginItemCommandResult Buy(uint objectId, uint amount = 1u) =>
         new(PluginItemCommandStatus.Unavailable);
 }

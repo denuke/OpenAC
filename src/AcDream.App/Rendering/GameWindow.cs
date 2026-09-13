@@ -937,7 +937,8 @@ public sealed class GameWindow :
             result.ItemInteraction.TrySalvageItemsForAutomation,
             (vendorId, itemId, amount) => result.ItemInteraction.TrySell(
                 vendorId,
-                [(amount, itemId)]));
+                [(amount, itemId)]),
+            result.ItemInteraction.TryBuy);
         _interactionUiLateBindings = result.LateBindings;
         _magicRuntime = result.Magic;
         if (result.RetainedUi is { } retained)

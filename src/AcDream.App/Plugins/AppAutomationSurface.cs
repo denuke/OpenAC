@@ -62,6 +62,7 @@ internal sealed class AppAutomationSurface
     private Func<uint, bool>? _identifyItem;
     private Func<uint, IReadOnlyList<uint>, bool>? _salvageItems;
     private Func<uint, uint, int, bool>? _sellItem;
+    private Func<uint, uint, int, uint, bool>? _buyItem;
     private Func<uint, bool>? _dismissGhost;
     private Func<PluginSelectionAction, bool>? _selectionAction;
     private PhysicsEngine? _projectilePhysics;
@@ -401,7 +402,8 @@ internal sealed class AppAutomationSurface
         Func<uint, bool, bool> pickupItem,
         Func<uint, bool> identifyItem,
         Func<uint, IReadOnlyList<uint>, bool>? salvageItems = null,
-        Func<uint, uint, int, bool>? sellItem = null)
+        Func<uint, uint, int, bool>? sellItem = null,
+        Func<uint, uint, int, uint, bool>? buyItem = null)
     {
         ArgumentNullException.ThrowIfNull(useItem);
         ArgumentNullException.ThrowIfNull(applyItem);
@@ -423,6 +425,7 @@ internal sealed class AppAutomationSurface
             _identifyItem = identifyItem;
             _salvageItems = salvageItems;
             _sellItem = sellItem;
+            _buyItem = buyItem;
         }
     }
 
@@ -2523,6 +2526,110 @@ internal sealed class AppAutomationSurface
             : new(PluginItemCommandStatus.Refused);
     }
 
+    public IReadOnlyList<PluginVendorItem> CaptureVendorStock()
+    {
+        GameRuntime? runtime;
+        lock (_gate)
+            runtime = _runtime;
+        if (runtime is null || !IsAvailable)
+            return Array.Empty<PluginVendorItem>();
+        return ProjectVendorStock(runtime.InventoryOwner.Vendor);
+    }
+
+    public PluginItemCommandResult Buy(uint objectId, uint amount = 1u)
+    {
+        Func<uint, uint, int, uint, bool>? buy;
+        GameRuntime? runtime;
+        lock (_gate)
+        {
+            buy = _buyItem;
+            runtime = _runtime;
+        }
+        if (runtime is null || buy is null || !IsAvailable)
+            return new(PluginItemCommandStatus.Unavailable);
+
+        VendorState vendor = runtime.InventoryOwner.Vendor;
+        if (RefuseBuy(vendor, objectId, amount) is { } refusal)
+            return refusal;
+        if (!runtime.InventoryOwner.Transactions.CanBeginRequest)
+            return new(PluginItemCommandStatus.Busy);
+        return buy(
+                vendor.VendorId,
+                objectId,
+                checked((int)amount),
+                vendor.Profile.AlternateCurrencyWcid)
+            ? new(PluginItemCommandStatus.Started)
+            : new(PluginItemCommandStatus.Refused);
+    }
+
+    /// <summary>
+    /// Projects the open vendor's listings, priced per unit the way the vendor
+    /// window prices them for the player.
+    /// </summary>
+    internal static IReadOnlyList<PluginVendorItem> ProjectVendorStock(
+        VendorState vendor)
+    {
+        ArgumentNullException.ThrowIfNull(vendor);
+        IReadOnlyList<VendorShopItem> items = vendor.Items;
+        if (vendor.VendorId == 0u || items.Count == 0)
+            return Array.Empty<PluginVendorItem>();
+
+        float sellRate = vendor.Profile.SellPrice;
+        var stock = new PluginVendorItem[items.Count];
+        for (int i = 0; i < stock.Length; i++)
+        {
+            VendorShopItem item = items[i];
+            uint itemType = item.ItemType ?? 0u;
+            int perUnit = VendorPricing.PerUnitValue(
+                item.Value ?? 0,
+                item.DescStackSize);
+            stock[i] = new PluginVendorItem(
+                item.ItemGuid,
+                item.WeenieClassId,
+                item.Name ?? string.Empty,
+                itemType,
+                VendorPricing.SellPrice(perUnit, itemType, sellRate, 1),
+                item.StackSize)
+            {
+                PluralName = item.PluralName ?? string.Empty,
+                IconId = item.IconId,
+            };
+        }
+        return stock;
+    }
+
+    /// <summary>
+    /// The reason a buy of <paramref name="amount"/> units of one listing
+    /// cannot be requested, or <see langword="null"/> when it can.
+    /// </summary>
+    internal static PluginItemCommandResult? RefuseBuy(
+        VendorState vendor,
+        uint objectId,
+        uint amount)
+    {
+        ArgumentNullException.ThrowIfNull(vendor);
+        if (vendor.VendorId == 0u)
+            return new(PluginItemCommandStatus.InvalidTarget, "No vendor is open.");
+        if (amount == 0u || amount > int.MaxValue)
+            return new(PluginItemCommandStatus.Refused, "Invalid quantity.");
+
+        foreach (VendorShopItem item in vendor.Items)
+        {
+            if (item.ItemGuid != objectId)
+                continue;
+            if (item.StackSize >= 0 && amount > (uint)item.StackSize)
+            {
+                return new(
+                    PluginItemCommandStatus.Refused,
+                    "The vendor does not have that many.");
+            }
+            return null;
+        }
+        return new(
+            PluginItemCommandStatus.InvalidItem,
+            "The open vendor does not sell that item.");
+    }
+
     private PluginItemCommandResult DispatchItem(
         uint objectId,
         uint targetObjectId)
@@ -3627,6 +3734,7 @@ internal sealed class AppAutomationSurface
             _identifyItem = null;
             _salvageItems = null;
             _sellItem = null;
+            _buyItem = null;
             _selectionAction = null;
             DetachLocked();
         }
