@@ -63,6 +63,7 @@ internal sealed class AgentService : IDisposable
         Commands.Register(new ChatVerbs(host));
         Commands.Register(new UnavailableVerbs(Publisher));
         Commands.Register(new CharacterReadVerbs(host, Publisher, _state, _clock));
+        Commands.Register(new WorldReadVerbs(host, Publisher));
     }
 
     internal RecordRing Ring { get; }

@@ -15,6 +15,10 @@ internal static class RecordKinds
     internal const string Skills = "skills";
     internal const string Buffs = "buffs";
     internal const string Spells = "spells";
+    internal const string Nearby = "nearby";
+    internal const string NearbyRefused = "nearby-refused";
+    internal const string EntityInspected = "entity-inspected";
+    internal const string EntityRefused = "entity-refused";
 
     /// <summary>
     /// Kinds that describe current state. The latest record of each is kept
