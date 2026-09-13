@@ -295,7 +295,7 @@ internal sealed class MotorVerbs : IVerbFamily
             };
             return report.State switch
             {
-                PluginGoToState.Arrived => new Resolution(Completed, null, fields),
+                PluginGoToState.Arrived => new Resolution(Completed, ArrivalNote(report.Reason), fields),
                 PluginGoToState.NoRoute => new Resolution(NoRoute, report.Reason, fields),
                 PluginGoToState.Blocked => new Resolution(Blocked, report.Reason, fields),
                 PluginGoToState.Stopped => new Resolution(Cancelled, report.Reason, fields),
@@ -306,6 +306,13 @@ internal sealed class MotorVerbs : IVerbFamily
         });
         return VerbResult.Handled;
     }
+
+    /// <summary>
+    /// What the client said of an arrival beyond having arrived, such as a route
+    /// that ends short of the object or without a line of sight to it.
+    /// </summary>
+    private static string? ArrivalNote(string? reason) =>
+        string.IsNullOrEmpty(reason) || reason.Equals("arrived", StringComparison.Ordinal) ? null : reason;
 
     private bool TryFindGoal(
         IAutomationSurface automation,

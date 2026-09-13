@@ -413,6 +413,25 @@ public sealed class MotorVerbsTests
         JsonElement resolved = Kinds(ring, RecordKinds.GoalResolved).Single();
         Assert.Equal("completed", resolved.GetProperty("outcome").GetString());
         Assert.Equal(1, resolved.GetProperty("replans").GetInt32());
+        Assert.Equal(JsonValueKind.Null, resolved.GetProperty("reason").ValueKind);
+    }
+
+    [Fact]
+    public void AWalkThatArrivesWithoutALineOfSightSaysSo()
+    {
+        var (host, verbs, correlator, _, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Shopkeeper", eastMeters: 25.7d));
+        verbs.Handle(Line("go to 0x70000001"));
+
+        host.FakeAutomation.FakeNavigation.EndGoTo(
+            PluginGoToState.Arrived,
+            "arrived; no reachable spot can see the goal, so the route ends at the nearest spot, 1.8 m from it, without a line of sight",
+            remaining: 1.8f);
+        correlator.Tick(inWorld: true);
+
+        JsonElement resolved = Kinds(ring, RecordKinds.GoalResolved).Single();
+        Assert.Equal("completed", resolved.GetProperty("outcome").GetString());
+        Assert.Contains("without a line of sight", resolved.GetProperty("reason").GetString());
     }
 
     [Fact]

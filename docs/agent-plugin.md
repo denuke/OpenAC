@@ -116,18 +116,21 @@ player's own movement keys end every move at once.
 
 `go to` walks to an object along a route the client plans from its own
 collision world: around walls and objects, through doorways, and up and down
-ramps and stairs. A walk arrives only where no wall stands between the character
-and the object, and ends facing it. When nothing within reach can both be reached
-and see the object, such as a vendor behind a counter, the walk ends at the
-nearest spot that can, up to 10 m away. When no reachable spot can see it, as
-through a window whose collision fills the opening, the walk ends at the nearest
-reachable spot up to 10 m away and says it has no line of sight. When the character stops making progress,
-the client plans again around the spot where it stuck; a walk that stays blocked
-names what stood beside that spot in `blockedBy`, such as a door that would not
-open. A walk that meets a closed door on its way opens it first, as a player's
-click would, and goes on once it is open. `remaining` is the straight-line distance still to go, and
-`no-route` means nothing joins the character to the object. `stop`, `cancel` and
-the player's movement keys end a walk. Client
+ramps and stairs. A walk arrives within `within` meters of the object, 2.5 by
+default, only where no wall stands between the character and the object, and
+ends facing it. When nothing that near can both be reached and see the object,
+such as a vendor behind a counter, the walk ends at the nearest spot that can,
+up to 10 m away. When no reachable spot can see it, as through a window whose
+collision fills the opening, the walk ends at the nearest reachable spot up to
+10 m away. A walk that ends short in either way still completes, and its
+`reason` says why. A walk that meets a closed door on its way opens it first,
+as a player's click would, and goes on once it is open. When the character
+stops making progress, the client plans again around the spot where it stuck; a
+walk that stays blocked names what stood beside that spot in `blockedBy`, such
+as a door that would not open. `remaining` is the straight-line distance from
+the character to where the object stands, and `no-route` means nothing joins
+the character to the object. `stop`, `cancel` and the player's movement keys
+end a walk. Client
 commands that close the client, kill the character, or change its player-killer
 status are refused, and `logout` is how a model leaves the world. Any other line is handed to the client as chat or a
 client command, so a model can make the character speak.
