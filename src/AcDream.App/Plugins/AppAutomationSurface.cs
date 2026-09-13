@@ -64,6 +64,7 @@ internal sealed class AppAutomationSurface
     private Func<uint, uint, int, bool>? _sellItem;
     private Func<uint, uint, int, uint, bool>? _buyItem;
     private Func<uint, bool>? _dismissGhost;
+    private Func<bool>? _logOut;
     private Func<PluginSelectionAction, bool>? _selectionAction;
     private PhysicsEngine? _projectilePhysics;
     private IReadOnlyList<PluginProjectileDebugSample> _projectileDebugSamples =
@@ -259,6 +260,91 @@ internal sealed class AppAutomationSurface
         return runtime?.Session.ClearNextLogin() == true;
     }
 
+    PluginLoginSnapshot ILoginAutomation.Snapshot
+    {
+        get
+        {
+            CurrentGameRuntimeAdapter? commands;
+            lock (_gate)
+                commands = _disposed ? null : _sessionCommands;
+            return commands is null
+                ? new PluginLoginSnapshot(PluginLoginStage.None, string.Empty, string.Empty, 0u, null)
+                : ProjectLoginSnapshot(commands.CharacterSelection.Snapshot);
+        }
+    }
+
+    PluginLoginCommandStatus ILoginAutomation.EnterWorld(uint characterObjectId)
+    {
+        CurrentGameRuntimeAdapter? commands;
+        lock (_gate)
+            commands = _disposed ? null : _sessionCommands;
+        return commands is null
+            ? PluginLoginCommandStatus.Unavailable
+            : EnterWorldWith(commands.CharacterSelectionCommands, commands.Generation, characterObjectId);
+    }
+
+    PluginLoginCommandStatus ILoginAutomation.LogOut()
+    {
+        Func<bool>? logOut;
+        lock (_gate)
+            logOut = _disposed ? null : _logOut;
+        if (logOut is null)
+            return PluginLoginCommandStatus.Unavailable;
+        if (!IsAvailable || Navigation.Snapshot is { IsAvailable: true, IsAirborne: true })
+            return PluginLoginCommandStatus.Rejected;
+        try
+        {
+            return logOut()
+                ? PluginLoginCommandStatus.Accepted
+                : PluginLoginCommandStatus.Rejected;
+        }
+        catch (ObjectDisposedException)
+        {
+            return PluginLoginCommandStatus.Unavailable;
+        }
+    }
+
+    internal static PluginLoginSnapshot ProjectLoginSnapshot(in RuntimeCharacterSelectionSnapshot selection) =>
+        new(
+            selection.Lifecycle switch
+            {
+                RuntimeCharacterSelectionLifecycle.Connecting => PluginLoginStage.Connecting,
+                RuntimeCharacterSelectionLifecycle.AwaitingSelection => PluginLoginStage.ChoosingCharacter,
+                RuntimeCharacterSelectionLifecycle.EnteringWorld => PluginLoginStage.EnteringWorld,
+                RuntimeCharacterSelectionLifecycle.InWorld => PluginLoginStage.InWorld,
+                _ => PluginLoginStage.None,
+            },
+            selection.AccountName ?? string.Empty,
+            selection.WorldName ?? string.Empty,
+            selection.HighlightedCharacterId,
+            selection.Error?.Message);
+
+    /// <summary>
+    /// Highlights a character on the character list, then enters the world with
+    /// it: the same two commands the character list's own controls send.
+    /// </summary>
+    internal static PluginLoginCommandStatus EnterWorldWith(
+        IRuntimeCharacterSelectionCommands commands,
+        RuntimeGenerationToken generation,
+        uint characterObjectId)
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        if (characterObjectId == 0u)
+            return PluginLoginCommandStatus.Rejected;
+        RuntimeCommandResult highlighted = commands.Highlight(generation, characterObjectId);
+        return highlighted.Status == RuntimeCommandStatus.Accepted
+            ? ProjectLoginStatus(commands.Enter(generation).Status)
+            : ProjectLoginStatus(highlighted.Status);
+    }
+
+    private static PluginLoginCommandStatus ProjectLoginStatus(RuntimeCommandStatus status) =>
+        status switch
+        {
+            RuntimeCommandStatus.Accepted => PluginLoginCommandStatus.Accepted,
+            RuntimeCommandStatus.Rejected => PluginLoginCommandStatus.Rejected,
+            _ => PluginLoginCommandStatus.Unavailable,
+        };
+
     PluginWorldTimeSnapshot IWorldTimeAutomation.Snapshot
     {
         get
@@ -436,6 +522,14 @@ internal sealed class AppAutomationSurface
         ArgumentNullException.ThrowIfNull(dismissGhost);
         lock (_gate)
             _dismissGhost = dismissGhost;
+    }
+
+    /// <summary>Binds the client's own character log out, which answers whether the request went out.</summary>
+    public void BindLogOut(Func<bool> logOut)
+    {
+        ArgumentNullException.ThrowIfNull(logOut);
+        lock (_gate)
+            _logOut = logOut;
     }
 
     public void BindProjectileCollision(PhysicsEngine physics)

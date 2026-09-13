@@ -1088,6 +1088,7 @@ public sealed class GameWindow :
         _localPlayerTeleport = result.LocalTeleport;
         _liveSessionHost = result.SessionHost;
         _automation?.BindSessionCommands(result.GameRuntime);
+        _automation?.BindLogOut(result.LocalTeleport.TryRequestLogout);
         _gameplayInputActions = result.GameplayActions;
         _sessionPlayerBindings = result.RuntimeBindings;
     }
