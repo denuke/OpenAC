@@ -152,12 +152,15 @@ internal sealed class NavigationWalkController
     /// <summary>
     /// While walking, a closed door within this far ahead along the leg and this
     /// near the line to it is opened before the character reaches it. The check
-    /// runs every few frames. A door is waited on this long to open, since the
-    /// client may walk the character into its use range first, and a door that
-    /// closes again before the walk is through is used at most this often.
+    /// runs every few frames. The door is used only this many frames after the
+    /// walk stops the character, because a stop that lands after the use cancels
+    /// the client's walk into the door's use range and drops the use with it. A
+    /// door is waited on this long to open once used, and a door that closes again
+    /// before the walk is through is used at most this often.
     /// </summary>
     internal const float DoorLookAheadMeters = 3f;
     internal const float DoorCorridorMeters = 1.2f;
+    internal const int DoorUseSettleTicks = 3;
     internal const float DoorOpenWaitSeconds = 5f;
     internal const int MaximumDoorUses = 2;
     private const int DoorCheckTicks = 5;
@@ -516,16 +519,16 @@ internal sealed class NavigationWalkController
             return;
         }
         active.DoorUses[door.ObjectId] = uses + 1;
-        active.WaitingOn = new DoorWait(door, _seconds + DoorOpenWaitSeconds);
-        _doors!.Use(door.ObjectId);
+        active.WaitingOn = new DoorWait(door, _tick + DoorUseSettleTicks, Used: false, DeadlineSeconds: 0d);
         string opening = $"opening {door.Name} (0x{door.ObjectId:X8})";
         Publish(active, NavigationWalkState.Walking, opening, float.NaN);
         _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {opening}");
     }
 
     /// <summary>
-    /// Plans again once the door is open. A door still closed when the wait runs
-    /// out ends the walk blocked, since using a door again closes one that opened late.
+    /// Uses the door once the character's stop has landed, and plans again once
+    /// the door is open. A door still closed when the wait runs out ends the walk
+    /// blocked, since using a door again closes one that opened late.
     /// </summary>
     private void WaitForDoor(Request active, DoorWait wait, in NavigationWalkBodySample sample)
     {
@@ -539,6 +542,14 @@ internal sealed class NavigationWalkController
             active.WaitingOn = null;
             active.Builds = 0;
             Publish(active, NavigationWalkState.Planning, $"{wait.Door.Name} is open, planning again", float.NaN);
+            return;
+        }
+        if (!wait.Used)
+        {
+            if (_tick < wait.UseAtTick)
+                return;
+            _doors.Use(wait.Door.ObjectId);
+            active.WaitingOn = wait with { Used = true, DeadlineSeconds = _seconds + DoorOpenWaitSeconds };
             return;
         }
         if (_seconds >= wait.DeadlineSeconds)
@@ -762,7 +773,7 @@ internal sealed class NavigationWalkController
     private static float Snap(float coordinate) =>
         MathF.Floor(coordinate / NavGrid.DefaultCellSize) * NavGrid.DefaultCellSize;
 
-    private readonly record struct DoorWait(NavigationDoor Door, double DeadlineSeconds);
+    private readonly record struct DoorWait(NavigationDoor Door, long UseAtTick, bool Used, double DeadlineSeconds);
 
     private sealed class Request
     {

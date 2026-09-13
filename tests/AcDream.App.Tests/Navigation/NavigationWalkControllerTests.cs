@@ -231,12 +231,14 @@ public sealed class NavigationWalkControllerTests
             body,
             new Goals { [Target] = new Vector3(40f, 80f, 0f) },
             doors: doors);
+        doors.AcceptsUse = () => body.StillFrames >= 1;
 
         walk.WalkTo(Target);
         NavigationWalkReport report = RunUntilSettled(walk, body);
 
         Assert.Equal(NavigationWalkState.Arrived, report.State);
         Assert.Equal(1, doors.Uses);
+        Assert.Equal(0, doors.DroppedUses);
         Assert.Equal(0, report.Replans);
         Assert.True(body.Position.Y > 60f);
     }
@@ -277,6 +279,7 @@ public sealed class NavigationWalkControllerTests
             Blocker = new NavigationBlocker(Door, "Door", IsClosedDoor: true),
         };
         var walk = new NavigationWalkController(FlatWorld(), body, goals, doors: doors);
+        doors.AcceptsUse = () => body.StillFrames >= 1;
 
         walk.WalkTo(Target);
         NavigationWalkReport report = RunUntilSettled(walk, body);
@@ -387,9 +390,22 @@ public sealed class NavigationWalkControllerTests
             return Open;
         }
 
+        /// <summary>
+        /// Whether a use reaches the door. The client drops a use when a stop that
+        /// lands after it cancels the walk into the door's use range.
+        /// </summary>
+        public Func<bool>? AcceptsUse { get; set; }
+
+        public int DroppedUses { get; private set; }
+
         public void Use(uint doorId)
         {
             Uses++;
+            if (AcceptsUse?.Invoke() == false)
+            {
+                DroppedUses++;
+                return;
+            }
             if (Opens)
                 _pollsUntilOpen = 10;
         }
@@ -427,6 +443,9 @@ public sealed class NavigationWalkControllerTests
         public Func<bool>? ObstacleActive { get; init; }
 
         public int MovesBegun { get; private set; }
+
+        /// <summary>Frames integrated since the body last travelled.</summary>
+        public int StillFrames { get; private set; }
 
         public Vector2 Flat => new(Position.X, Position.Y);
 
@@ -502,7 +521,11 @@ public sealed class NavigationWalkControllerTests
                     _turn = _turn with { State = RuntimeScriptedMoveState.Completed, Covered = _turn.Request.Amount };
             }
             if (_travel.State != RuntimeScriptedMoveState.Moving)
+            {
+                StillFrames++;
                 return;
+            }
+            StillFrames = 0;
 
             float speed = _travel.Request.Pace == RuntimeMovePace.Run ? RunSpeed : WalkSpeed;
             float radians = Heading * MathF.PI / 180f;
