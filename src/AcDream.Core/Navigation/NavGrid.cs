@@ -21,14 +21,20 @@ public readonly record struct NavGridBuildReport(
 /// whole body, and a link joins nodes in neighbouring columns whose heights
 /// differ by no more than the body can step up or down. A node is clear to walk
 /// through when no wall between step height and head height comes nearer its
-/// centre than the body's radius, less a quarter of a column because the body
-/// can stand anywhere in its column and slides along walls, and when it is not
-/// on the very edge of a ledge.
+/// centre than <see cref="NearestWall"/>, and when it is not on the very edge of
+/// a ledge. The walls are kept, so straight walks and lines of sight can be
+/// tested against them.
 /// </summary>
 public sealed class NavGrid
 {
     public const float DefaultCellSize = 0.25f;
     public const int DirectionCount = 8;
+
+    /// <summary>How high a standing body's eyes are above its feet.</summary>
+    public const float EyeHeight = 1.6f;
+
+    /// <summary>How high above an object's feet a body looks when it looks at the object.</summary>
+    public const float TargetHeight = 1.2f;
 
     /// <summary>Terrain is a surface with this much solid ground under it.</summary>
     private const float TerrainThickness = 0.5f;
@@ -45,6 +51,12 @@ public sealed class NavGrid
     /// <summary>A node must be at least this many steps from a node beside a ledge or a wall.</summary>
     private const int EdgeMargin = 1;
 
+    /// <summary>How near a straight walk may pass a wall's footprint before it counts as passing through it.</summary>
+    private const float WalkMargin = 0.05f;
+
+    /// <summary>How near a line of sight may pass a wall's footprint before the wall hides what is behind it.</summary>
+    private const float SightMargin = 0.02f;
+
     private const byte UnboundedDistance = byte.MaxValue;
     private const int ClipCapacity = 32;
 
@@ -56,10 +68,12 @@ public sealed class NavGrid
     private readonly int[] _columnNodeCount;
     private readonly int[] _nodeColumn;
     private readonly float[] _nodeZ;
+    private readonly float[] _nodeCeiling;
     private readonly int[] _links;
     private readonly byte[] _borderDistance;
     private readonly float[] _wallDistance;
     private readonly bool[] _clear;
+    private readonly WallPieces _walls;
 
     private NavGrid(
         NavGeometry geometry,
@@ -70,10 +84,12 @@ public sealed class NavGrid
         int[] columnNodeCount,
         int[] nodeColumn,
         float[] nodeZ,
+        float[] nodeCeiling,
         int[] links,
         byte[] borderDistance,
         float[] wallDistance,
         bool[] clear,
+        WallPieces walls,
         NavGridBuildReport report)
     {
         OriginX = geometry.OriginX;
@@ -82,14 +98,17 @@ public sealed class NavGrid
         CellSize = cellSize;
         Side = side;
         Body = body;
+        NearestWall = NearestWallFor(body, cellSize);
         _columnFirstNode = columnFirstNode;
         _columnNodeCount = columnNodeCount;
         _nodeColumn = nodeColumn;
         _nodeZ = nodeZ;
+        _nodeCeiling = nodeCeiling;
         _links = links;
         _borderDistance = borderDistance;
         _wallDistance = wallDistance;
         _clear = clear;
+        _walls = walls;
         Report = report;
     }
 
@@ -110,6 +129,13 @@ public sealed class NavGrid
     public IReadOnlyList<uint> LandblockIds { get; }
 
     public NavBody Body { get; }
+
+    /// <summary>
+    /// The nearest a wall may come to a body walking the grid: the body's radius,
+    /// less a quarter of a column, because the body can stand anywhere in its
+    /// column and slides along walls.
+    /// </summary>
+    public float NearestWall { get; }
 
     public NavGridBuildReport Report { get; }
 
@@ -170,44 +196,90 @@ public sealed class NavGrid
     /// </summary>
     public int FindNode(Vector3 position, float radius, float heightTolerance)
     {
-        int centreX = (int)MathF.Floor((position.X - OriginX) / CellSize);
-        int centreY = (int)MathF.Floor((position.Y - OriginY) / CellSize);
-        int reach = (int)MathF.Ceiling(radius / CellSize);
-        int best = -1;
-        float bestScore = float.PositiveInfinity;
-        for (int y = Math.Max(0, centreY - reach); y <= Math.Min(Side - 1, centreY + reach); y++)
-        {
-            for (int x = Math.Max(0, centreX - reach); x <= Math.Min(Side - 1, centreX + reach); x++)
-            {
-                (int first, int count) = NodesInColumn(x, y);
-                for (int node = first; node < first + count; node++)
-                {
-                    if (!IsClear(node))
-                        continue;
-                    Vector3 at = Position(node);
-                    float rise = MathF.Abs(at.Z - position.Z);
-                    if (rise > heightTolerance)
-                        continue;
-                    float dx = at.X - position.X;
-                    float dy = at.Y - position.Y;
-                    float horizontal = (dx * dx) + (dy * dy);
-                    if (horizontal > radius * radius)
-                        continue;
-                    float score = horizontal + (rise * rise);
-                    if (score < bestScore)
-                    {
-                        bestScore = score;
-                        best = node;
-                    }
-                }
-            }
-        }
-        return best;
+        List<(int Node, float Score)> near = NodesNear(position, radius, heightTolerance);
+        return near.Count == 0 ? -1 : near[0].Node;
     }
 
     /// <summary>
-    /// Whether a body can walk straight from one node to another, stepping
-    /// through clear nodes column by column along the line between them.
+    /// The clear node nearest <paramref name="position"/>, within a horizontal
+    /// radius and a height tolerance, that a body standing there could walk to in
+    /// a straight line without passing through a wall, or -1 when there is none.
+    /// </summary>
+    public int FindWalkableNode(Vector3 position, float radius, float heightTolerance)
+    {
+        foreach ((int node, _) in NodesNear(position, radius, heightTolerance))
+        {
+            if (IsOpenLine(position, Position(node)))
+                return node;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// Whether a body walking straight between two points, standing at their
+    /// heights, keeps at least <see cref="NearestWall"/> from every wall it would
+    /// touch.
+    /// </summary>
+    public bool CanSweep(Vector3 from, Vector3 to) => !WallNear(from, to, NearestWall, sight: false);
+
+    /// <summary>Whether a body walking straight between two points, standing at their heights, passes through no wall.</summary>
+    public bool IsOpenLine(Vector3 from, Vector3 to) => !WallNear(from, to, WalkMargin, sight: false);
+
+    /// <summary>
+    /// Whether a body standing on <paramref name="node"/> can see an object whose
+    /// feet are at <paramref name="target"/>: no wall crosses the line from the
+    /// body's eyes to the object, the object is not above the node's ceiling, and
+    /// it is not so far below the node that the node's own floor hides it.
+    /// </summary>
+    public bool CanSee(int node, Vector3 target)
+    {
+        Vector3 feet = Position(node);
+        var eye = new Vector3(feet.X, feet.Y, feet.Z + EyeHeight);
+        var seen = new Vector3(target.X, target.Y, target.Z + TargetHeight);
+        return seen.Z < _nodeCeiling[node]
+            && seen.Z >= feet.Z
+            && !WallNear(eye, seen, SightMargin, sight: true);
+    }
+
+    /// <summary>
+    /// The wall pieces that hide <paramref name="target"/> from a body standing on
+    /// <paramref name="node"/>: for each, its column, its height range, and the
+    /// sight line's height where they are nearest. For diagnostics.
+    /// </summary>
+    internal IReadOnlyList<(int X, int Y, float Low, float High, float LineHeight)> SightBlockers(int node, Vector3 target)
+    {
+        Vector3 feet = Position(node);
+        var eye = new Vector3(feet.X, feet.Y, feet.Z + EyeHeight);
+        var seen = new Vector3(target.X, target.Y, target.Z + TargetHeight);
+        var start = new Vector2(eye.X - OriginX, eye.Y - OriginY);
+        var end = new Vector2(seen.X - OriginX, seen.Y - OriginY);
+        int x0 = Math.Max(0, (int)MathF.Floor((MathF.Min(start.X, end.X) - SightMargin) / CellSize));
+        int x1 = Math.Min(Side - 1, (int)MathF.Floor((MathF.Max(start.X, end.X) + SightMargin) / CellSize));
+        int y0 = Math.Max(0, (int)MathF.Floor((MathF.Min(start.Y, end.Y) - SightMargin) / CellSize));
+        int y1 = Math.Min(Side - 1, (int)MathF.Floor((MathF.Max(start.Y, end.Y) + SightMargin) / CellSize));
+        var blockers = new List<(int X, int Y, float Low, float High, float LineHeight)>();
+        for (int y = y0; y <= y1; y++)
+        {
+            for (int x = x0; x <= x1; x++)
+            {
+                for (int piece = _walls.Head[(y * Side) + x]; piece != -1; piece = _walls.Next[piece])
+                {
+                    (float distance, float along) = _walls.DistanceToSegment(piece, start, end);
+                    if (distance >= SightMargin)
+                        continue;
+                    float height = eye.Z + ((seen.Z - eye.Z) * along);
+                    if (_walls.Low[piece] <= height && _walls.High[piece] >= height)
+                        blockers.Add((x, y, _walls.Low[piece], _walls.High[piece], height));
+                }
+            }
+        }
+        return blockers;
+    }
+
+    /// <summary>
+    /// Whether a body can walk straight from one node to another: every column
+    /// along the line between them holds a clear node linked to the last, and no
+    /// wall comes nearer the line than <see cref="NearestWall"/>.
     /// </summary>
     public bool CanWalkStraight(int from, int to)
     {
@@ -240,7 +312,7 @@ public sealed class NavGrid
             if (node < 0 || !IsClear(node))
                 return false;
         }
-        return node == to;
+        return node == to && CanSweep(Position(from), Position(to));
     }
 
     public static NavGrid Build(NavGeometry geometry, NavBody body, float cellSize = DefaultCellSize)
@@ -299,7 +371,7 @@ public sealed class NavGrid
         byte[] borderDistance = MeasureBorderDistance(links, heights.Length);
         float[] wallDistance = MeasureWallDistance(side, cellSize, body, nodeColumn, heights, walls);
 
-        float nearestWall = body.Radius - (cellSize * ClearanceToleranceColumns);
+        float nearestWall = NearestWallFor(body, cellSize);
         var clear = new bool[heights.Length];
         int clearCount = 0;
         for (int node = 0; node < heights.Length; node++)
@@ -326,11 +398,106 @@ public sealed class NavGrid
             columnNodeCount,
             nodeColumn,
             heights,
+            ceilings,
             links,
             borderDistance,
             wallDistance,
             clear,
+            walls,
             report);
+    }
+
+    private static float NearestWallFor(NavBody body, float cellSize) =>
+        body.Radius - (cellSize * ClearanceToleranceColumns);
+
+    /// <summary>The clear nodes within a horizontal radius and a height tolerance of a point, nearest first.</summary>
+    private List<(int Node, float Score)> NodesNear(Vector3 position, float radius, float heightTolerance)
+    {
+        int centreX = (int)MathF.Floor((position.X - OriginX) / CellSize);
+        int centreY = (int)MathF.Floor((position.Y - OriginY) / CellSize);
+        int reach = (int)MathF.Ceiling(radius / CellSize);
+        var near = new List<(int Node, float Score)>();
+        for (int y = Math.Max(0, centreY - reach); y <= Math.Min(Side - 1, centreY + reach); y++)
+        {
+            for (int x = Math.Max(0, centreX - reach); x <= Math.Min(Side - 1, centreX + reach); x++)
+            {
+                (int first, int count) = NodesInColumn(x, y);
+                for (int node = first; node < first + count; node++)
+                {
+                    if (!IsClear(node))
+                        continue;
+                    Vector3 at = Position(node);
+                    float rise = MathF.Abs(at.Z - position.Z);
+                    if (rise > heightTolerance)
+                        continue;
+                    float dx = at.X - position.X;
+                    float dy = at.Y - position.Y;
+                    float horizontal = (dx * dx) + (dy * dy);
+                    if (horizontal > radius * radius)
+                        continue;
+                    near.Add((node, horizontal + (rise * rise)));
+                }
+            }
+        }
+        near.Sort(static (left, right) => left.Score.CompareTo(right.Score));
+        return near;
+    }
+
+    /// <summary>
+    /// Whether a wall piece comes within <paramref name="margin"/> of the straight
+    /// line between two points. For a body the points are where it stands, and a
+    /// piece counts when it rises into the body standing on the line where they
+    /// are nearest. For a line of sight a piece counts when it spans the line's
+    /// height there.
+    /// </summary>
+    private bool WallNear(Vector3 from, Vector3 to, float margin, bool sight)
+    {
+        var start = new Vector2(from.X - OriginX, from.Y - OriginY);
+        var end = new Vector2(to.X - OriginX, to.Y - OriginY);
+        float reach = margin / CellSize;
+        float startX = start.X / CellSize;
+        float startY = start.Y / CellSize;
+        float endX = end.X / CellSize;
+        float endY = end.Y / CellSize;
+        int firstRow = Math.Max(0, (int)MathF.Floor(MathF.Min(startY, endY) - reach));
+        int lastRow = Math.Min(Side - 1, (int)MathF.Floor(MathF.Max(startY, endY) + reach));
+        for (int row = firstRow; row <= lastRow; row++)
+        {
+            float lowX;
+            float highX;
+            if (MathF.Abs(endY - startY) < 1e-6f)
+            {
+                lowX = MathF.Min(startX, endX);
+                highX = MathF.Max(startX, endX);
+            }
+            else
+            {
+                float enter = Math.Clamp((row - reach - startY) / (endY - startY), 0f, 1f);
+                float leave = Math.Clamp((row + 1 + reach - startY) / (endY - startY), 0f, 1f);
+                float enterX = startX + ((endX - startX) * enter);
+                float leaveX = startX + ((endX - startX) * leave);
+                lowX = MathF.Min(enterX, leaveX);
+                highX = MathF.Max(enterX, leaveX);
+            }
+            int firstColumn = Math.Max(0, (int)MathF.Floor(lowX - reach));
+            int lastColumn = Math.Min(Side - 1, (int)MathF.Floor(highX + reach));
+            for (int column = firstColumn; column <= lastColumn; column++)
+            {
+                for (int piece = _walls.Head[(row * Side) + column]; piece != -1; piece = _walls.Next[piece])
+                {
+                    (float distance, float along) = _walls.DistanceToSegment(piece, start, end);
+                    if (distance >= margin)
+                        continue;
+                    float height = from.Z + ((to.Z - from.Z) * along);
+                    bool counts = sight
+                        ? _walls.Low[piece] <= height && _walls.High[piece] >= height
+                        : _walls.High[piece] > height + Body.StepUpHeight && _walls.Low[piece] < height + Body.Height;
+                    if (counts)
+                        return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static void LinkOrthogonalNeighbours(
@@ -847,6 +1014,53 @@ public sealed class NavGrid
             return nearest;
         }
 
+        /// <summary>
+        /// The horizontal distance between a segment and a wall piece's footprint,
+        /// and how far along the segment, from 0 to 1, they come nearest.
+        /// </summary>
+        public (float Distance, float Along) DistanceToSegment(int piece, Vector2 start, Vector2 end)
+        {
+            int first = PointStart[piece];
+            int count = PointCount[piece];
+            if (count >= 3)
+            {
+                if (Contains(first, count, start.X, start.Y))
+                    return (0f, 0f);
+                if (Contains(first, count, end.X, end.Y))
+                    return (0f, 1f);
+            }
+
+            float nearest = float.PositiveInfinity;
+            float nearestAlong = 0f;
+            for (int index = 0; index < count; index++)
+            {
+                int next = index + 1 == count ? 0 : index + 1;
+                var edgeStart = new Vector2(_points[(first + index) * 2], _points[((first + index) * 2) + 1]);
+                var edgeEnd = new Vector2(_points[(first + next) * 2], _points[((first + next) * 2) + 1]);
+                if (Crosses(start, end, edgeStart, edgeEnd, out float crossing))
+                    return (0f, crossing);
+                (float fromCorner, float cornerAlong) = PointToSegment(edgeStart, start, end);
+                if (fromCorner < nearest)
+                {
+                    nearest = fromCorner;
+                    nearestAlong = cornerAlong;
+                }
+                float fromStart = PointToSegment(start, edgeStart, edgeEnd).Distance;
+                if (fromStart < nearest)
+                {
+                    nearest = fromStart;
+                    nearestAlong = 0f;
+                }
+                float fromEnd = PointToSegment(end, edgeStart, edgeEnd).Distance;
+                if (fromEnd < nearest)
+                {
+                    nearest = fromEnd;
+                    nearestAlong = 1f;
+                }
+            }
+            return (nearest, nearestAlong);
+        }
+
         private bool Contains(int start, int count, float x, float y)
         {
             bool positive = false;
@@ -880,6 +1094,30 @@ public sealed class NavGrid
             float px = ax + (t * dx) - x;
             float py = ay + (t * dy) - y;
             return MathF.Sqrt((px * px) + (py * py));
+        }
+
+        private static (float Distance, float Along) PointToSegment(Vector2 point, Vector2 start, Vector2 end)
+        {
+            Vector2 along = end - start;
+            float lengthSquared = along.LengthSquared();
+            float t = lengthSquared > 1e-12f
+                ? Math.Clamp(Vector2.Dot(point - start, along) / lengthSquared, 0f, 1f)
+                : 0f;
+            return (Vector2.Distance(point, start + (along * t)), t);
+        }
+
+        private static bool Crosses(Vector2 start, Vector2 end, Vector2 edgeStart, Vector2 edgeEnd, out float along)
+        {
+            Vector2 segment = end - start;
+            Vector2 edge = edgeEnd - edgeStart;
+            float denominator = (segment.X * edge.Y) - (segment.Y * edge.X);
+            along = 0f;
+            if (MathF.Abs(denominator) < 1e-9f)
+                return false;
+            Vector2 offset = edgeStart - start;
+            along = ((offset.X * edge.Y) - (offset.Y * edge.X)) / denominator;
+            float onEdge = ((offset.X * segment.Y) - (offset.Y * segment.X)) / denominator;
+            return along >= 0f && along <= 1f && onEdge >= 0f && onEdge <= 1f;
         }
     }
 }

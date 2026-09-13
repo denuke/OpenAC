@@ -59,7 +59,7 @@ public sealed class NavGridTests
     }
 
     [Fact]
-    public void ADoorwayNarrowerThanTheBodyIsNotPassed()
+    public void ADoorwayNarrowerThanTheBodyIsNotPassedAndTheRouteEndsWhereTheGoalCanBeSeenThroughIt()
     {
         NavGrid grid = Build([
             .. Floor(0f, 0f, 20f, 20f, 0f),
@@ -68,7 +68,9 @@ public sealed class NavGridTests
 
         NavRoute route = NavRouter.Find(grid, new Vector3(3f, 5f, 0f), new Vector3(17f, 15f, 0f), arrivalRadius: 1f);
 
-        Assert.Equal(NavRouteOutcome.NoPath, route.Outcome);
+        Assert.Equal(NavRouteOutcome.Routed, route.Outcome);
+        Assert.All(route.Path, point => Assert.True(point.Y < 10f));
+        Assert.Contains("nearest spot that can", route.Reason);
     }
 
     [Fact]
@@ -227,6 +229,130 @@ public sealed class NavGridTests
         Assert.Equal(192f, east!.OriginX);
         Assert.Equal([0xAAB4FFFFu], east.LandblockIds);
         Assert.Null(NavGeometry.Capture(engine, 1000f, 1000f, 96f));
+    }
+
+    [Fact]
+    public void AGoalBehindAThinWallIsReachedFromTheSideThatCanSeeIt()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 20f, 0f),
+            .. Wall(10f, 0f, 10f, 16f, 0f, 3f)]);
+
+        NavRoute route = NavRouter.Find(grid, new Vector3(6f, 4f, 0f), new Vector3(11.5f, 4f, 0f), arrivalRadius: 2.5f);
+
+        Assert.Equal(NavRouteOutcome.Routed, route.Outcome);
+        Assert.True(route.Path[^1].X > 10f);
+        Assert.Contains(route.Path, point => point.Y > 16f);
+    }
+
+    [Fact]
+    public void AGoalBehindACounterWindowIsReachedAtTheNearestSpotThatCanSeeIt()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 20f, 0f),
+            .. Wall(12f, 8f, 16f, 8f, 0f, 3f),
+            .. Wall(16f, 8f, 16f, 12f, 0f, 3f),
+            .. Wall(16f, 12f, 12f, 12f, 0f, 3f),
+            .. Wall(12f, 12f, 12f, 8f, 0f, 1f),
+            .. Wall(12f, 12f, 12f, 8f, 2f, 3f)]);
+        var goal = new Vector3(14.5f, 10f, 0f);
+
+        NavRoute route = NavRouter.Find(grid, new Vector3(4f, 10f, 0f), goal, arrivalRadius: 2.5f);
+
+        Assert.Equal(NavRouteOutcome.Routed, route.Outcome);
+        Assert.True(route.Path[^1].X < 12f);
+        Assert.InRange(Vector2.Distance(new Vector2(route.Path[^1].X, route.Path[^1].Y), new Vector2(goal.X, goal.Y)), 2.5f, 4f);
+        Assert.Contains("nearest spot that can", route.Reason);
+    }
+
+    [Fact]
+    public void AGoalShutInACupboardIsReachedAtTheNearestSpotWithoutALineOfSight()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 20f, 0f),
+            .. Wall(9.5f, 9.5f, 10.5f, 9.5f, 0f, 3f),
+            .. Wall(10.5f, 9.5f, 10.5f, 10.5f, 0f, 3f),
+            .. Wall(10.5f, 10.5f, 9.5f, 10.5f, 0f, 3f),
+            .. Wall(9.5f, 10.5f, 9.5f, 9.5f, 0f, 3f)]);
+
+        NavRoute route = NavRouter.Find(grid, new Vector3(3f, 3f, 0f), new Vector3(10f, 10f, 0f), arrivalRadius: 2.5f);
+
+        Assert.Equal(NavRouteOutcome.Routed, route.Outcome);
+        Assert.Contains("without a line of sight", route.Reason);
+        Vector3 end = route.Path[^1];
+        Assert.False(end.X > 9.5f && end.X < 10.5f && end.Y > 9.5f && end.Y < 10.5f);
+        Assert.InRange(Vector2.Distance(new Vector2(end.X, end.Y), new Vector2(10f, 10f)), 0.5f, 2.5f);
+    }
+
+    [Fact]
+    public void AStartInsideAPassageTooNarrowToStandInIsNotTakenFromBeyondItsWalls()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 20f, 0f),
+            .. Wall(0f, 10f, 12f, 10f, 0f, 3f),
+            .. Wall(0f, 10.7f, 12f, 10.7f, 0f, 3f)]);
+        var start = new Vector3(6f, 10.35f, 0f);
+
+        Assert.True(grid.FindNode(start, NavRouter.StartRadius, NavRouter.StartHeightTolerance) >= 0);
+        Assert.Equal(-1, grid.FindWalkableNode(start, NavRouter.StartRadius, NavRouter.StartHeightTolerance));
+        Assert.Equal(NavRouteOutcome.NoStart, NavRouter.Find(grid, start, new Vector3(16f, 16f, 0f), 1f).Outcome);
+    }
+
+    [Fact]
+    public void LegsThroughADoorwayKeepTheBodyClearOfItsFrame()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 20f, 0f),
+            .. Wall(0f, 10f, 9.4f, 10f, 0f, 3f),
+            .. Wall(10.6f, 10f, 20f, 10f, 0f, 3f)]);
+
+        NavRoute route = NavRouter.Find(grid, new Vector3(2f, 4f, 0f), new Vector3(15f, 17f, 0f), arrivalRadius: 1f);
+
+        Assert.Equal(NavRouteOutcome.Routed, route.Outcome);
+        for (int leg = 1; leg < route.Legs.Count; leg++)
+        {
+            foreach (Vector2 frame in new[] { new Vector2(9.4f, 10f), new Vector2(10.6f, 10f) })
+            {
+                Assert.True(
+                    DistanceToSegment(frame, route.Legs[leg - 1], route.Legs[leg]) >= grid.NearestWall - 0.05f,
+                    $"leg {leg} passes within {DistanceToSegment(frame, route.Legs[leg - 1], route.Legs[leg]):0.00} m of a door frame");
+            }
+        }
+    }
+
+    [Fact]
+    public void ARouteKeepsOutOfAvoidedSpots()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 20f, 0f),
+            .. Wall(0f, 10f, 4f, 10f, 0f, 3f),
+            .. Wall(6f, 10f, 14f, 10f, 0f, 3f),
+            .. Wall(16f, 10f, 20f, 10f, 0f, 3f)]);
+        var from = new Vector3(5f, 5f, 0f);
+        var to = new Vector3(5f, 15f, 0f);
+        var leftDoor = new NavAvoidance(new Vector3(5f, 10f, 0f), 1.2f);
+        var rightDoor = new NavAvoidance(new Vector3(15f, 10f, 0f), 1.2f);
+
+        NavRoute direct = NavRouter.Find(grid, from, to, 1f);
+        NavRoute around = NavRouter.Find(grid, from, to, 1f, [leftDoor]);
+        NavRoute nowhere = NavRouter.Find(grid, from, to, 1f, [leftDoor, rightDoor]);
+
+        Assert.Equal(NavRouteOutcome.Routed, direct.Outcome);
+        Assert.DoesNotContain(direct.Path, point => point.X > 13f);
+        Assert.Equal(NavRouteOutcome.Routed, around.Outcome);
+        Assert.Contains(around.Path, point => point.X > 13f && MathF.Abs(point.Y - 10f) < 0.5f);
+        Assert.All(around.Path, point =>
+            Assert.True(Vector2.Distance(new Vector2(point.X, point.Y), new Vector2(5f, 10f)) > 1.2f));
+        Assert.Equal(NavRouteOutcome.NoPath, nowhere.Outcome);
+    }
+
+    private static float DistanceToSegment(Vector2 point, Vector3 from, Vector3 to)
+    {
+        var start = new Vector2(from.X, from.Y);
+        Vector2 along = new Vector2(to.X, to.Y) - start;
+        float lengthSquared = along.LengthSquared();
+        float t = lengthSquared > 0f ? Math.Clamp(Vector2.Dot(point - start, along) / lengthSquared, 0f, 1f) : 0f;
+        return Vector2.Distance(point, start + (along * t));
     }
 
     private static NavGrid Build(NavTriangle[] triangles, NavCylinder[]? cylinders = null) =>

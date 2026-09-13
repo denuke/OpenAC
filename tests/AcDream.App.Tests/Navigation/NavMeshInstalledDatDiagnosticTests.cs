@@ -102,6 +102,304 @@ public sealed class NavMeshInstalledDatDiagnosticTests
         Assert.True(clearReached > grid.Report.ClearNodes / 2);
     }
 
+    [Fact]
+    public void HoltburgRoutesBetweenBuildingInteriorsWithoutPassingThroughWalls()
+    {
+        uint[] cells = [.. Enumerable.Range(0x100, 0x100).Select(offset => (Holtburg & 0xFFFF0000u) | (uint)offset)];
+        PublishedLandblock world = PublishedLandblock.Load(RequireDatDirectory(), Holtburg, cells);
+        NavGrid grid = BuildAndReport("holtburg-interiors", world);
+        var standing = new List<(uint Cell, Vector3 At)>();
+        foreach ((uint cell, Vector3 origin) in world.CellOrigins.OrderBy(pair => pair.Key))
+        {
+            int node = grid.FindWalkableNode(origin, 1f, 1.5f);
+            if (node >= 0)
+                standing.Add((cell, grid.Position(node)));
+        }
+
+        const int wanted = 40;
+        var outcomes = new SortedDictionary<NavRouteOutcome, int>();
+        int routes = 0;
+        int throughWalls = 0;
+        int nearWalls = 0;
+        var clock = Stopwatch.StartNew();
+        for (int first = 0; first < standing.Count && routes < wanted; first++)
+        {
+            for (int second = first + 1; second < standing.Count && routes < wanted; second++)
+            {
+                (uint fromCell, Vector3 from) = standing[first];
+                (uint toCell, Vector3 to) = standing[second];
+                float apart = Vector2.Distance(new Vector2(from.X, from.Y), new Vector2(to.X, to.Y));
+                if (apart < 15f || apart > 60f)
+                    continue;
+                routes++;
+                NavRoute route = NavRouter.Find(grid, from, to, arrivalRadius: 1f);
+                outcomes[route.Outcome] = outcomes.GetValueOrDefault(route.Outcome) + 1;
+                if (route.Outcome != NavRouteOutcome.Routed)
+                    _output.WriteLine($"  0x{fromCell:X8} to 0x{toCell:X8}, {apart:0.0} m apart: {route.Outcome}, {route.Reason}");
+                for (int leg = 1; leg < route.Legs.Count; leg++)
+                {
+                    if (!grid.IsOpenLine(route.Legs[leg - 1], route.Legs[leg]))
+                    {
+                        throughWalls++;
+                        _output.WriteLine($"  0x{fromCell:X8} to 0x{toCell:X8}: leg {leg} passes through a wall");
+                    }
+                    else if (!grid.CanSweep(route.Legs[leg - 1], route.Legs[leg]))
+                    {
+                        nearWalls++;
+                    }
+                }
+            }
+        }
+
+        _output.WriteLine(
+            $"holtburg-interiors: {world.CellOrigins.Count} cells, {standing.Count} with a clear spot at their origin; "
+            + $"{routes} routes between cells 15 to 60 m apart in {clock.Elapsed.TotalMilliseconds:0} ms: "
+            + string.Join(", ", outcomes.Select(pair => $"{pair.Value} {pair.Key}"))
+            + $"; {throughWalls} legs pass through a wall, {nearWalls} pass nearer one than the body fits");
+        Assert.True(routes > 0);
+        Assert.Equal(0, throughWalls);
+    }
+
+    [Fact]
+    public void HoltburgReplaysTheLiveWalkFromBesideTheContractBrokerToRenaldTheElder()
+    {
+        const uint startCell = 0xA9B40162u;
+        const uint goalCell = 0xA9B40141u;
+        PublishedLandblock world = PublishedLandblock.Load(RequireDatDirectory(), Holtburg, [startCell, goalCell]);
+        NavGrid grid = BuildAndReport("holtburg-renald", world);
+        Vector3 reportedFrom = FromMapCoordinates(startCell, northSouth: 42.198, eastWest: 33.710, elevation: 0.39);
+        Vector3 reportedTo = FromMapCoordinates(goalCell, northSouth: 42.126, eastWest: 33.830, elevation: 0.39);
+        _output.WriteLine(
+            $"holtburg-renald: reported start {PointText(reportedFrom)}, its cell's origin {OriginText(world.CellOrigins, startCell)}; "
+            + $"reported goal {PointText(reportedTo)}, its cell's origin {OriginText(world.CellOrigins, goalCell)}");
+        Vector3 from = OnFloor(grid, reportedFrom);
+        Vector3 to = OnFloor(grid, reportedTo);
+        DescribeNear(grid, "start", from);
+        DescribeNear(grid, "goal", to);
+
+        int nearestStart = grid.FindNode(from, NavRouter.StartRadius, NavRouter.StartHeightTolerance);
+        int walkableStart = grid.FindWalkableNode(from, NavRouter.StartRadius, NavRouter.StartHeightTolerance);
+        int nearestGoal = grid.FindNode(to, 2.5f, 3f);
+        _output.WriteLine(
+            $"holtburg-renald: start on the floor at {PointText(from)}; the nearest clear node {NodeText(grid, nearestStart)} "
+            + $"{(nearestStart >= 0 && !grid.IsOpenLine(from, grid.Position(nearestStart)) ? "is behind a wall" : "can be walked to")}; "
+            + $"the nearest walkable node is {NodeText(grid, walkableStart)}");
+        _output.WriteLine(
+            $"holtburg-renald: goal on the floor at {PointText(to)}; the nearest clear node {NodeText(grid, nearestGoal)} "
+            + $"{(nearestGoal >= 0 && !grid.CanSee(nearestGoal, to) ? "cannot see it" : "can see it")}");
+
+        NavRoute route = NavRouter.Find(grid, from, to, arrivalRadius: 2.5f);
+
+        Report("holtburg-renald", grid, route, from, to);
+        _output.WriteLine(
+            $"holtburg-renald: the route ends at {(route.Path.Count > 0 ? PointText(route.Path[^1]) : "nothing")}: {route.Reason}");
+        for (int leg = 1; leg < route.Legs.Count; leg++)
+        {
+            _output.WriteLine(
+                $"  leg {leg}: passes no wall {grid.IsOpenLine(route.Legs[leg - 1], route.Legs[leg])}, "
+                + $"keeps the body clear {grid.CanSweep(route.Legs[leg - 1], route.Legs[leg])}");
+        }
+        WriteImages("holtburg-renald", grid, route);
+        WriteReachability(
+            "holtburg-renald",
+            grid,
+            world,
+            from,
+            to,
+            minX: 95f,
+            minY: 0f,
+            maxX: 165f,
+            maxY: 60f,
+            bands: [("floor", 92.5f, 95.5f), ("raised", 95.5f, 99f), ("upper", 99f, 104f)]);
+
+        bool[] fromStart = Reachable(grid, grid.FindWalkableNode(from, NavRouter.StartRadius, NavRouter.StartHeightTolerance));
+        bool[] fromGoal = Reachable(grid, grid.FindNode(to, 1f, NavRouter.GoalHeightTolerance));
+        DrawCharacterMap(grid, fromStart, fromGoal, minX: 131f, minY: 10f, maxX: 147f, maxY: 23f, low: 92.5f, high: 95.5f);
+        DescribeGeometryAround(world, minX: 129f, minY: 8f, maxX: 149f, maxY: 25f);
+
+        Vector3 window = OnFloor(grid, FromMapCoordinates(0xA9B40029u, northSouth: 42.138, eastWest: 33.830, elevation: 0.39));
+        int windowNode = grid.FindNode(window, 0.5f, 1.5f);
+        _output.WriteLine(
+            $"holtburg-renald: players use Renald from outdoors at {PointText(window)}, {Vector2.Distance(new Vector2(window.X, window.Y), new Vector2(to.X, to.Y)):0.00} m "
+            + $"from him; its node {NodeText(grid, windowNode)} "
+            + $"{(windowNode >= 0 && fromStart[windowNode] ? "is reachable" : "is not reachable")}, "
+            + $"can see him: {windowNode >= 0 && grid.CanSee(windowNode, to)}");
+        if (windowNode >= 0)
+        {
+            foreach ((int x, int y, float low, float high, float line) in grid.SightBlockers(windowNode, to))
+            {
+                _output.WriteLine(
+                    $"  hidden by a wall piece in column ({x}, {y}) at ({grid.OriginX + ((x + 0.5f) * grid.CellSize):0.00}, "
+                    + $"{grid.OriginY + ((y + 0.5f) * grid.CellSize):0.00}) spanning {low:0.00} to {high:0.00}, where the line is at {line:0.00}");
+            }
+        }
+
+        NavGeometry geometry = Assert.IsType<NavGeometry>(NavGeometry.CaptureLandblock(world.Engine, world.LandblockId));
+        int listed = 0;
+        foreach ((string source, IReadOnlyList<NavTriangle> triangles) in new[] { ("cell", geometry.CellTriangles), ("object", geometry.ObjectTriangles) })
+        {
+            foreach (NavTriangle triangle in triangles)
+            {
+                float lowX = MathF.Min(triangle.A.X, MathF.Min(triangle.B.X, triangle.C.X));
+                float highX = MathF.Max(triangle.A.X, MathF.Max(triangle.B.X, triangle.C.X));
+                float lowY = MathF.Min(triangle.A.Y, MathF.Min(triangle.B.Y, triangle.C.Y));
+                float highY = MathF.Max(triangle.A.Y, MathF.Max(triangle.B.Y, triangle.C.Y));
+                float lowZ = MathF.Min(triangle.A.Z, MathF.Min(triangle.B.Z, triangle.C.Z));
+                float highZ = MathF.Max(triangle.A.Z, MathF.Max(triangle.B.Z, triangle.C.Z));
+                if (highX < 138.4f || lowX > 140f || highY < 18.4f || lowY > 20.2f || highZ < 94.2f || lowZ > 96.8f || listed >= 90)
+                    continue;
+                listed++;
+                Vector3 normal = Vector3.Normalize(Vector3.Cross(triangle.B - triangle.A, triangle.C - triangle.A));
+                _output.WriteLine(
+                    $"  window {source} triangle {PointText(triangle.A)} {PointText(triangle.B)} {PointText(triangle.C)} "
+                    + $"normal ({normal.X:0.00}, {normal.Y:0.00}, {normal.Z:0.00})");
+            }
+        }
+        NavGrid slim = NavGrid.Build(geometry, world.Body with { Radius = 0.3f });
+        NavRoute slimRoute = NavRouter.Find(slim, from, to, arrivalRadius: 2.5f);
+        _output.WriteLine(
+            $"holtburg-renald: for a body of radius 0.3 m: {slimRoute.Outcome} ({slimRoute.Reason}), "
+            + $"{Math.Max(0, slimRoute.Legs.Count - 1)} legs, {slimRoute.Length:0.0} m");
+        foreach (Vector3 leg in slimRoute.Legs)
+            _output.WriteLine($"  slim leg {PointText(leg)}");
+        if (slimRoute.Outcome == NavRouteOutcome.Routed)
+        {
+            string slimImage = Path.Combine(ImageDirectory(), "holtburg-renald-slim-route.png");
+            NavGridImage.WriteRouteDetail(slimImage, slim, slimRoute, scale: 4);
+            _output.WriteLine($"holtburg-renald: image {slimImage}");
+        }
+        Assert.Equal(NavRouteOutcome.Routed, route.Outcome);
+        Assert.InRange(
+            Vector2.Distance(new Vector2(route.Path[^1].X, route.Path[^1].Y), new Vector2(window.X, window.Y)),
+            0f,
+            1.5f);
+    }
+
+    /// <summary>
+    /// A character map of one floor band, north up, one character per column:
+    /// '*' clear and reachable from both ends, 's' from the start only, 'g' from
+    /// the goal only, '.' clear but reachable from neither, 'w' too near a wall,
+    /// 'e' on a ledge's edge, '#' no standing point in the band.
+    /// </summary>
+    private void DrawCharacterMap(
+        NavGrid grid,
+        bool[] fromStart,
+        bool[] fromGoal,
+        float minX,
+        float minY,
+        float maxX,
+        float maxY,
+        float low,
+        float high)
+    {
+        int x0 = (int)MathF.Floor((minX - grid.OriginX) / grid.CellSize);
+        int x1 = (int)MathF.Floor((maxX - grid.OriginX) / grid.CellSize);
+        int y0 = (int)MathF.Floor((minY - grid.OriginY) / grid.CellSize);
+        int y1 = (int)MathF.Floor((maxY - grid.OriginY) / grid.CellSize);
+        var header = new StringBuilder("  xmeter  ");
+        for (int x = x0; x < x1; x++)
+            header.Append(((x - x0) % 4) == 0 ? ((int)(grid.OriginX + (x * grid.CellSize)) % 10).ToString() : " ");
+        _output.WriteLine($"  map x from {minX} to {maxX}, y from {maxY} down to {minY}");
+        _output.WriteLine(header.ToString());
+        for (int y = y1 - 1; y >= y0; y--)
+        {
+            var line = new StringBuilder($"  y{grid.OriginY + (y * grid.CellSize),6:0.00} ");
+            for (int x = x0; x < x1; x++)
+            {
+                (int first, int count) = grid.NodesInColumn(x, y);
+                int chosen = -1;
+                for (int node = first; node < first + count; node++)
+                {
+                    float z = grid.Position(node).Z;
+                    if (z >= low && z <= high)
+                        chosen = node;
+                }
+                char mark = chosen < 0 ? '#'
+                    : !grid.IsClear(chosen) ? (grid.WallDistance(chosen) < grid.NearestWall ? 'w' : 'e')
+                    : fromStart[chosen] && fromGoal[chosen] ? '*'
+                    : fromStart[chosen] ? 's'
+                    : fromGoal[chosen] ? 'g'
+                    : '.';
+                line.Append(mark);
+            }
+            _output.WriteLine(line.ToString());
+        }
+    }
+
+    /// <summary>Lists the building shells and objects placed in a box.</summary>
+    private void DescribeGeometryAround(PublishedLandblock world, float minX, float minY, float maxX, float maxY)
+    {
+        PhysicsDataCache cache = Assert.IsType<PhysicsDataCache>(world.Engine.DataCache);
+        uint prefix = world.LandblockId & 0xFFFF0000u;
+        foreach (uint landcellId in cache.BuildingIds)
+        {
+            if ((landcellId & 0xFFFF0000u) != prefix || cache.GetBuilding(landcellId) is not { } building)
+                continue;
+            Vector3 at = building.WorldTransform.Translation;
+            if (at.X < minX - 20f || at.X > maxX + 20f || at.Y < minY - 20f || at.Y > maxY + 20f)
+                continue;
+            int polygons = cache.GetGfxObj(building.ModelId) is { } shell
+                ? shell.FlatPhysicsBsp?.PolygonTable?.Polygons.Length ?? shell.PhysicsPolygons?.Count ?? 0
+                : -1;
+            _output.WriteLine(
+                $"  building at 0x{landcellId:X8}: model 0x{building.ModelId:X8} at {PointText(at)}, physics polygons {polygons}");
+        }
+        var owners = new HashSet<uint>(world.Engine.ShadowObjects.CaptureStaticOwnersForLandblock(world.LandblockId));
+        foreach (ShadowEntry entry in world.Engine.ShadowObjects.AllEntriesForDebug())
+        {
+            if (entry.Position.X < minX || entry.Position.X > maxX || entry.Position.Y < minY || entry.Position.Y > maxY)
+                continue;
+            _output.WriteLine(
+                $"  object 0x{entry.EntityId:X8} ({(owners.Contains(entry.EntityId) ? "static" : "not static")}): "
+                + $"{entry.CollisionType} gfx 0x{entry.GfxObjId:X8} at {PointText(entry.Position)}, radius {entry.Radius:0.00}, "
+                + $"height {entry.CylHeight:0.00}, state 0x{entry.State:X}");
+        }
+    }
+
+    /// <summary>A point given as its cell and the map coordinates the agent reports, in the published world's frame.</summary>
+    private static Vector3 FromMapCoordinates(uint cellId, double northSouth, double eastWest, double elevation)
+    {
+        int blockX = (int)((cellId >> 24) & 0xFFu);
+        int blockY = (int)((cellId >> 16) & 0xFFu);
+        return new Vector3(
+            (float)((eastWest * 240d) + 84d - ((blockX - 127) * 192d)),
+            (float)((northSouth * 240d) + 84d - ((blockY - 127) * 192d)),
+            (float)(elevation * 240d));
+    }
+
+    /// <summary>The point moved onto the nearest floor within 1.5 m of its height, because reported elevations are rounded.</summary>
+    private static Vector3 OnFloor(NavGrid grid, Vector3 point)
+    {
+        int centreX = (int)MathF.Floor((point.X - grid.OriginX) / grid.CellSize);
+        int centreY = (int)MathF.Floor((point.Y - grid.OriginY) / grid.CellSize);
+        float nearest = 1.5f;
+        float height = point.Z;
+        for (int y = centreY - 2; y <= centreY + 2; y++)
+        {
+            for (int x = centreX - 2; x <= centreX + 2; x++)
+            {
+                (int first, int count) = grid.NodesInColumn(x, y);
+                for (int node = first; node < first + count; node++)
+                {
+                    float rise = MathF.Abs(grid.Position(node).Z - point.Z);
+                    if (rise < nearest)
+                    {
+                        nearest = rise;
+                        height = grid.Position(node).Z;
+                    }
+                }
+            }
+        }
+        return point with { Z = height };
+    }
+
+    private static string PointText(Vector3 point) => $"({point.X:0.00}, {point.Y:0.00}, {point.Z:0.00})";
+
+    private static string NodeText(NavGrid grid, int node) => node < 0 ? "none" : PointText(grid.Position(node));
+
+    private static string OriginText(IReadOnlyDictionary<uint, Vector3> origins, uint cell) =>
+        origins.TryGetValue(cell, out Vector3 at) ? PointText(at) : "unknown";
+
     /// <summary>A point on the terrain of whichever published landblock holds it.</summary>
     private static Vector3 OnTerrain(PhysicsEngine engine, float x, float y)
     {
@@ -176,7 +474,8 @@ public sealed class NavMeshInstalledDatDiagnosticTests
         float minX,
         float minY,
         float maxX,
-        float maxY)
+        float maxY,
+        (string Band, float Low, float High)[]? bands = null)
     {
         int start = grid.FindNode(from, NavRouter.StartRadius, NavRouter.StartHeightTolerance);
         int goal = grid.FindNode(to, 1f, NavRouter.GoalHeightTolerance);
@@ -187,7 +486,7 @@ public sealed class NavMeshInstalledDatDiagnosticTests
             + $"{fromGoal.Count(reached => reached)} from the goal");
         foreach ((uint cell, Vector3 at) in world.CellOrigins)
             _output.WriteLine($"{name}: cell 0x{cell:X8} origin ({at.X:0.00}, {at.Y:0.00}, {at.Z:0.00})");
-        foreach ((string band, float low, float high) in new[] { ("ground", 11f, 13.4f), ("middle", 12.2f, 15.4f), ("upper", 13.4f, 18f) })
+        foreach ((string band, float low, float high) in bands ?? [("ground", 11f, 13.4f), ("middle", 12.2f, 15.4f), ("upper", 13.4f, 18f)])
         {
             string path = Path.Combine(ImageDirectory(), $"{name}-reach-{band}.png");
             NavGridImage.WriteReachability(
