@@ -19,6 +19,11 @@ internal static class RecordKinds
     internal const string NearbyRefused = "nearby-refused";
     internal const string EntityInspected = "entity-inspected";
     internal const string EntityRefused = "entity-refused";
+    internal const string TargetSent = "target-sent";
+    internal const string TargetRefused = "target-refused";
+    internal const string TargetOutcome = "target-outcome";
+    internal const string GoalAccepted = "goal-accepted";
+    internal const string GoalResolved = "goal-resolved";
 
     /// <summary>
     /// Kinds that describe current state. The latest record of each is kept

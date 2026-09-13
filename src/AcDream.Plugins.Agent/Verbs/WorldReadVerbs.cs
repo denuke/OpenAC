@@ -64,28 +64,17 @@ internal sealed class WorldReadVerbs : IVerbFamily
             return RefuseNearby(line, "the client has no position for its own body", listKinds: false);
 
         var histogram = new SortedDictionary<string, int>(StringComparer.Ordinal);
-        var matched = new List<(PluginWorldObject Value, double Distance)>();
-        foreach (PluginWorldObject candidate in automation.Objects.CaptureObjects())
+        var matched = new List<PlacedObject>();
+        foreach (PlacedObject placed in WorldQuery.Around(automation, self, range))
         {
-            if (!candidate.HasPosition
-                || !candidate.IsLandscape
-                || candidate.ObjectId == self.LocalObjectId)
-            {
-                continue;
-            }
-            double distance = Geometry.DistanceMeters(self.Position, candidate.Position);
-            if (range is { } limit && distance > limit)
-                continue;
-            string word = EntityKinds.WordFor(candidate.ObjectClass);
-            histogram[word] = histogram.TryGetValue(word, out int count) ? count + 1 : 1;
-            if (kind is null || kind == word)
-                matched.Add((candidate, distance));
+            histogram[placed.Word] = histogram.TryGetValue(placed.Word, out int count) ? count + 1 : 1;
+            if (kind is null || kind == placed.Word)
+                matched.Add(placed);
         }
-        matched.Sort(static (left, right) => left.Distance.CompareTo(right.Distance));
 
         var entities = new JsonArray();
-        foreach ((PluginWorldObject value, double distance) in matched.Take(ShownLimit))
-            entities.Add(Row(self, value, distance));
+        foreach (PlacedObject placed in matched.Take(ShownLimit))
+            entities.Add(Row(self, placed.Value, placed.Distance));
 
         var kinds = new JsonObject();
         foreach (KeyValuePair<string, int> pair in histogram)

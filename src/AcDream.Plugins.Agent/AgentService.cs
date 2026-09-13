@@ -59,11 +59,14 @@ internal sealed class AgentService : IDisposable
         _state.Add(new CombatModeProjection(host));
         _events.Add(new VitalChangeEvents(host));
         _events.Add(new ChatEvents(host));
+        Outcomes = new OutcomeCorrelator(Publisher, _clock);
         Commands = new CommandDispatcher(host, Publisher);
         Commands.Register(new ChatVerbs(host));
         Commands.Register(new UnavailableVerbs(Publisher));
         Commands.Register(new CharacterReadVerbs(host, Publisher, _state, _clock));
         Commands.Register(new WorldReadVerbs(host, Publisher));
+        Commands.Register(new TargetVerbs(host, Publisher, Outcomes));
+        Commands.Register(new MotorVerbs(host, Publisher, Outcomes));
     }
 
     internal RecordRing Ring { get; }
@@ -71,6 +74,8 @@ internal sealed class AgentService : IDisposable
     internal Publisher Publisher { get; }
 
     internal CommandDispatcher Commands { get; }
+
+    internal OutcomeCorrelator Outcomes { get; }
 
     /// <summary>Event polls or rebases that threw; the source is skipped for that tick.</summary>
     internal long EventFailures { get; private set; }
@@ -113,6 +118,8 @@ internal sealed class AgentService : IDisposable
         if (_disposed)
             return;
         _clock.Advance(elapsedSeconds);
+        IAutomationSurface automation = _host.Automation;
+        Outcomes.Tick(automation.IsAvailable && automation.Character.IsInWorld);
         if (!IsActive)
             return;
         _state.Tick(_clock.Now);

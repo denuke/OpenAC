@@ -139,6 +139,28 @@ public sealed class AgentServiceStateTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AnActionResolvesOnTickWithNoConsumerAttached()
+    {
+        var host = new FakePluginHost();
+        host.FakeAutomation.FakeNavigation.Snapshot = new PluginNavigationSnapshot(
+            true, false, 0x50000001u, new PluginNavigationPosition(0u, 0d, 0d, 0d, 0f, true), false, false);
+        using var service = new AgentService(host, _ => new RecordingSink());
+
+        long id = service.Commands.Deliver("turn to 90", "mcp").Id;
+        host.FakeAutomation.FakeNavigation.Snapshot = host.FakeAutomation.FakeNavigation.Snapshot with
+        {
+            Position = new PluginNavigationPosition(0u, 0d, 0d, 0d, 90f, true),
+        };
+        service.OnTick(0.016);
+
+        AgentRecord resolved = Assert.Single(
+            service.Ring.Read(-1, new HashSet<string> { RecordKinds.GoalResolved }).Records);
+        using JsonDocument document = JsonDocument.Parse(resolved.Json);
+        Assert.Equal(id, document.RootElement.GetProperty("id").GetInt64());
+        Assert.Equal("completed", document.RootElement.GetProperty("outcome").GetString());
+    }
+
     private static void Run(AgentService service, string arguments) =>
         service.HandleCommand(new PluginCommand("agent", arguments, "/agent " + arguments));
 

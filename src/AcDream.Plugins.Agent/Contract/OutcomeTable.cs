@@ -12,6 +12,13 @@ internal static class OutcomeTable
         [(RecordKinds.CommandOutcome, "chat")] = OutcomeClass.Confirmed,
         [(RecordKinds.CommandOutcome, "refused")] = OutcomeClass.Refused,
         [(RecordKinds.CommandOutcome, "failed")] = OutcomeClass.Withdrawn,
+        [(RecordKinds.TargetOutcome, "completed")] = OutcomeClass.Confirmed,
+        [(RecordKinds.TargetOutcome, "unconfirmed")] = OutcomeClass.Unconfirmed,
+        [(RecordKinds.TargetOutcome, "lost")] = OutcomeClass.Lost,
+        [(RecordKinds.GoalResolved, "completed")] = OutcomeClass.Confirmed,
+        [(RecordKinds.GoalResolved, "cancelled")] = OutcomeClass.Withdrawn,
+        [(RecordKinds.GoalResolved, "unconfirmed")] = OutcomeClass.Unconfirmed,
+        [(RecordKinds.GoalResolved, "lost")] = OutcomeClass.Lost,
     };
 
     internal static IEnumerable<string> WordsFor(string kind) =>
