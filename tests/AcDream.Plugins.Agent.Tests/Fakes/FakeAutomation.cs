@@ -14,6 +14,7 @@ internal sealed class FakeAutomation : IAutomationSurface
     public IWorldObjectAutomation Objects => FakeObjects;
     public IItemAutomation Items => FakeItems;
     public ILootAutomation Loot => FakeLoot;
+    public IEquipmentAutomation Equipment => FakeEquipment;
 
     internal FakeChat FakeChat { get; } = new();
     internal FakeCharacter FakeCharacter { get; } = new();
@@ -24,6 +25,7 @@ internal sealed class FakeAutomation : IAutomationSurface
     internal FakeMagic FakeMagic { get; } = new();
     internal FakeItems FakeItems { get; } = new();
     internal FakeLoot FakeLoot { get; } = new();
+    internal FakeEquipment FakeEquipment { get; } = new();
 }
 
 internal sealed class FakeChat : IPluginChat
@@ -71,6 +73,7 @@ internal sealed class FakeCharacter : ICharacterInfo
     public string Name { get; set; } = "Tester";
     public string WorldName { get; set; } = "Testworld";
     public int Level { get; set; }
+    public int MainPackFreeSlots { get; set; }
     public uint ObjectId { get; set; } = 0x50000001u;
     public uint CurrentHealth { get; set; }
     public uint MaxHealth { get; set; }

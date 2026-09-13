@@ -188,3 +188,21 @@ internal sealed class FakeLoot : ILootAutomation
         return new PluginItemCommandResult(NextStatus);
     }
 }
+
+internal sealed class FakeEquipment : IEquipmentAutomation
+{
+    public bool IsAvailable => true;
+
+    internal List<PluginEquipmentItem> Owned { get; } = [];
+    internal List<string> Calls { get; } = [];
+    internal PluginEquipmentCommandStatus NextStatus { get; set; } =
+        PluginEquipmentCommandStatus.Started;
+
+    public IReadOnlyList<PluginEquipmentItem> CaptureOwnedEquipment() => Owned.ToArray();
+
+    public PluginEquipmentCommandResult Equip(uint objectId, uint requestedLocation = 0u)
+    {
+        Calls.Add($"equip:{objectId:X8}");
+        return new PluginEquipmentCommandResult(NextStatus);
+    }
+}

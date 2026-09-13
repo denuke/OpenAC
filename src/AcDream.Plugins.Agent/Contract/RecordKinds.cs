@@ -35,6 +35,8 @@ internal static class RecordKinds
     internal const string InventoryAction = "inventory-action";
     internal const string InventoryRefused = "inventory-refused";
     internal const string InventoryOutcome = "inventory-outcome";
+    internal const string Inventory = "inventory";
+    internal const string Equipment = "equipment";
 
     /// <summary>
     /// Kinds that describe current state. The latest record of each is kept
