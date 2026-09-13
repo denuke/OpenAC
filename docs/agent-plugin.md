@@ -50,8 +50,8 @@ Only `act` can make the character do anything. Every other tool only reads.
 | `act` | Runs one command line and returns a handle with a status: `pending`, `done`, `refused` or `sent-as-chat`. |
 | `outcome` | How the line with a handle ended: its outcome word, its shared class, and every record it produced. |
 | `events` | Records after a cursor. With `waitSeconds` it waits for the next one, and `until` wakes it on a condition. |
-| `nearby` | Objects around the character, nearest first, with distance, bearing and kind. |
-| `inspect` | Everything the client holds about one object. |
+| `nearby` | Objects around the character, nearest first, with distance, bearing, kind and sight. |
+| `inspect` | Everything the client holds about one object, with its sight. |
 | `spells` | Known spells, narrowed by `search`, including whether their components are carried. |
 | `skills` | Skills with their training and values. |
 | `buffs` | Enchantments on the character with the time remaining. |
@@ -116,12 +116,28 @@ player's own movement keys end every move at once.
 
 `go to` walks to an object along a route the client plans from its own
 collision world: around walls and objects, through doorways, and up and down
-ramps and stairs. The client plans again when the character stops making
-progress, ends the walk facing the object, and reports `no-route` when nothing
-joins them. `stop`, `cancel` and the player's movement keys end a walk. Client
+ramps and stairs. A walk arrives only where no wall stands between the character
+and the object, and ends facing it. When nothing within reach can both be reached
+and see the object, such as a vendor behind a counter, the walk ends at the
+nearest spot that can, up to 10 m away. When no reachable spot can see it, as
+through a window whose collision fills the opening, the walk ends at the nearest
+reachable spot up to 10 m away and says it has no line of sight. When the character stops making progress,
+the client plans again around the spot where it stuck; a walk that stays blocked
+names what stood beside that spot in `blockedBy`, such as a closed door to `use`
+before trying again. `remaining` is the straight-line distance still to go, and
+`no-route` means nothing joins the character to the object. `stop`, `cancel` and
+the player's movement keys end a walk. Client
 commands that close the client, kill the character, or change its player-killer
 status are refused, and `logout` is how a model leaves the world. Any other line is handed to the client as chat or a
 client command, so a model can make the character speak.
+
+Objects in `nearby` and `inspect` carry `sight`: a verdict for an arc spell, a war
+bolt and an arrow, each `visible`, `blocked`, or `cannot-say` with `because`. The
+three fly different paths, so an arc can clear a ledge that stops a bolt, and
+`blockedBy` names what stopped a blocked shot, such as a closed door. The client
+traces each path through its own collision world, as a prediction: the server
+still decides at launch. One `nearby` answer traces its nearest twelve objects
+within 80 m, and `inspect` traces any one.
 
 ## Records
 

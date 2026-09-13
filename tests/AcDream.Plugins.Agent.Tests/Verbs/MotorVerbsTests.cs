@@ -526,6 +526,43 @@ public sealed class MotorVerbsTests
         Assert.Equal("cancelled", walk.GetProperty("outcome").GetString());
     }
 
+    [Fact]
+    public void ABlockedWalkSaysHowFarItStillIsAndWhatStoodInTheWay()
+    {
+        var (host, verbs, correlator, _, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Shopkeeper", eastMeters: 33.5d));
+        verbs.Handle(Line("go to 0x70000001"));
+
+        host.FakeAutomation.FakeNavigation.EndGoTo(
+            PluginGoToState.Blocked,
+            "the character stopped making progress beside a closed door, Door (0x7A000001)",
+            remaining: 32.3f,
+            replans: 3,
+            blockedBy: 0x7A000001u);
+        correlator.Tick(inWorld: true);
+
+        JsonElement resolved = Kinds(ring, RecordKinds.GoalResolved).Single();
+        Assert.Equal("blocked", resolved.GetProperty("outcome").GetString());
+        Assert.Equal(32.3d, resolved.GetProperty("remaining").GetDouble(), 1);
+        Assert.Equal("0x7A000001", resolved.GetProperty("blockedBy").GetString());
+        Assert.Contains("closed door", resolved.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public void AWalkThatCannotTellHowFarItIsReportsNoDistance()
+    {
+        var (host, verbs, correlator, _, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Healer", eastMeters: 24d));
+        verbs.Handle(Line("go to 0x70000001"));
+
+        host.FakeAutomation.FakeNavigation.EndGoTo(PluginGoToState.Lost, "the character left the world", remaining: float.NaN);
+        correlator.Tick(inWorld: true);
+
+        JsonElement resolved = Kinds(ring, RecordKinds.GoalResolved).Single();
+        Assert.Equal(JsonValueKind.Null, resolved.GetProperty("remaining").ValueKind);
+        Assert.Equal(JsonValueKind.Null, resolved.GetProperty("blockedBy").ValueKind);
+    }
+
     private static PluginWorldObject Placed(uint id, string name, double eastMeters) =>
         new(id, 1u, name, PluginObjectClass.Monster, 16u, 0u, 0u)
         {

@@ -287,8 +287,11 @@ internal sealed class MotorVerbs : IVerbFamily
                 return null;
             var fields = new JsonObject
             {
-                ["remaining"] = Math.Round(report.RemainingMeters, 1),
+                ["remaining"] = float.IsFinite(report.RemainingMeters)
+                    ? Math.Round(report.RemainingMeters, 1)
+                    : (double?)null,
                 ["replans"] = report.Replans,
+                ["blockedBy"] = report.BlockedByObjectId != 0u ? Facts.Hex(report.BlockedByObjectId) : null,
             };
             return report.State switch
             {

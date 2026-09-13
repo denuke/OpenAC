@@ -10,7 +10,8 @@ namespace AcDream.Plugins.Agent.Verbs;
 
 /// <summary>
 /// <c>nearby</c> and <c>inspect</c>: what is around the character and what the
-/// client holds about one object. Neither sends anything to the server.
+/// client holds about one object, each with a sight verdict for an arc spell, a
+/// war bolt and an arrow. Neither sends anything to the server.
 /// </summary>
 internal sealed class WorldReadVerbs : IVerbFamily
 {
@@ -73,8 +74,20 @@ internal sealed class WorldReadVerbs : IVerbFamily
         }
 
         var entities = new JsonArray();
+        int traced = 0;
         foreach (PlacedObject placed in matched.Take(ShownLimit))
-            entities.Add(Row(self, placed.Value, placed.Distance));
+        {
+            JsonObject row = Row(self, placed.Value, placed.Distance);
+            bool trace = traced < Sight.TracedObjects && placed.Distance <= Sight.TracedRangeMeters;
+            if (trace)
+                traced++;
+            row["sight"] = trace
+                ? Sight.Trace(automation.Projectiles, placed.Value.ObjectId)
+                : Sight.Untraced(
+                    $"one answer traces only the nearest {Sight.TracedObjects} objects within "
+                    + $"{Sight.TracedRangeMeters:0} m; inspect this one for its own");
+            entities.Add(row);
+        }
 
         var kinds = new JsonObject();
         foreach (KeyValuePair<string, int> pair in histogram)
@@ -146,6 +159,7 @@ internal sealed class WorldReadVerbs : IVerbFamily
         PluginNavigationSnapshot self = automation.Navigation.Snapshot;
         JsonObject position;
         JsonObject distance;
+        JsonObject sight;
         if (value.HasPosition)
         {
             position = Facts.Observed(Coordinates.Describe(value.Position));
@@ -155,6 +169,9 @@ internal sealed class WorldReadVerbs : IVerbFamily
                     "both positions",
                     "straight-line distance in meters")
                 : Facts.Unknown("the client has no position for its own body");
+            sight = self.IsAvailable
+                ? Sight.Trace(automation.Projectiles, id)
+                : Sight.Untraced("the client has no position for its own body");
         }
         else
         {
@@ -163,6 +180,7 @@ internal sealed class WorldReadVerbs : IVerbFamily
                 : "the client has not been told where this object is";
             position = Facts.Unknown(because);
             distance = Facts.Unknown(because);
+            sight = Sight.Untraced(because);
         }
 
         _publisher.Publish(RecordKinds.EntityInspected, new JsonObject
@@ -180,6 +198,7 @@ internal sealed class WorldReadVerbs : IVerbFamily
             ["stackSize"] = value.StackSize,
             ["position"] = position,
             ["distance"] = distance,
+            ["sight"] = sight,
             ["appraised"] = value.HasAppraisalData,
             ["spellIds"] = new JsonArray(value.SpellIds.Select(spell => (JsonNode?)spell).ToArray()),
             ["properties"] = Properties(automation.Objects, id),

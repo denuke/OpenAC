@@ -68,8 +68,20 @@ internal sealed class FakeNavigation : INavigationAutomation
     }
 
     /// <summary>Ends the walk to an object the way the client would report it.</summary>
-    internal void EndGoTo(PluginGoToState state, string reason, float remaining = 0f, int replans = 0) =>
-        GoToReport = GoToReport with { State = state, Reason = reason, RemainingMeters = remaining, Replans = replans };
+    internal void EndGoTo(
+        PluginGoToState state,
+        string reason,
+        float remaining = 0f,
+        int replans = 0,
+        uint blockedBy = 0u) =>
+        GoToReport = GoToReport with
+        {
+            State = state,
+            Reason = reason,
+            RemainingMeters = remaining,
+            Replans = replans,
+            BlockedByObjectId = blockedBy,
+        };
 
     public PluginNavigationCommandStatus Move(
         PluginMoveDirection direction,
