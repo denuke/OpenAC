@@ -11,6 +11,7 @@ internal sealed class TargetVerbs : IVerbFamily
 {
     internal const double WindowSeconds = 2d;
     internal const string Completed = "completed";
+    internal const string NoSuchObject = "the client holds no object with that id";
 
     internal static readonly IReadOnlyList<string> OutcomeWords = [Completed];
 
@@ -78,10 +79,17 @@ internal sealed class TargetVerbs : IVerbFamily
             if (!Guids.TryParse(line.Arguments, out id))
                 return Refuse(line, "target needs an object id, or 'nearest' and a kind word");
             if (!automation.Objects.TryGet(id, out PluginWorldObject value))
-                return Refuse(line, "the client holds no object with that id");
+                return Refuse(line, NoSuchObject);
             name = value.Name;
         }
 
+        if (selection.SelectedObjectId == id)
+        {
+            Sent(line, id, name);
+            _outcomes.ResolveNow(line.Id, line.Verb, RecordKinds.TargetOutcome,
+                new Resolution(Completed, "it was already targeted"));
+            return VerbResult.Handled;
+        }
         if (!selection.Select(id))
             return Refuse(line, "the client did not accept the selection");
         Sent(line, id, name);

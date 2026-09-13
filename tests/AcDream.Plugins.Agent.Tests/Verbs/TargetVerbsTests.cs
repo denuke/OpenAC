@@ -26,6 +26,22 @@ public sealed class TargetVerbsTests
     }
 
     [Fact]
+    public void TargetingTheObjectAlreadyTargetedCompletesAtOnce()
+    {
+        var (host, verbs, _, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(new PluginWorldObject(
+            0x70000001u, 1u, "Drudge Skulker", PluginObjectClass.Monster, 16u, 0u, 0u));
+        host.FakeSelection.Select(0x70000001u);
+        host.FakeSelection.Accepts = false;
+
+        Assert.Equal("handled", verbs.Handle(Line("target 0x70000001")).Outcome);
+
+        JsonElement outcome = Latest(ring, RecordKinds.TargetOutcome);
+        Assert.Equal("completed", outcome.GetProperty("outcome").GetString());
+        Assert.Equal("it was already targeted", outcome.GetProperty("reason").GetString());
+    }
+
+    [Fact]
     public void AnIdTheClientDoesNotHoldIsRefusedAndNothingIsSelected()
     {
         var (host, verbs, _, ring) = Build();
