@@ -73,7 +73,6 @@ internal sealed class AgentService : IDisposable
         Outcomes = new OutcomeCorrelator(Publisher, _clock);
         Commands = new CommandDispatcher(host, Publisher);
         Commands.Register(new ChatVerbs(host));
-        Commands.Register(new UnavailableVerbs(Publisher));
         Commands.Register(new CharacterReadVerbs(host, Publisher, _state, _clock));
         Commands.Register(new WorldReadVerbs(host, Publisher));
         Commands.Register(new TargetVerbs(host, Publisher, Outcomes));

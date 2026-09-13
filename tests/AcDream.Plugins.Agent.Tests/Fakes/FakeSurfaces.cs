@@ -45,6 +45,32 @@ internal sealed class FakeNavigation : INavigationAutomation
 
     public PluginMoveReport MoveReport { get; set; }
 
+    internal List<(uint ObjectId, float ArrivalMeters)> GoTos { get; } = [];
+    internal int GoToStops { get; private set; }
+
+    public PluginGoToReport GoToReport { get; set; }
+
+    public PluginNavigationCommandStatus GoTo(uint objectId, float arrivalMeters)
+    {
+        GoTos.Add((objectId, arrivalMeters));
+        if (MoveStatus == PluginNavigationCommandStatus.Accepted)
+            GoToReport = new PluginGoToReport(GoToReport.Sequence + 1, PluginGoToState.Planning, objectId, 0f, 0, "planning");
+        return MoveStatus;
+    }
+
+    public PluginNavigationCommandStatus StopGoTo()
+    {
+        GoToStops++;
+        if (GoToReport.State is not (PluginGoToState.Planning or PluginGoToState.Walking))
+            return PluginNavigationCommandStatus.Rejected;
+        EndGoTo(PluginGoToState.Stopped, "stopped");
+        return PluginNavigationCommandStatus.Accepted;
+    }
+
+    /// <summary>Ends the walk to an object the way the client would report it.</summary>
+    internal void EndGoTo(PluginGoToState state, string reason, float remaining = 0f, int replans = 0) =>
+        GoToReport = GoToReport with { State = state, Reason = reason, RemainingMeters = remaining, Replans = replans };
+
     public PluginNavigationCommandStatus Move(
         PluginMoveDirection direction,
         PluginMovePace pace,

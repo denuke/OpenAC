@@ -88,7 +88,7 @@ the read tools print, such as `0x70000001`.
 | Read | `vitals`, `stats`, `location`, `snapshot`, `skills`, `buffs`, `spells [search]`, `nearby [kind] [range]`, `inspect <id>`, `inventory [search]`, `equipment`, `vendor`, `loot list`, `loot corpses [range]` |
 | Chat | `say <text>`, `tell <name>, <message>`, `emote <text>` |
 | Target | `target <id>`, `target nearest [kind]`, `untarget` |
-| Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance peace\|melee\|missile\|magic`, `cancel` |
+| Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `go to <id, name or target> [within <meters>]`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance peace\|melee\|missile\|magic`, `cancel` |
 | Magic | `cast <spell name or id> [on <id>]` |
 | Objects | `use <id>`, `use <item id> on <id>`, `open <id>` |
 | Items | `loot <item id>`, `drop <item id> [amount]`, `give <item id> to <id> [amount]`, `move <item id> to <container id> [amount]`, `equip <item id>`, `unequip <item id>` |
@@ -112,11 +112,15 @@ without stopping it, and a new move replaces only a move of its own kind. The
 client carries out each move itself, lands a turn on its exact angle, and
 reports a move as blocked when the character stops making progress. A move
 without an amount keeps going until `stop`, for at most thirty seconds, and the
-player's own movement keys end every move at once. `go` and `goto` are refused,
-because finding a route to a named place is not part of this plugin. Client
+player's own movement keys end every move at once.
+
+`go to` walks to an object along a route the client plans from its own
+collision world: around walls and objects, through doorways, and up and down
+ramps and stairs. The client plans again when the character stops making
+progress, ends the walk facing the object, and reports `no-route` when nothing
+joins them. `stop`, `cancel` and the player's movement keys end a walk. Client
 commands that close the client, kill the character, or change its player-killer
-status are refused too, and `logout` is how a model leaves the world. Any other
-line is handed to the client as chat or a
+status are refused, and `logout` is how a model leaves the world. Any other line is handed to the client as chat or a
 client command, so a model can make the character speak.
 
 ## Records

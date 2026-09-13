@@ -391,6 +391,149 @@ public sealed class MotorVerbsTests
         Assert.Equal(0, correlator.PendingCount);
     }
 
+    [Fact]
+    public void GoToAsksTheClientToWalkToTheObjectAndCompletesWhenItArrives()
+    {
+        var (host, verbs, correlator, _, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Healer", eastMeters: 24d));
+        FakeNavigation navigation = host.FakeAutomation.FakeNavigation;
+
+        Assert.Equal("handled", verbs.Handle(Line("go to 0x70000001")).Outcome);
+
+        Assert.Equal([(0x70000001u, MotorVerbs.DefaultArrivalMeters)], navigation.GoTos);
+        JsonElement accepted = Kinds(ring, RecordKinds.GoalAccepted).Single();
+        Assert.Equal("0x70000001", accepted.GetProperty("target").GetString());
+        Assert.Equal(24d, accepted.GetProperty("meters").GetDouble(), 1);
+        correlator.Tick(inWorld: true);
+        Assert.Empty(Kinds(ring, RecordKinds.GoalResolved));
+
+        navigation.EndGoTo(PluginGoToState.Arrived, "arrived", replans: 1);
+        correlator.Tick(inWorld: true);
+
+        JsonElement resolved = Kinds(ring, RecordKinds.GoalResolved).Single();
+        Assert.Equal("completed", resolved.GetProperty("outcome").GetString());
+        Assert.Equal(1, resolved.GetProperty("replans").GetInt32());
+    }
+
+    [Fact]
+    public void GoToFindsTheNearestObjectByNameAndHowNearToEnd()
+    {
+        var (host, verbs, _, _, _) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Mite Maze Portal", eastMeters: 40d));
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000002u, "Mite Maze Portal", eastMeters: 12d));
+
+        Assert.Equal("handled", verbs.Handle(Line("goto mite maze portal within 4")).Outcome);
+
+        Assert.Equal([(0x70000002u, 4f)], host.FakeAutomation.FakeNavigation.GoTos);
+    }
+
+    [Fact]
+    public void GoToTargetWalksToTheSelection()
+    {
+        var (host, verbs, _, _, _) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000003u, "Drudge", eastMeters: 8d));
+        host.Selection.Select(0x70000003u);
+
+        Assert.Equal("handled", verbs.Handle(Line("go to target")).Outcome);
+
+        Assert.Equal(0x70000003u, Assert.Single(host.FakeAutomation.FakeNavigation.GoTos).ObjectId);
+    }
+
+    [Theory]
+    [InlineData(PluginGoToState.NoRoute, "no-route", "unreachable")]
+    [InlineData(PluginGoToState.Blocked, "blocked", "unreachable")]
+    [InlineData(PluginGoToState.Stopped, "cancelled", "withdrawn")]
+    [InlineData(PluginGoToState.Interrupted, "cancelled", "withdrawn")]
+    [InlineData(PluginGoToState.Lost, "lost", "lost")]
+    public void EachWayAWalkToAnObjectEndsHasItsOutcome(PluginGoToState ending, string outcome, string outcomeClass)
+    {
+        var (host, verbs, correlator, _, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Healer", eastMeters: 24d));
+        verbs.Handle(Line("go to 0x70000001"));
+
+        host.FakeAutomation.FakeNavigation.EndGoTo(ending, "the reason the client gave");
+        correlator.Tick(inWorld: true);
+
+        JsonElement resolved = Kinds(ring, RecordKinds.GoalResolved).Single();
+        Assert.Equal(outcome, resolved.GetProperty("outcome").GetString());
+        Assert.Equal(outcomeClass, resolved.GetProperty("class").GetString());
+    }
+
+    [Fact]
+    public void ALaterWalkToAnObjectReplacesTheEarlierOne()
+    {
+        var (host, verbs, correlator, _, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Healer", eastMeters: 24d));
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000002u, "Drudge", eastMeters: 8d));
+        verbs.Handle(Line("go to 0x70000001"));
+
+        verbs.Handle(CommandLine.Parse(10, "go to 0x70000002", "mcp"));
+        correlator.Tick(inWorld: true);
+
+        JsonElement resolved = Kinds(ring, RecordKinds.GoalResolved).Single();
+        Assert.Equal(9, resolved.GetProperty("id").GetInt64());
+        Assert.Equal("cancelled", resolved.GetProperty("outcome").GetString());
+    }
+
+    [Theory]
+    [InlineData("go")]
+    [InlineData("go somewhere")]
+    [InlineData("go to")]
+    [InlineData("goto")]
+    [InlineData("go to 0x70000001 within 0")]
+    [InlineData("go to 0x70000001 within 51")]
+    [InlineData("go to 0x70000001 within 5s")]
+    [InlineData("go to Nobody Here")]
+    [InlineData("go to 0x70000009")]
+    [InlineData("go to target")]
+    [InlineData("go to Faraway")]
+    public void AGoToWithoutAReachableObjectIsRefusedAndAsksNothing(string text)
+    {
+        var (host, verbs, _, _, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Healer", eastMeters: 24d));
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000004u, "Faraway", eastMeters: 300d));
+
+        Assert.Equal("refused", verbs.Handle(Line(text)).Outcome);
+        Assert.Empty(host.FakeAutomation.FakeNavigation.GoTos);
+        Assert.Single(Kinds(ring, RecordKinds.GoalRefused));
+    }
+
+    [Fact]
+    public void AWalkTheClientRefusesIsRefused()
+    {
+        var (host, verbs, _, _, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Healer", eastMeters: 24d));
+        host.FakeAutomation.FakeNavigation.MoveStatus = PluginNavigationCommandStatus.Rejected;
+
+        Assert.Equal("refused", verbs.Handle(Line("go to 0x70000001")).Outcome);
+        Assert.Contains(
+            "did not accept the walk",
+            Kinds(ring, RecordKinds.GoalRefused).Single().GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public void StopEndsAWalkToAnObject()
+    {
+        var (host, verbs, correlator, _, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Healer", eastMeters: 24d));
+        verbs.Handle(Line("go to 0x70000001"));
+
+        verbs.Handle(CommandLine.Parse(10, "stop", "mcp"));
+        correlator.Tick(inWorld: true);
+
+        Assert.Equal(1, host.FakeAutomation.FakeNavigation.GoToStops);
+        JsonElement walk = Kinds(ring, RecordKinds.GoalResolved).Single(record => record.GetProperty("id").GetInt64() == 9);
+        Assert.Equal("cancelled", walk.GetProperty("outcome").GetString());
+    }
+
+    private static PluginWorldObject Placed(uint id, string name, double eastMeters) =>
+        new(id, 1u, name, PluginObjectClass.Monster, 16u, 0u, 0u)
+        {
+            HasPosition = true,
+            IsLandscape = true,
+            Position = new PluginNavigationPosition(0u, eastMeters / 240d, 0d, 0d, 0f, true),
+        };
+
     private static PluginNavigationSnapshot Body(float heading) =>
         new(true, false, 0x50000001u, new PluginNavigationPosition(0u, 0d, 0d, 0d, heading, true), false, false);
 
