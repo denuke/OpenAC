@@ -62,6 +62,10 @@ Only `act` can make the character do anything. Every other tool only reads.
 | `corpses` | Corpses in range, and whether each has been opened. |
 | `characters` | The account's characters at the character list, and where the client stands in logging in. |
 
+`spells` shows at most 50 rows, and `inventory`, `vendor` and `container` at most 100, unless
+`limit` asks for another number up to 500. Each answer says how many rows matched, how many are
+shown and how many the limit held back, so a short list never reads as a short inventory.
+
 `act` and `outcome` take `waitSeconds`, up to 30, to answer once the action
 settles instead of at once. An accepted action is not a finished one: the server
 can still refuse a spell the client sent, so read `outcome` before relying on it.
@@ -85,7 +89,7 @@ the read tools print, such as `0x70000001`.
 | Family | Lines |
 |---|---|
 | Session | `characters`, `login <name or id>`, `logout` |
-| Read | `vitals`, `stats`, `location`, `snapshot`, `skills`, `buffs`, `spells [search]`, `nearby [kind] [range]`, `inspect <id>`, `inventory [search]`, `equipment`, `vendor`, `loot list`, `loot corpses [range]` |
+| Read | `vitals`, `stats`, `location`, `snapshot`, `skills`, `buffs`, `spells [search] [limit <n>]`, `nearby [kind] [range]`, `inspect <id>`, `inventory [search] [limit <n>]`, `equipment`, `vendor [limit <n>]`, `loot list [limit <n>]`, `loot corpses [range]` |
 | Chat | `say <text>`, `tell <name>, <message>`, `emote <text>` |
 | Target | `target <id>`, `target nearest [kind]`, `untarget` |
 | Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `go to <id, name or target> [within <meters>]`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance combat\|peace`, `cancel` |

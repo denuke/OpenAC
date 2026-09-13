@@ -16,6 +16,9 @@ namespace AcDream.Plugins.Agent.Verbs;
 internal sealed class VendorVerbs : IVerbFamily
 {
     internal const double CheckSeconds = 0.5d;
+
+    /// <summary>Listings shown unless a read asks for more.</summary>
+    internal const int DefaultListingRows = 100;
     private const string NoVendor = "no vendor is open; 'use <vendor id>' opens one";
 
     private readonly IPluginHost _host;
@@ -55,6 +58,8 @@ internal sealed class VendorVerbs : IVerbFamily
 
     private VerbResult Listing(CommandLine line)
     {
+        if (!RowLimits.TrySplit(line.Arguments, DefaultListingRows, out _, out int limit))
+            return Refuse(line, RowLimits.Problem);
         IAutomationSurface automation = _host.Automation;
         uint vendor = automation.Items.ActiveVendorObjectId;
         if (vendor == 0u)
@@ -69,8 +74,9 @@ internal sealed class VendorVerbs : IVerbFamily
             return VerbResult.Handled;
         }
 
+        IReadOnlyList<PluginVendorItem> stock = automation.Items.CaptureVendorStock();
         var items = new JsonArray();
-        foreach (PluginVendorItem listing in automation.Items.CaptureVendorStock())
+        foreach (PluginVendorItem listing in stock.Take(limit))
         {
             items.Add(new JsonObject
             {
@@ -82,15 +88,17 @@ internal sealed class VendorVerbs : IVerbFamily
                 ["unlimited"] = listing.IsUnlimited,
             });
         }
-        _publisher.Publish(RecordKinds.Vendor, new JsonObject
+        var fields = new JsonObject
         {
             ["id"] = line.Id,
             ["open"] = true,
             ["vendor"] = Facts.Observed(Facts.Id(
                 vendor,
                 automation.Objects.TryGet(vendor, out PluginWorldObject value) ? value.Name : null)),
-            ["items"] = Facts.Observed(items),
-        });
+        };
+        RowLimits.Count(fields, stock.Count, items.Count);
+        fields["items"] = Facts.Observed(items);
+        _publisher.Publish(RecordKinds.Vendor, fields);
         return VerbResult.Handled;
     }
 

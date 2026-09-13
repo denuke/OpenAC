@@ -15,6 +15,9 @@ internal sealed class LootVerbs : IVerbFamily
 {
     internal const float DefaultCorpseRangeMeters = 30f;
 
+    /// <summary>Items in the open container shown unless a read asks for more.</summary>
+    internal const int DefaultContentRows = 100;
+
     private readonly IPluginHost _host;
     private readonly Publisher _publisher;
     private readonly OutcomeCorrelator _outcomes;
@@ -40,24 +43,30 @@ internal sealed class LootVerbs : IVerbFamily
             return Refuse(line, "usage: loot list, loot corpses [range], or loot <item id>");
         return words[0].ToLowerInvariant() switch
         {
-            "list" => List(line),
+            "list" => List(line, words),
             "corpses" => Corpses(line, words),
             _ => Take(line, words[0]),
         };
     }
 
-    private VerbResult List(CommandLine line)
+    private VerbResult List(CommandLine line, string[] words)
     {
+        if (!RowLimits.TrySplit(string.Join(' ', words.Skip(1)), DefaultContentRows, out _, out int limit))
+            return Refuse(line, RowLimits.Problem);
         ILootAutomation loot = _host.Automation.Loot;
         uint container = loot.CurrentContainerId;
         if (container == 0u)
             return Refuse(line, "no container is open; 'open <container id>' first");
-        _publisher.Publish(RecordKinds.ContainerContents, new JsonObject
+        IReadOnlyList<PluginInventoryItem> contents = loot.CaptureCurrentContents();
+        JsonArray items = ItemRows.Rows(contents.Take(limit));
+        var fields = new JsonObject
         {
             ["id"] = line.Id,
             ["container"] = Facts.Hex(container),
-            ["items"] = ItemRows.Rows(loot.CaptureCurrentContents()),
-        });
+        };
+        RowLimits.Count(fields, contents.Count, items.Count);
+        fields["items"] = items;
+        _publisher.Publish(RecordKinds.ContainerContents, fields);
         return VerbResult.Handled;
     }
 
