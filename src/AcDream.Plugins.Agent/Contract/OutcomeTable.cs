@@ -32,6 +32,10 @@ internal static class OutcomeTable
         [(RecordKinds.InventoryOutcome, "refused")] = OutcomeClass.Refused,
         [(RecordKinds.InventoryOutcome, "unconfirmed")] = OutcomeClass.Unconfirmed,
         [(RecordKinds.InventoryOutcome, "lost")] = OutcomeClass.Lost,
+        [(RecordKinds.AttackOutcome, "ended")] = OutcomeClass.Confirmed,
+        [(RecordKinds.AttackOutcome, "refused")] = OutcomeClass.Refused,
+        [(RecordKinds.AttackOutcome, "unconfirmed")] = OutcomeClass.Unconfirmed,
+        [(RecordKinds.AttackOutcome, "lost")] = OutcomeClass.Lost,
     };
 
     internal static IEnumerable<string> WordsFor(string kind) =>

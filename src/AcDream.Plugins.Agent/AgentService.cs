@@ -72,6 +72,7 @@ internal sealed class AgentService : IDisposable
         Commands.Register(new LootVerbs(host, Publisher, Outcomes));
         Commands.Register(new InventoryVerbs(host, Publisher, Outcomes));
         Commands.Register(new VendorVerbs(host, Publisher, Outcomes, _clock));
+        Commands.Register(new AttackVerbs(host, Publisher, Outcomes));
     }
 
     internal RecordRing Ring { get; }

@@ -66,7 +66,9 @@ internal sealed class FakeCombat : ICombatAutomation
         PluginAttackHeight height,
         float power)
     {
-        Calls.Add($"attack:{targetObjectId:X8}");
+        Calls.Add(string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"attack:{targetObjectId:X8}:{height}:{power:0.00}"));
         return new(NextStatus);
     }
 

@@ -39,6 +39,9 @@ internal static class RecordKinds
     internal const string Equipment = "equipment";
     internal const string Vendor = "vendor";
     internal const string VendorRefused = "vendor-refused";
+    internal const string AttackSent = "attack-sent";
+    internal const string AttackRefused = "attack-refused";
+    internal const string AttackOutcome = "attack-outcome";
 
     /// <summary>
     /// Kinds that describe current state. The latest record of each is kept
