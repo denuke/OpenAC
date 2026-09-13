@@ -67,55 +67,70 @@
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
       <SkipGetTargetFrameworkProperties>true</SkipGetTargetFrameworkProperties>
     </ProjectReference>
+    <ProjectReference Include="..\AcDream.Plugins.Agent\AcDream.Plugins.Agent.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <SkipGetTargetFrameworkProperties>true</SkipGetTargetFrameworkProperties>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <ShippedPlugin Include="AcDream.Plugins.MossTank">
+      <PluginId>acdream.mosstank</PluginId>
+      <DisplayName>MossTank</DisplayName>
+    </ShippedPlugin>
+    <ShippedPlugin Include="AcDream.Plugins.Agent">
+      <PluginId>acdream.agent</PluginId>
+      <DisplayName>Agent</DisplayName>
+    </ShippedPlugin>
     <_MossTankPluginMarkup Include="$(MSBuildProjectDirectory)/../AcDream.Plugins.MossTank/mosstank*.xml" />
   </ItemGroup>
+
   <Target
-    Name="CopyMossTankPluginToBuildOutput"
+    Name="CopyShippedPluginsToBuildOutput"
     AfterTargets="Build"
     Condition="'$(IsCrossTargetingBuild)' != 'true'">
-    <PropertyGroup>
-      <_MossTankDestDir>$(OutputPath)plugins/AcDream.Plugins.MossTank</_MossTankDestDir>
-    </PropertyGroup>
     <MSBuild
-      Projects="$(MSBuildProjectDirectory)/../AcDream.Plugins.MossTank/AcDream.Plugins.MossTank.csproj"
+      Projects="@(ShippedPlugin->'$(MSBuildProjectDirectory)/../%(Identity)/%(Identity).csproj')"
       Targets="GetTargetPath"
       Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);RuntimeIdentifier=$(RuntimeIdentifier);OutputPath=$(OutputPath)">
-      <Output TaskParameter="TargetOutputs" ItemName="_MossTankPluginBuildTarget" />
+      <Output TaskParameter="TargetOutputs" ItemName="_ShippedPluginBuildTarget" />
     </MSBuild>
-    <MakeDir Directories="$(_MossTankDestDir)" />
+    <MakeDir Directories="@(ShippedPlugin->'$(OutputPath)plugins/%(Identity)')" />
     <Copy
-      SourceFiles="@(_MossTankPluginBuildTarget);@(_MossTankPluginMarkup)"
-      DestinationFolder="$(_MossTankDestDir)"
+      SourceFiles="@(_ShippedPluginBuildTarget)"
+      DestinationFolder="$(OutputPath)plugins/%(Filename)"
+      SkipUnchangedFiles="true" />
+    <Copy
+      SourceFiles="@(_MossTankPluginMarkup)"
+      DestinationFolder="$(OutputPath)plugins/AcDream.Plugins.MossTank"
       SkipUnchangedFiles="true" />
     <WriteLinesToFile
-      File="$(_MossTankDestDir)/plugin.json"
+      File="$(OutputPath)plugins/%(ShippedPlugin.Identity)/plugin.json"
       Overwrite="true"
-      Lines="{ &quot;id&quot;: &quot;acdream.mosstank&quot;, &quot;displayName&quot;: &quot;MossTank&quot;, &quot;version&quot;: &quot;0.1.0&quot;, &quot;entryDll&quot;: &quot;AcDream.Plugins.MossTank.dll&quot;, &quot;apiVersion&quot;: 1 }" />
+      Lines="{ &quot;id&quot;: &quot;%(ShippedPlugin.PluginId)&quot;, &quot;displayName&quot;: &quot;%(ShippedPlugin.DisplayName)&quot;, &quot;version&quot;: &quot;0.1.0&quot;, &quot;entryDll&quot;: &quot;%(ShippedPlugin.Identity).dll&quot;, &quot;apiVersion&quot;: 1 }" />
   </Target>
 
   <Target
-    Name="CopyMossTankPluginToPublishOutput"
+    Name="CopyShippedPluginsToPublishOutput"
     AfterTargets="Publish"
     Condition="'$(IsCrossTargetingBuild)' != 'true'">
-    <PropertyGroup>
-      <_MossTankPublishDestDir>$(PublishDir)plugins/AcDream.Plugins.MossTank</_MossTankPublishDestDir>
-    </PropertyGroup>
     <MSBuild
-      Projects="$(MSBuildProjectDirectory)/../AcDream.Plugins.MossTank/AcDream.Plugins.MossTank.csproj"
+      Projects="@(ShippedPlugin->'$(MSBuildProjectDirectory)/../%(Identity)/%(Identity).csproj')"
       Targets="GetTargetPath"
       Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);RuntimeIdentifier=$(RuntimeIdentifier);OutputPath=$(OutputPath)">
-      <Output TaskParameter="TargetOutputs" ItemName="_MossTankPluginPublishTarget" />
+      <Output TaskParameter="TargetOutputs" ItemName="_ShippedPluginPublishTarget" />
     </MSBuild>
-    <MakeDir Directories="$(_MossTankPublishDestDir)" />
+    <MakeDir Directories="@(ShippedPlugin->'$(PublishDir)plugins/%(Identity)')" />
     <Copy
-      SourceFiles="@(_MossTankPluginPublishTarget);@(_MossTankPluginMarkup)"
-      DestinationFolder="$(_MossTankPublishDestDir)"
+      SourceFiles="@(_ShippedPluginPublishTarget)"
+      DestinationFolder="$(PublishDir)plugins/%(Filename)"
+      SkipUnchangedFiles="true" />
+    <Copy
+      SourceFiles="@(_MossTankPluginMarkup)"
+      DestinationFolder="$(PublishDir)plugins/AcDream.Plugins.MossTank"
       SkipUnchangedFiles="true" />
     <WriteLinesToFile
-      File="$(_MossTankPublishDestDir)/plugin.json"
+      File="$(PublishDir)plugins/%(ShippedPlugin.Identity)/plugin.json"
       Overwrite="true"
-      Lines="{ &quot;id&quot;: &quot;acdream.mosstank&quot;, &quot;displayName&quot;: &quot;MossTank&quot;, &quot;version&quot;: &quot;0.1.0&quot;, &quot;entryDll&quot;: &quot;AcDream.Plugins.MossTank.dll&quot;, &quot;apiVersion&quot;: 1 }" />
+      Lines="{ &quot;id&quot;: &quot;%(ShippedPlugin.PluginId)&quot;, &quot;displayName&quot;: &quot;%(ShippedPlugin.DisplayName)&quot;, &quot;version&quot;: &quot;0.1.0&quot;, &quot;entryDll&quot;: &quot;%(ShippedPlugin.Identity).dll&quot;, &quot;apiVersion&quot;: 1 }" />
   </Target>
 </Project>

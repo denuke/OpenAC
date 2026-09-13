@@ -134,7 +134,7 @@ lands, [docs/plugin-ui-markup.md](docs/plugin-ui-markup.md) covers the panel
 markup and the interfaces in `src/AcDream.Plugin.Abstractions` are the
 reference, with `src/AcDream.Plugins.MossTank` as the worked example.
 
-**MossTank** is the bundled plugin: a re-implementation of VirindiTank, the
+**MossTank** is a bundled plugin: a re-implementation of VirindiTank, the
 automation plugin most Asheron's Call players ran for years. It reads
 VirindiTank's own profile and navigation files so existing setups carry over,
 and it aims at the same tabs, the same behavior, and the same vocabulary.
@@ -142,6 +142,13 @@ Full credit to Virindi for the original; MossTank exists because that design
 was right. **What ships here is a proof of concept. It is not working yet
 and is not expected to;** most of the real work lives on another branch and
 lands when it is ready.
+
+**Agent** is the other bundled plugin. It lets an AI client play through the
+client: start the client, connect with
+`claude mcp add --transport http openac http://127.0.0.1:31337/mcp`, and ask it
+to log in a character and buy from the nearest vendor. It serves the Model Context
+Protocol on 127.0.0.1 only, and it reports what actually happened rather than
+what was sent. See [docs/agent-plugin.md](docs/agent-plugin.md).
 
 **Custom shader packs** are an experiment. The render packs under `samples/`
 are plugins that swap in their own shader stages (an atmospheric tier, a

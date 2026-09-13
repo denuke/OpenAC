@@ -200,6 +200,8 @@ jobs:
           test -f "$root/Rendering/Shaders/mesh_modern.vert"
           test -f "$root/plugins/AcDream.Plugins.MossTank/AcDream.Plugins.MossTank.dll"
           test -f "$root/plugins/AcDream.Plugins.MossTank/plugin.json"
+          test -f "$root/plugins/AcDream.Plugins.Agent/AcDream.Plugins.Agent.dll"
+          test -f "$root/plugins/AcDream.Plugins.Agent/plugin.json"
 
           test "$(grep -RIl --include='*.cs' 'LibraryImport(\"kernel32.dll\"' \
             src/AcDream.App | wc -l)" -eq 1

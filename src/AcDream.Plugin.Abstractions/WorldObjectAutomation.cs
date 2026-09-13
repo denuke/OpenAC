@@ -96,4 +96,13 @@ public interface IWorldObjectAutomation
 
     PluginItemCommandResult Identify(uint objectId) =>
         new(PluginItemCommandStatus.Unavailable);
+
+    /// <summary>
+    /// Uses an object in the world the way a player double-clicks it, such as
+    /// talking to an NPC, opening a vendor or taking a portal. Items the
+    /// character carries are used through <see cref="IItemAutomation.Use"/>.
+    /// The server's answer arrives as <see cref="IItemAutomation.LastCompletion"/>.
+    /// </summary>
+    PluginItemCommandResult Use(uint objectId) =>
+        new(PluginItemCommandStatus.Unavailable);
 }

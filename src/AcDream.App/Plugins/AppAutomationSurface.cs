@@ -62,7 +62,9 @@ internal sealed class AppAutomationSurface
     private Func<uint, bool>? _identifyItem;
     private Func<uint, IReadOnlyList<uint>, bool>? _salvageItems;
     private Func<uint, uint, int, bool>? _sellItem;
+    private Func<uint, uint, int, uint, bool>? _buyItem;
     private Func<uint, bool>? _dismissGhost;
+    private Func<bool>? _logOut;
     private Func<PluginSelectionAction, bool>? _selectionAction;
     private PhysicsEngine? _projectilePhysics;
     private IReadOnlyList<PluginProjectileDebugSample> _projectileDebugSamples =
@@ -83,6 +85,8 @@ internal sealed class AppAutomationSurface
     private IReadOnlyList<PluginSpellInfo> _knownAttackSpells =
         Array.Empty<PluginSpellInfo>();
     private IReadOnlyList<PluginSpellInfo> _knownCombatSpells =
+        Array.Empty<PluginSpellInfo>();
+    private IReadOnlyList<PluginSpellInfo> _knownSpells =
         Array.Empty<PluginSpellInfo>();
     private IReadOnlyList<PluginActiveEnchantment> _enchantments =
         Array.Empty<PluginActiveEnchantment>();
@@ -256,6 +260,91 @@ internal sealed class AppAutomationSurface
         return runtime?.Session.ClearNextLogin() == true;
     }
 
+    PluginLoginSnapshot ILoginAutomation.Snapshot
+    {
+        get
+        {
+            CurrentGameRuntimeAdapter? commands;
+            lock (_gate)
+                commands = _disposed ? null : _sessionCommands;
+            return commands is null
+                ? new PluginLoginSnapshot(PluginLoginStage.None, string.Empty, string.Empty, 0u, null)
+                : ProjectLoginSnapshot(commands.CharacterSelection.Snapshot);
+        }
+    }
+
+    PluginLoginCommandStatus ILoginAutomation.EnterWorld(uint characterObjectId)
+    {
+        CurrentGameRuntimeAdapter? commands;
+        lock (_gate)
+            commands = _disposed ? null : _sessionCommands;
+        return commands is null
+            ? PluginLoginCommandStatus.Unavailable
+            : EnterWorldWith(commands.CharacterSelectionCommands, commands.Generation, characterObjectId);
+    }
+
+    PluginLoginCommandStatus ILoginAutomation.LogOut()
+    {
+        Func<bool>? logOut;
+        lock (_gate)
+            logOut = _disposed ? null : _logOut;
+        if (logOut is null)
+            return PluginLoginCommandStatus.Unavailable;
+        if (!IsAvailable || Navigation.Snapshot is { IsAvailable: true, IsAirborne: true })
+            return PluginLoginCommandStatus.Rejected;
+        try
+        {
+            return logOut()
+                ? PluginLoginCommandStatus.Accepted
+                : PluginLoginCommandStatus.Rejected;
+        }
+        catch (ObjectDisposedException)
+        {
+            return PluginLoginCommandStatus.Unavailable;
+        }
+    }
+
+    internal static PluginLoginSnapshot ProjectLoginSnapshot(in RuntimeCharacterSelectionSnapshot selection) =>
+        new(
+            selection.Lifecycle switch
+            {
+                RuntimeCharacterSelectionLifecycle.Connecting => PluginLoginStage.Connecting,
+                RuntimeCharacterSelectionLifecycle.AwaitingSelection => PluginLoginStage.ChoosingCharacter,
+                RuntimeCharacterSelectionLifecycle.EnteringWorld => PluginLoginStage.EnteringWorld,
+                RuntimeCharacterSelectionLifecycle.InWorld => PluginLoginStage.InWorld,
+                _ => PluginLoginStage.None,
+            },
+            selection.AccountName ?? string.Empty,
+            selection.WorldName ?? string.Empty,
+            selection.HighlightedCharacterId,
+            selection.Error?.Message);
+
+    /// <summary>
+    /// Highlights a character on the character list, then enters the world with
+    /// it: the same two commands the character list's own controls send.
+    /// </summary>
+    internal static PluginLoginCommandStatus EnterWorldWith(
+        IRuntimeCharacterSelectionCommands commands,
+        RuntimeGenerationToken generation,
+        uint characterObjectId)
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        if (characterObjectId == 0u)
+            return PluginLoginCommandStatus.Rejected;
+        RuntimeCommandResult highlighted = commands.Highlight(generation, characterObjectId);
+        return highlighted.Status == RuntimeCommandStatus.Accepted
+            ? ProjectLoginStatus(commands.Enter(generation).Status)
+            : ProjectLoginStatus(highlighted.Status);
+    }
+
+    private static PluginLoginCommandStatus ProjectLoginStatus(RuntimeCommandStatus status) =>
+        status switch
+        {
+            RuntimeCommandStatus.Accepted => PluginLoginCommandStatus.Accepted,
+            RuntimeCommandStatus.Rejected => PluginLoginCommandStatus.Rejected,
+            _ => PluginLoginCommandStatus.Unavailable,
+        };
+
     PluginWorldTimeSnapshot IWorldTimeAutomation.Snapshot
     {
         get
@@ -401,7 +490,8 @@ internal sealed class AppAutomationSurface
         Func<uint, bool, bool> pickupItem,
         Func<uint, bool> identifyItem,
         Func<uint, IReadOnlyList<uint>, bool>? salvageItems = null,
-        Func<uint, uint, int, bool>? sellItem = null)
+        Func<uint, uint, int, bool>? sellItem = null,
+        Func<uint, uint, int, uint, bool>? buyItem = null)
     {
         ArgumentNullException.ThrowIfNull(useItem);
         ArgumentNullException.ThrowIfNull(applyItem);
@@ -423,6 +513,7 @@ internal sealed class AppAutomationSurface
             _identifyItem = identifyItem;
             _salvageItems = salvageItems;
             _sellItem = sellItem;
+            _buyItem = buyItem;
         }
     }
 
@@ -431,6 +522,14 @@ internal sealed class AppAutomationSurface
         ArgumentNullException.ThrowIfNull(dismissGhost);
         lock (_gate)
             _dismissGhost = dismissGhost;
+    }
+
+    /// <summary>Binds the client's own character log out, which answers whether the request went out.</summary>
+    public void BindLogOut(Func<bool> logOut)
+    {
+        ArgumentNullException.ThrowIfNull(logOut);
+        lock (_gate)
+            _logOut = logOut;
     }
 
     public void BindProjectileCollision(PhysicsEngine physics)
@@ -456,6 +555,7 @@ internal sealed class AppAutomationSurface
         _knownSelfBuffs = Array.Empty<PluginSpellInfo>();
         _knownAttackSpells = Array.Empty<PluginSpellInfo>();
         _knownCombatSpells = Array.Empty<PluginSpellInfo>();
+        _knownSpells = Array.Empty<PluginSpellInfo>();
         _enchantments = Array.Empty<PluginActiveEnchantment>();
     }
 
@@ -602,16 +702,19 @@ internal sealed class AppAutomationSurface
             _knownSelfBuffs = Array.Empty<PluginSpellInfo>();
             _knownAttackSpells = Array.Empty<PluginSpellInfo>();
             _knownCombatSpells = Array.Empty<PluginSpellInfo>();
+            _knownSpells = Array.Empty<PluginSpellInfo>();
             return;
         }
 
         var buffs = new List<PluginSpellInfo>();
         var attacks = new List<PluginSpellInfo>();
         var combat = new List<PluginSpellInfo>();
+        var all = new List<PluginSpellInfo>();
         foreach (uint spellId in spellbook.LearnedSpells)
         {
             if (!spellbook.TryGetMetadata(spellId, out SpellMetadata meta))
                 continue;
+            all.Add(Project(meta));
             if (meta.IsOffensive || meta.IsDebuff)
                 combat.Add(Project(meta));
             if (!meta.IsBeneficial || meta.IsDebuff || meta.IsUntargeted)
@@ -654,6 +757,11 @@ internal sealed class AppAutomationSurface
                 : string.CompareOrdinal(a.Name, b.Name);
         });
         _knownCombatSpells = combat;
+        all.Sort(static (a, b) => string.Compare(
+            a.Name,
+            b.Name,
+            StringComparison.OrdinalIgnoreCase));
+        _knownSpells = all;
     }
 
     private void RebuildEnchantments()
@@ -985,6 +1093,7 @@ internal sealed class AppAutomationSurface
     public IReadOnlyList<PluginSpellInfo> KnownSelfBuffs => _knownSelfBuffs;
     public IReadOnlyList<PluginSpellInfo> KnownAttackSpells => _knownAttackSpells;
     public IReadOnlyList<PluginSpellInfo> KnownCombatSpells => _knownCombatSpells;
+    public IReadOnlyList<PluginSpellInfo> KnownSpells => _knownSpells;
 
     public bool IsKnown(uint spellId)
     {
@@ -1672,6 +1781,110 @@ internal sealed class AppAutomationSurface
             : PluginNavigationCommandStatus.Rejected;
     }
 
+    public PluginNavigationCommandStatus Move(
+        PluginMoveDirection direction,
+        PluginMovePace pace,
+        float amount,
+        PluginMoveUnit unit = PluginMoveUnit.MetersOrDegrees)
+    {
+        CurrentGameRuntimeAdapter? commands;
+        lock (_gate)
+            commands = _sessionCommands;
+        if (commands is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        if (ProjectMoveRequest(direction, pace, amount, unit) is not { } request)
+            return PluginNavigationCommandStatus.Rejected;
+        return commands.MovementCommands.BeginMove(commands.Generation, request).Status
+            == RuntimeCommandStatus.Accepted
+            ? PluginNavigationCommandStatus.Accepted
+            : PluginNavigationCommandStatus.Rejected;
+    }
+
+    public PluginNavigationCommandStatus StopMoving()
+    {
+        CurrentGameRuntimeAdapter? commands;
+        lock (_gate)
+            commands = _sessionCommands;
+        if (commands is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        return commands.MovementCommands.StopMove(commands.Generation).Status
+            == RuntimeCommandStatus.Accepted
+            ? PluginNavigationCommandStatus.Accepted
+            : PluginNavigationCommandStatus.Rejected;
+    }
+
+    public PluginNavigationCommandStatus StopMoving(PluginMoveChannel channel)
+    {
+        CurrentGameRuntimeAdapter? commands;
+        lock (_gate)
+            commands = _sessionCommands;
+        if (commands is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        return commands.MovementCommands.StopMove(commands.Generation, (RuntimeMoveChannel)(int)channel).Status
+            == RuntimeCommandStatus.Accepted
+            ? PluginNavigationCommandStatus.Accepted
+            : PluginNavigationCommandStatus.Rejected;
+    }
+
+    public PluginNavigationCommandStatus Jump(float power)
+    {
+        CurrentGameRuntimeAdapter? commands;
+        lock (_gate)
+            commands = _sessionCommands;
+        if (commands is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        return commands.MovementCommands.Jump(commands.Generation, power).Status
+            == RuntimeCommandStatus.Accepted
+            ? PluginNavigationCommandStatus.Accepted
+            : PluginNavigationCommandStatus.Rejected;
+    }
+
+    public PluginMoveReport MoveReport
+    {
+        get
+        {
+            GameRuntime? runtime;
+            lock (_gate)
+                runtime = _runtime;
+            return runtime is null || !IsAvailable
+                ? default
+                : ProjectMoveReport(runtime.Movement.Snapshot.ScriptedMove);
+        }
+    }
+
+    internal static RuntimeMoveRequest? ProjectMoveRequest(
+        PluginMoveDirection direction,
+        PluginMovePace pace,
+        float amount,
+        PluginMoveUnit unit)
+    {
+        var request = new RuntimeMoveRequest(
+            (RuntimeMoveDirection)(int)direction,
+            (RuntimeMovePace)(int)pace,
+            amount,
+            (RuntimeMoveUnit)(int)unit);
+        return RuntimeScriptedMovement.IsValid(request) ? request : null;
+    }
+
+    internal static PluginMoveReport ProjectMoveReport(in RuntimeScriptedMoveSnapshot snapshot) =>
+        new(
+            ProjectMoveProgress(snapshot.Travel),
+            ProjectMoveProgress(snapshot.Strafe),
+            ProjectMoveProgress(snapshot.Turn),
+            snapshot.JumpSequence,
+            snapshot.JumpCharging);
+
+    private static PluginMoveProgress ProjectMoveProgress(in RuntimeMoveChannelSnapshot channel) =>
+        new(
+            channel.Sequence,
+            (PluginMoveState)(int)channel.State,
+            (PluginMoveDirection)(int)channel.Request.Direction,
+            (PluginMovePace)(int)channel.Request.Pace,
+            channel.Request.Amount,
+            (PluginMoveUnit)(int)channel.Request.Unit,
+            channel.Covered,
+            channel.ElapsedSeconds);
+
     internal static PluginNavigationPosition ProjectNavigationPosition(
         Position position)
     {
@@ -1779,6 +1992,52 @@ internal sealed class AppAutomationSurface
 
     PluginItemCommandResult IWorldObjectAutomation.Identify(uint objectId) =>
         ((ILootAutomation)this).Identify(objectId);
+
+    PluginItemCommandResult IWorldObjectAutomation.Use(uint objectId)
+    {
+        Func<uint, bool>? use;
+        GameRuntime? runtime;
+        lock (_gate)
+        {
+            use = _useItem;
+            runtime = _runtime;
+        }
+        if (runtime is null || use is null || !IsAvailable)
+            return new(PluginItemCommandStatus.Unavailable);
+        if (RefuseWorldUse(
+                runtime.InventoryOwner.Objects,
+                runtime.PlayerIdentity.ServerGuid,
+                objectId) is { } refusal)
+        {
+            return refusal;
+        }
+        if (!runtime.InventoryOwner.Transactions.CanBeginRequest)
+            return new(PluginItemCommandStatus.Busy);
+        return use(objectId)
+            ? new(PluginItemCommandStatus.Started)
+            : new(PluginItemCommandStatus.Refused);
+    }
+
+    /// <summary>
+    /// Why an object cannot be used as a world object, or <see langword="null"/>
+    /// when it can. Carried items belong to <see cref="IItemAutomation.Use"/>.
+    /// </summary>
+    internal static PluginItemCommandResult? RefuseWorldUse(
+        ClientObjectTable objects,
+        uint playerId,
+        uint objectId)
+    {
+        ArgumentNullException.ThrowIfNull(objects);
+        if (objectId == 0u
+            || objectId == playerId
+            || objects.Get(objectId) is not { } item)
+        {
+            return new(PluginItemCommandStatus.InvalidTarget);
+        }
+        return IsPlayerOwned(item, playerId, objects)
+            ? new(PluginItemCommandStatus.InvalidItem, "Carried items are used as items.")
+            : null;
+    }
 
     private PluginWorldObject ProjectWorldObject(
         GameRuntime runtime,
@@ -2521,6 +2780,110 @@ internal sealed class AppAutomationSurface
         return sell(vendorId, objectId, quantity)
             ? new(PluginItemCommandStatus.Started)
             : new(PluginItemCommandStatus.Refused);
+    }
+
+    public IReadOnlyList<PluginVendorItem> CaptureVendorStock()
+    {
+        GameRuntime? runtime;
+        lock (_gate)
+            runtime = _runtime;
+        if (runtime is null || !IsAvailable)
+            return Array.Empty<PluginVendorItem>();
+        return ProjectVendorStock(runtime.InventoryOwner.Vendor);
+    }
+
+    public PluginItemCommandResult Buy(uint objectId, uint amount = 1u)
+    {
+        Func<uint, uint, int, uint, bool>? buy;
+        GameRuntime? runtime;
+        lock (_gate)
+        {
+            buy = _buyItem;
+            runtime = _runtime;
+        }
+        if (runtime is null || buy is null || !IsAvailable)
+            return new(PluginItemCommandStatus.Unavailable);
+
+        VendorState vendor = runtime.InventoryOwner.Vendor;
+        if (RefuseBuy(vendor, objectId, amount) is { } refusal)
+            return refusal;
+        if (!runtime.InventoryOwner.Transactions.CanBeginRequest)
+            return new(PluginItemCommandStatus.Busy);
+        return buy(
+                vendor.VendorId,
+                objectId,
+                checked((int)amount),
+                vendor.Profile.AlternateCurrencyWcid)
+            ? new(PluginItemCommandStatus.Started)
+            : new(PluginItemCommandStatus.Refused);
+    }
+
+    /// <summary>
+    /// Projects the open vendor's listings, priced per unit the way the vendor
+    /// window prices them for the player.
+    /// </summary>
+    internal static IReadOnlyList<PluginVendorItem> ProjectVendorStock(
+        VendorState vendor)
+    {
+        ArgumentNullException.ThrowIfNull(vendor);
+        IReadOnlyList<VendorShopItem> items = vendor.Items;
+        if (vendor.VendorId == 0u || items.Count == 0)
+            return Array.Empty<PluginVendorItem>();
+
+        float sellRate = vendor.Profile.SellPrice;
+        var stock = new PluginVendorItem[items.Count];
+        for (int i = 0; i < stock.Length; i++)
+        {
+            VendorShopItem item = items[i];
+            uint itemType = item.ItemType ?? 0u;
+            int perUnit = VendorPricing.PerUnitValue(
+                item.Value ?? 0,
+                item.DescStackSize);
+            stock[i] = new PluginVendorItem(
+                item.ItemGuid,
+                item.WeenieClassId,
+                item.Name ?? string.Empty,
+                itemType,
+                VendorPricing.SellPrice(perUnit, itemType, sellRate, 1),
+                item.StackSize)
+            {
+                PluralName = item.PluralName ?? string.Empty,
+                IconId = item.IconId,
+            };
+        }
+        return stock;
+    }
+
+    /// <summary>
+    /// The reason a buy of <paramref name="amount"/> units of one listing
+    /// cannot be requested, or <see langword="null"/> when it can.
+    /// </summary>
+    internal static PluginItemCommandResult? RefuseBuy(
+        VendorState vendor,
+        uint objectId,
+        uint amount)
+    {
+        ArgumentNullException.ThrowIfNull(vendor);
+        if (vendor.VendorId == 0u)
+            return new(PluginItemCommandStatus.InvalidTarget, "No vendor is open.");
+        if (amount == 0u || amount > int.MaxValue)
+            return new(PluginItemCommandStatus.Refused, "Invalid quantity.");
+
+        foreach (VendorShopItem item in vendor.Items)
+        {
+            if (item.ItemGuid != objectId)
+                continue;
+            if (item.StackSize >= 0 && amount > (uint)item.StackSize)
+            {
+                return new(
+                    PluginItemCommandStatus.Refused,
+                    "The vendor does not have that many.");
+            }
+            return null;
+        }
+        return new(
+            PluginItemCommandStatus.InvalidItem,
+            "The open vendor does not sell that item.");
     }
 
     private PluginItemCommandResult DispatchItem(
@@ -3627,12 +3990,14 @@ internal sealed class AppAutomationSurface
             _identifyItem = null;
             _salvageItems = null;
             _sellItem = null;
+            _buyItem = null;
             _selectionAction = null;
             DetachLocked();
         }
         _knownSelfBuffs = Array.Empty<PluginSpellInfo>();
         _knownAttackSpells = Array.Empty<PluginSpellInfo>();
         _knownCombatSpells = Array.Empty<PluginSpellInfo>();
+        _knownSpells = Array.Empty<PluginSpellInfo>();
         _enchantments = Array.Empty<PluginActiveEnchantment>();
         _peers.Dispose();
     }

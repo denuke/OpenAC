@@ -945,7 +945,8 @@ public sealed class GameWindow :
             result.ItemInteraction.TrySalvageItemsForAutomation,
             (vendorId, itemId, amount) => result.ItemInteraction.TrySell(
                 vendorId,
-                [(amount, itemId)]));
+                [(amount, itemId)]),
+            result.ItemInteraction.TryBuy);
         _interactionUiLateBindings = result.LateBindings;
         _magicRuntime = result.Magic;
         if (result.RetainedUi is { } retained)
@@ -1095,6 +1096,7 @@ public sealed class GameWindow :
         _localPlayerTeleport = result.LocalTeleport;
         _liveSessionHost = result.SessionHost;
         _automation?.BindSessionCommands(result.GameRuntime);
+        _automation?.BindLogOut(result.LocalTeleport.TryRequestLogout);
         _gameplayInputActions = result.GameplayActions;
         _sessionPlayerBindings = result.RuntimeBindings;
     }

@@ -1,0 +1,509 @@
+using System.Globalization;
+using System.Text.Json.Nodes;
+using AcDream.Plugin.Abstractions;
+using AcDream.Plugins.Agent.Contract;
+using AcDream.Plugins.Agent.Egress;
+using AcDream.Plugins.Agent.Intake;
+using AcDream.Plugins.Agent.State;
+
+namespace AcDream.Plugins.Agent.Verbs;
+
+/// <summary>
+/// Moving and turning the character: <c>walk</c> and <c>run</c> forward or
+/// backward, <c>strafe left|right</c> and <c>turn left|right</c>, each for a
+/// distance, an angle, a time, or until <c>stop</c>; <c>turn to &lt;heading&gt;</c>,
+/// <c>face &lt;guid&gt;</c>, <c>jump</c>, <c>stance &lt;mode&gt;</c> and <c>cancel</c>.
+/// Walking or running, strafing and turning combine the way held movement keys
+/// do, and a new move replaces only a move of its own kind. The client carries
+/// out each move and ends it; these verbs ask for it and report how it ended.
+/// Travel to a named place is not provided.
+/// </summary>
+internal sealed class MotorVerbs : IVerbFamily
+{
+    internal const double StanceWindowSeconds = 5d;
+    internal const float DefaultJumpPower = 0.5f;
+    internal const double JumpWindowSeconds = 3d;
+    internal const float MaximumMoveMeters = 500f;
+    internal const float MaximumTurnDegrees = 3600f;
+    internal const float MaximumMoveSeconds = 300f;
+
+    /// <summary>A heading this close to the one faced needs no turn.</summary>
+    internal const double FacedDegrees = 0.05d;
+
+    /// <summary>
+    /// The client's own time limits for a move, which the wait for its report
+    /// outlasts by a few seconds: thirty seconds without an amount, the time
+    /// itself for a time, and otherwise the time the amount takes at these speeds
+    /// plus three seconds.
+    /// </summary>
+    internal const double OpenEndedSeconds = 30d;
+    internal const double SlowestMetersPerSecond = 1d;
+    internal const double SlowestDegreesPerSecond = 30d;
+    internal const double MoveWindowSlackSeconds = 5d;
+
+    internal const string Completed = "completed";
+    internal const string Cancelled = "cancelled";
+    internal const string Blocked = "blocked";
+
+    internal static readonly IReadOnlyList<string> OutcomeWords = [Completed, Cancelled, Blocked];
+
+    private static readonly Dictionary<string, PluginCombatMode> Stances =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["peace"] = PluginCombatMode.Peace,
+            ["melee"] = PluginCombatMode.Melee,
+            ["missile"] = PluginCombatMode.Missile,
+            ["magic"] = PluginCombatMode.Magic,
+        };
+
+    private readonly IPluginHost _host;
+    private readonly Publisher _publisher;
+    private readonly OutcomeCorrelator _outcomes;
+
+    internal MotorVerbs(IPluginHost host, Publisher publisher, OutcomeCorrelator outcomes)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentNullException.ThrowIfNull(publisher);
+        ArgumentNullException.ThrowIfNull(outcomes);
+        _host = host;
+        _publisher = publisher;
+        _outcomes = outcomes;
+    }
+
+    public IReadOnlyCollection<string> ReservedWords { get; } =
+        ["walk", "run", "strafe", "turn", "face", "jump", "stop", "stance", "cancel"];
+
+    public VerbResult Handle(CommandLine line)
+    {
+        if (!_host.Automation.IsAvailable)
+            return Refuse(line, "no character is in the world");
+        return line.Verb switch
+        {
+            "walk" or "run" or "strafe" => Travel(line),
+            "turn" => Turn(line),
+            "face" => Face(line),
+            "jump" => Jump(line),
+            "stop" => Stop(line),
+            "stance" => Stance(line),
+            _ => Cancel(line),
+        };
+    }
+
+    private VerbResult Travel(CommandLine line)
+    {
+        bool strafe = line.Verb == "strafe";
+        string usage = strafe
+            ? "usage: strafe left|right [meters, or seconds such as 2s]"
+            : $"usage: {line.Verb} [forward|backward] [meters, or seconds such as 20s]";
+        PluginMoveDirection? direction = strafe ? null : PluginMoveDirection.Forward;
+        bool named = false;
+        Amount? amount = null;
+        string[] words = Words(line);
+        for (int index = 0; index < words.Length; index++)
+        {
+            if (!named && (strafe ? Sideways(words[index]) : Straight(words[index])) is { } given)
+            {
+                direction = given;
+                named = true;
+            }
+            else if (amount is null && TryAmount(words, ref index, turn: false, out Amount parsed))
+            {
+                amount = parsed;
+            }
+            else
+            {
+                return Refuse(line, usage);
+            }
+        }
+        if (direction is not { } chosen)
+            return Refuse(line, usage);
+        if (amount is { } measured && Problem(measured, turn: false) is { } problem)
+            return Refuse(line, problem);
+        return StartMove(
+            line,
+            chosen,
+            line.Verb == "walk" ? PluginMovePace.Walk : PluginMovePace.Run,
+            amount ?? Amount.None);
+    }
+
+    private VerbResult Turn(CommandLine line)
+    {
+        const string usage =
+            "usage: turn left|right [degrees, or seconds such as 2s], or turn to <compass heading in degrees>";
+        string[] words = Words(line);
+        if (words.Length == 2 && words[0].Equals("to", StringComparison.OrdinalIgnoreCase))
+        {
+            return TryNumber(words[1], out float heading)
+                ? TurnToward(line, Normalize(heading), facing: null)
+                : Refuse(line, usage);
+        }
+        if (words.Length == 0 || TurnSide(words[0]) is not { } direction)
+            return Refuse(line, usage);
+        Amount amount = Amount.None;
+        int index = 1;
+        if (index < words.Length)
+        {
+            if (!TryAmount(words, ref index, turn: true, out amount) || index != words.Length - 1)
+                return Refuse(line, usage);
+            if (Problem(amount, turn: true) is { } problem)
+                return Refuse(line, problem);
+        }
+        return StartMove(line, direction, PluginMovePace.Run, amount);
+    }
+
+    private VerbResult Face(CommandLine line)
+    {
+        if (!Guids.TryParse(line.Arguments, out uint id))
+            return Refuse(line, "face needs an object id such as 0x70000001");
+        IAutomationSurface automation = _host.Automation;
+        if (!automation.Objects.TryGet(id, out PluginWorldObject value) || !value.HasPosition)
+            return Refuse(line, "the client holds no position for that object");
+        PluginNavigationSnapshot self = automation.Navigation.Snapshot;
+        if (!self.IsAvailable)
+            return Refuse(line, "the client has no position for its own body");
+        return TurnToward(line, Geometry.BearingDegrees(self.Position, value.Position), Facts.Hex(id));
+    }
+
+    /// <summary>Turns the short way onto a compass heading, as a turn that combines with other moves.</summary>
+    private VerbResult TurnToward(CommandLine line, double heading, string? facing)
+    {
+        PluginNavigationSnapshot self = _host.Automation.Navigation.Snapshot;
+        if (!self.IsAvailable)
+            return Refuse(line, "the client has no position for its own body");
+        var aim = new JsonObject
+        {
+            ["heading"] = Math.Round(heading, 1),
+            ["facing"] = facing,
+        };
+        double delta = Geometry.RelativeDegrees(heading, self.Position.HeadingDegrees);
+        if (Math.Abs(delta) < FacedDegrees)
+        {
+            Accepted(line, aim);
+            _outcomes.ResolveNow(
+                line.Id,
+                line.Verb,
+                RecordKinds.GoalResolved,
+                new Resolution(Completed, "already facing it", new JsonObject { ["turned"] = 0d }));
+            return VerbResult.Handled;
+        }
+        return StartMove(
+            line,
+            delta > 0d ? PluginMoveDirection.TurnRight : PluginMoveDirection.TurnLeft,
+            PluginMovePace.Run,
+            new Amount((float)Math.Abs(delta), PluginMoveUnit.MetersOrDegrees),
+            aim);
+    }
+
+    /// <summary>Asks the client for a move and resolves it from the client's own report of how it ended.</summary>
+    private VerbResult StartMove(
+        CommandLine line,
+        PluginMoveDirection direction,
+        PluginMovePace pace,
+        Amount amount,
+        JsonObject? aim = null)
+    {
+        INavigationAutomation navigation = _host.Automation.Navigation;
+        PluginNavigationSnapshot self = navigation.Snapshot;
+        if (!self.IsAvailable)
+            return Refuse(line, "the client has no position for its own body");
+        if (self.IsPortalSpace)
+            return Refuse(line, "the character is in portal space");
+
+        PluginNavigationCommandStatus status = navigation.Move(direction, pace, amount.Value, amount.Unit);
+        if (status != PluginNavigationCommandStatus.Accepted)
+        {
+            return Refuse(line, status == PluginNavigationCommandStatus.Unavailable
+                ? "this client cannot move the character for a plugin"
+                : "the client did not accept the move");
+        }
+
+        PluginMoveChannel channel = PluginMoveReport.ChannelOf(direction);
+        long sequence = navigation.MoveReport[channel].Sequence;
+        bool turn = channel == PluginMoveChannel.Turn;
+        bool openEnded = amount.Value <= 0f;
+        bool timed = !openEnded && amount.Unit == PluginMoveUnit.Seconds;
+        JsonObject details = aim ?? new JsonObject();
+        details["direction"] = DirectionWord(direction);
+        details["pace"] = turn ? null : WireNames.Kebab(pace.ToString());
+        details[turn ? "degrees" : "meters"] = openEnded || timed ? null : Math.Round(amount.Value, 1);
+        details["seconds"] = timed ? Math.Round(amount.Value, 1) : null;
+        details["from"] = Coordinates.Describe(self.Position);
+        Accepted(line, details);
+
+        double window = (openEnded
+                ? OpenEndedSeconds
+                : timed
+                    ? amount.Value
+                    : (amount.Value / (turn ? SlowestDegreesPerSecond : SlowestMetersPerSecond)) + 3d)
+            + MoveWindowSlackSeconds;
+        string measure = turn ? "turned" : "travelled";
+        string kind = ChannelWord(channel);
+        _outcomes.Watch(line.Id, line.Verb, RecordKinds.GoalResolved, window, () =>
+        {
+            PluginMoveProgress progress = navigation.MoveReport[channel];
+            if (progress.Sequence != sequence)
+                return new Resolution(Cancelled, $"a later {kind} replaced it");
+            if (progress.State == PluginMoveState.Moving)
+                return null;
+            var fields = new JsonObject
+            {
+                [measure] = Math.Round(progress.Covered, 1),
+                ["seconds"] = Math.Round(progress.ElapsedSeconds, 1),
+            };
+            return progress.State switch
+            {
+                PluginMoveState.Completed => new Resolution(Completed, null, fields),
+                PluginMoveState.Stopped => openEnded
+                    ? new Resolution(Completed, "a 'stop' ended it", fields)
+                    : new Resolution(Cancelled, "a 'stop' ended it short", fields),
+                PluginMoveState.TimeLimit => openEnded
+                    ? new Resolution(Completed, "the client stopped it at its time limit; give a time such as 60s, or 'stop' sooner", fields)
+                    : new Resolution(OutcomeCorrelator.Unconfirmed, "the client did not cover the amount in time", fields),
+                PluginMoveState.Blocked => new Resolution(Blocked, "the character stopped making progress", fields),
+                PluginMoveState.Interrupted => new Resolution(Cancelled, "the player moved the character", fields),
+                PluginMoveState.Lost => new Resolution(OutcomeCorrelator.Lost, "the character entered portal space or left the world", fields),
+                _ => new Resolution(OutcomeCorrelator.Unconfirmed, "the client lost track of the move", fields),
+            };
+        });
+        return VerbResult.Handled;
+    }
+
+    private VerbResult Jump(CommandLine line)
+    {
+        float power = DefaultJumpPower;
+        if (line.Arguments.Length > 0
+            && (!TryNumber(line.Arguments, out power) || !(power > 0f && power <= 1f)))
+        {
+            return Refuse(line, "usage: jump [power above 0 and at most 1]");
+        }
+        INavigationAutomation navigation = _host.Automation.Navigation;
+        PluginNavigationCommandStatus status = navigation.Jump(power);
+        if (status != PluginNavigationCommandStatus.Accepted)
+        {
+            return Refuse(line, status == PluginNavigationCommandStatus.Unavailable
+                ? "this client cannot jump for a plugin"
+                : "the client did not accept the jump; one may already be charging");
+        }
+
+        long jump = navigation.MoveReport.JumpSequence;
+        Accepted(line, new JsonObject { ["power"] = Math.Round(power, 2) });
+        _outcomes.Watch(line.Id, line.Verb, RecordKinds.GoalResolved, power + JumpWindowSeconds, () =>
+        {
+            PluginMoveReport report = navigation.MoveReport;
+            if (report.JumpSequence != jump)
+                return new Resolution(Cancelled, "a later jump replaced it");
+            return !report.JumpCharging && navigation.Snapshot.IsAirborne
+                ? new Resolution(Completed)
+                : null;
+        });
+        return VerbResult.Handled;
+    }
+
+    private VerbResult Stop(CommandLine line)
+    {
+        INavigationAutomation navigation = _host.Automation.Navigation;
+        string[] words = Words(line);
+        PluginNavigationCommandStatus status;
+        string stopped;
+        if (words.Length == 0)
+        {
+            status = navigation.StopMoving();
+            stopped = "all";
+        }
+        else if (words.Length == 1 && StoppedKind(words[0]) is { } channel)
+        {
+            status = navigation.StopMoving(channel);
+            stopped = ChannelWord(channel);
+        }
+        else
+        {
+            return Refuse(line, "usage: stop, or stop walking|running|strafing|turning");
+        }
+        if (status != PluginNavigationCommandStatus.Accepted)
+            return Refuse(line, "the client did not accept the stop");
+        Accepted(line, new JsonObject { ["stopped"] = stopped });
+        _outcomes.ResolveNow(line.Id, line.Verb, RecordKinds.GoalResolved, new Resolution(Completed));
+        return VerbResult.Handled;
+    }
+
+    private VerbResult Stance(CommandLine line)
+    {
+        if (!Stances.TryGetValue(line.Arguments.Trim(), out PluginCombatMode mode))
+            return Refuse(line, "usage: stance peace|melee|missile|magic");
+        ICombatAutomation combat = _host.Automation.Combat;
+        PluginCombatCommandResult result = combat.EnterMode(mode);
+        if (!result.Accepted)
+        {
+            return Refuse(line, result.Notice
+                ?? $"the client did not change stance ({WireNames.Kebab(result.Status.ToString())})");
+        }
+        Accepted(line, new JsonObject { ["stance"] = WireNames.Kebab(mode.ToString()) });
+        _outcomes.Watch(line.Id, line.Verb, RecordKinds.GoalResolved, StanceWindowSeconds,
+            () => combat.Snapshot.Mode == mode ? new Resolution(Completed) : null);
+        return VerbResult.Handled;
+    }
+
+    private VerbResult Cancel(CommandLine line)
+    {
+        IAutomationSurface automation = _host.Automation;
+        automation.Navigation.StopMoving();
+        automation.Navigation.ClearMovementIntent();
+        automation.Combat.AbortPhysicalAttack();
+        int ended = _outcomes.EndAll(
+            RecordKinds.GoalResolved,
+            Cancelled,
+            "a later 'cancel' stopped it");
+        Accepted(line, new JsonObject { ["cancelled"] = ended });
+        _outcomes.ResolveNow(line.Id, line.Verb, RecordKinds.GoalResolved, new Resolution(Completed));
+        return VerbResult.Handled;
+    }
+
+    /// <summary>
+    /// Reads an amount starting at <paramref name="index"/>: a number of meters,
+    /// or degrees for a turn, or seconds, with its unit attached as in
+    /// <c>20s</c> or as the next word. Leaves <paramref name="index"/> on the last
+    /// word it read.
+    /// </summary>
+    private static bool TryAmount(string[] words, ref int index, bool turn, out Amount amount)
+    {
+        amount = default;
+        string word = words[index];
+        if (TryNumber(word, out float value))
+        {
+            PluginMoveUnit unit = PluginMoveUnit.MetersOrDegrees;
+            if (index + 1 < words.Length && UnitWord(words[index + 1], turn) is { } named)
+            {
+                unit = named;
+                index++;
+            }
+            amount = new Amount(value, unit);
+            return true;
+        }
+        int split = word.Length;
+        while (split > 0 && char.IsLetter(word[split - 1]))
+            split--;
+        if (split > 0
+            && split < word.Length
+            && TryNumber(word[..split], out value)
+            && UnitWord(word[split..], turn) is { } attached)
+        {
+            amount = new Amount(value, attached);
+            return true;
+        }
+        return false;
+    }
+
+    private static PluginMoveUnit? UnitWord(string word, bool turn) => word.ToLowerInvariant() switch
+    {
+        "s" or "sec" or "secs" or "second" or "seconds" => PluginMoveUnit.Seconds,
+        "m" or "meter" or "meters" or "metre" or "metres" when !turn => PluginMoveUnit.MetersOrDegrees,
+        "deg" or "degree" or "degrees" when turn => PluginMoveUnit.MetersOrDegrees,
+        _ => null,
+    };
+
+    private static string? Problem(Amount amount, bool turn)
+    {
+        if (amount.Unit == PluginMoveUnit.Seconds)
+        {
+            return amount.Value > 0f && amount.Value <= MaximumMoveSeconds
+                ? null
+                : $"a time must be more than 0 and at most {MaximumMoveSeconds:0} seconds";
+        }
+        if (turn)
+        {
+            return amount.Value > 0f && amount.Value <= MaximumTurnDegrees
+                ? null
+                : $"turn left or right by more than 0 and at most {MaximumTurnDegrees:0} degrees";
+        }
+        return amount.Value > 0f && amount.Value <= MaximumMoveMeters
+            ? null
+            : $"a distance must be more than 0 and at most {MaximumMoveMeters:0} meters";
+    }
+
+    private static PluginMoveDirection? Straight(string word) => word.ToLowerInvariant() switch
+    {
+        "forward" or "forwards" => PluginMoveDirection.Forward,
+        "backward" or "backwards" or "back" => PluginMoveDirection.Backward,
+        _ => null,
+    };
+
+    private static PluginMoveDirection? Sideways(string word) => word.ToLowerInvariant() switch
+    {
+        "left" => PluginMoveDirection.StrafeLeft,
+        "right" => PluginMoveDirection.StrafeRight,
+        _ => null,
+    };
+
+    private static PluginMoveDirection? TurnSide(string word) => word.ToLowerInvariant() switch
+    {
+        "left" => PluginMoveDirection.TurnLeft,
+        "right" => PluginMoveDirection.TurnRight,
+        _ => null,
+    };
+
+    private static PluginMoveChannel? StoppedKind(string word) => word.ToLowerInvariant() switch
+    {
+        "walk" or "walking" or "run" or "running" => PluginMoveChannel.Travel,
+        "strafe" or "strafing" => PluginMoveChannel.Strafe,
+        "turn" or "turning" => PluginMoveChannel.Turn,
+        _ => null,
+    };
+
+    private static string ChannelWord(PluginMoveChannel channel) => channel switch
+    {
+        PluginMoveChannel.Travel => "walk or run",
+        PluginMoveChannel.Strafe => "strafe",
+        _ => "turn",
+    };
+
+    private static string DirectionWord(PluginMoveDirection direction) => direction switch
+    {
+        PluginMoveDirection.Forward => "forward",
+        PluginMoveDirection.Backward => "backward",
+        PluginMoveDirection.StrafeLeft or PluginMoveDirection.TurnLeft => "left",
+        _ => "right",
+    };
+
+    private static string[] Words(CommandLine line) =>
+        line.Arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+    private static bool TryNumber(string word, out float value) =>
+        float.TryParse(word, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+        && float.IsFinite(value);
+
+    private static double Normalize(double heading) => ((heading % 360d) + 360d) % 360d;
+
+    private void Accepted(CommandLine line, JsonObject details)
+    {
+        var fields = new JsonObject
+        {
+            ["id"] = line.Id,
+            ["verb"] = line.Verb,
+            ["line"] = line.Text,
+        };
+        foreach (KeyValuePair<string, JsonNode?> detail in details.ToList())
+        {
+            details.Remove(detail.Key);
+            fields[detail.Key] = detail.Value;
+        }
+        _publisher.Publish(RecordKinds.GoalAccepted, fields);
+    }
+
+    private VerbResult Refuse(CommandLine line, string reason)
+    {
+        _publisher.Publish(RecordKinds.GoalRefused, new JsonObject
+        {
+            ["id"] = line.Id,
+            ["verb"] = line.Verb,
+            ["line"] = line.Text,
+            ["reason"] = reason,
+        });
+        return VerbResult.Refused(reason);
+    }
+
+    /// <summary>A move's amount: meters or degrees, or seconds; zero keeps going until stopped.</summary>
+    private readonly record struct Amount(float Value, PluginMoveUnit Unit)
+    {
+        internal static Amount None => new(0f, PluginMoveUnit.MetersOrDegrees);
+    }
+}

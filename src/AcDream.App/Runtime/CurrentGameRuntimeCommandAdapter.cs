@@ -363,6 +363,81 @@ internal sealed class CurrentGameRuntimeCommandAdapter
         return Result(RuntimeCommandStatus.Accepted);
     }
 
+    public RuntimeCommandResult BeginMove(
+        RuntimeGenerationToken expectedGeneration,
+        in RuntimeMoveRequest request)
+    {
+        RuntimeCommandStatus gate = Validate(
+            expectedGeneration,
+            requireWorld: true);
+        if (gate != RuntimeCommandStatus.Accepted)
+            return Result(gate);
+        RuntimeCommandStatus status = _movement.BeginMove(request)
+            ? RuntimeCommandStatus.Accepted
+            : RuntimeCommandStatus.Rejected;
+        _events.EmitCommand(
+            RuntimeCommandDomain.Movement,
+            operation: 0x104,
+            status);
+        return Result(status);
+    }
+
+    public RuntimeCommandResult StopMove(
+        RuntimeGenerationToken expectedGeneration)
+    {
+        RuntimeCommandStatus gate = Validate(
+            expectedGeneration,
+            requireWorld: true);
+        if (gate != RuntimeCommandStatus.Accepted)
+            return Result(gate);
+        _movement.StopMove();
+        _events.EmitCommand(
+            RuntimeCommandDomain.Movement,
+            operation: 0x105,
+            RuntimeCommandStatus.Accepted);
+        return Result(RuntimeCommandStatus.Accepted);
+    }
+
+    public RuntimeCommandResult StopMove(
+        RuntimeGenerationToken expectedGeneration,
+        RuntimeMoveChannel channel)
+    {
+        RuntimeCommandStatus gate = Validate(
+            expectedGeneration,
+            requireWorld: true);
+        if (gate != RuntimeCommandStatus.Accepted)
+            return Result(gate);
+        RuntimeCommandStatus status = Enum.IsDefined(channel)
+            ? RuntimeCommandStatus.Accepted
+            : RuntimeCommandStatus.Rejected;
+        if (status == RuntimeCommandStatus.Accepted)
+            _movement.StopMove(channel);
+        _events.EmitCommand(
+            RuntimeCommandDomain.Movement,
+            operation: 0x105,
+            status);
+        return Result(status);
+    }
+
+    public RuntimeCommandResult Jump(
+        RuntimeGenerationToken expectedGeneration,
+        float power)
+    {
+        RuntimeCommandStatus gate = Validate(
+            expectedGeneration,
+            requireWorld: true);
+        if (gate != RuntimeCommandStatus.Accepted)
+            return Result(gate);
+        RuntimeCommandStatus status = _movement.BeginJump(power)
+            ? RuntimeCommandStatus.Accepted
+            : RuntimeCommandStatus.Rejected;
+        _events.EmitCommand(
+            RuntimeCommandDomain.Movement,
+            operation: 0x106,
+            status);
+        return Result(status);
+    }
+
     public RuntimeCommandResult TurnToHeading(
         RuntimeGenerationToken expectedGeneration,
         float headingDegrees,

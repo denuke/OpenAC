@@ -251,6 +251,54 @@ public sealed class AppAutomationSurfaceTests
         Assert.Empty(surface.Enchantments.Capture(200u));
     }
 
+    [Fact]
+    public void KnownSpellsIncludesSpellsTheNarrowerListsLeaveOut()
+    {
+        var operations = new SpellOperations();
+        using var runtime = GameRuntimeTestFactory.Create(spellCast: operations);
+        runtime.CharacterOwner.InstallSpellMetadata(SpellTable.Create([RecallSpell()]));
+        runtime.CharacterOwner.Spellbook.OnSpellLearned(157u);
+        using var surface = new AppAutomationSurface();
+        surface.Bind(runtime, runtime.CharacterOwner, runtime.ActionOwner.SpellCast);
+
+        PluginSpellInfo recall = Assert.Single(surface.Spells.KnownSpells);
+        Assert.Equal(157u, recall.SpellId);
+        Assert.Equal("Lifestone Recall", recall.Name);
+        Assert.DoesNotContain(
+            surface.Spells.KnownSelfBuffs
+                .Concat(surface.Spells.KnownAttackSpells)
+                .Concat(surface.Spells.KnownCombatSpells),
+            spell => spell.SpellId == 157u);
+
+        surface.Unbind();
+        Assert.Empty(surface.Spells.KnownSpells);
+    }
+
+    private static SpellMetadata RecallSpell() => new(
+        157u,
+        "Lifestone Recall",
+        "Item Enchantment",
+        0u,
+        0u,
+        string.Empty,
+        0f,
+        50,
+        false,
+        false,
+        string.Empty,
+        0,
+        100,
+        0u,
+        1,
+        false,
+        false,
+        true,
+        0f,
+        0u,
+        0u,
+        0u,
+        0);
+
     private static SpellMetadata DurationSpell() => new(
         42u,
         "Fire Vulnerability Other VII",
@@ -382,4 +430,203 @@ public sealed class AppAutomationSurfaceTests
         Assert.Equal("Lead Scarab", item.Name);
         Assert.Equal(5, item.StackSize);
     }
+
+    [Fact]
+    public void VendorStockProjectsEachListingAtThePlayersUnitPrice()
+    {
+        var vendor = new VendorState();
+        Assert.True(vendor.Apply(
+            VendorId,
+            Profile(sellRate: 1.5f),
+            [
+                Listing(0x70000011u, stock: -1, value: 20) with
+                {
+                    PluralName = "Prismatic Tapers",
+                    IconId = 0x06001234u,
+                },
+                Listing(0x70000012u, stock: 3, value: 50) with
+                {
+                    DescStackSize = 5,
+                },
+            ]));
+
+        IReadOnlyList<PluginVendorItem> stock =
+            AppAutomationSurface.ProjectVendorStock(vendor);
+
+        Assert.Equal(2, stock.Count);
+        Assert.Equal(0x70000011u, stock[0].ObjectId);
+        Assert.Equal("Prismatic Taper", stock[0].Name);
+        Assert.Equal("Prismatic Tapers", stock[0].PluralName);
+        Assert.Equal(0x06001234u, stock[0].IconId);
+        Assert.True(stock[0].IsUnlimited);
+        Assert.Equal(
+            VendorPricing.SellPrice(20, (uint)ItemType.Misc, 1.5f, 1),
+            stock[0].UnitPrice);
+        Assert.False(stock[1].IsUnlimited);
+        Assert.Equal(3, stock[1].StockCount);
+        Assert.Equal(
+            VendorPricing.SellPrice(10, (uint)ItemType.Misc, 1.5f, 1),
+            stock[1].UnitPrice);
+    }
+
+    [Fact]
+    public void VendorStockIsEmptyWhenNoVendorIsOpen()
+    {
+        Assert.Empty(AppAutomationSurface.ProjectVendorStock(new VendorState()));
+    }
+
+    [Fact]
+    public void BuyRefusesWhatTheOpenVendorCannotSell()
+    {
+        Assert.Equal(
+            PluginItemCommandStatus.InvalidTarget,
+            AppAutomationSurface.RefuseBuy(new VendorState(), 0x70000011u, 1u)
+                ?.Status);
+
+        var vendor = new VendorState();
+        Assert.True(vendor.Apply(
+            VendorId,
+            Profile(sellRate: 1f),
+            [Listing(0x70000011u, stock: 2, value: 10)]));
+
+        Assert.Equal(
+            PluginItemCommandStatus.Refused,
+            AppAutomationSurface.RefuseBuy(vendor, 0x70000011u, 0u)?.Status);
+        Assert.Equal(
+            PluginItemCommandStatus.InvalidItem,
+            AppAutomationSurface.RefuseBuy(vendor, 0x70000099u, 1u)?.Status);
+        Assert.Equal(
+            PluginItemCommandStatus.Refused,
+            AppAutomationSurface.RefuseBuy(vendor, 0x70000011u, 3u)?.Status);
+        Assert.Null(AppAutomationSurface.RefuseBuy(vendor, 0x70000011u, 2u));
+    }
+
+    [Fact]
+    public void BuyAcceptsAnyQuantityOfAnUnlimitedListing()
+    {
+        var vendor = new VendorState();
+        Assert.True(vendor.Apply(
+            VendorId,
+            Profile(sellRate: 1f),
+            [Listing(0x70000011u, stock: -1, value: 10)]));
+
+        Assert.Null(AppAutomationSurface.RefuseBuy(vendor, 0x70000011u, 500u));
+    }
+
+    [Fact]
+    public void BuyAndVendorStockAreUnavailableWithoutALiveSession()
+    {
+        using var surface = new AppAutomationSurface();
+        IItemAutomation noOp = NoOpAutomationSurface.Instance.Items;
+
+        Assert.Equal(
+            PluginItemCommandStatus.Unavailable,
+            surface.Items.Buy(0x70000011u).Status);
+        Assert.Empty(surface.Items.CaptureVendorStock());
+        Assert.Equal(
+            PluginItemCommandStatus.Unavailable,
+            noOp.Buy(0x70000011u).Status);
+        Assert.Empty(noOp.CaptureVendorStock());
+    }
+
+    [Theory]
+    [InlineData(nameof(IItemAutomation.Buy))]
+    [InlineData(nameof(IItemAutomation.CaptureVendorStock))]
+    public void VendorMembersAreImplementedByTheGraphicalSurface(string member)
+    {
+        System.Reflection.InterfaceMapping map =
+            typeof(AppAutomationSurface).GetInterfaceMap(
+                typeof(IItemAutomation));
+        int index = Array.FindIndex(
+            map.InterfaceMethods,
+            method => method.Name == member);
+
+        Assert.True(index >= 0, $"IItemAutomation.{member} not found.");
+        Assert.Equal(
+            typeof(AppAutomationSurface),
+            map.TargetMethods[index].DeclaringType);
+    }
+
+    [Fact]
+    public void WorldUseRefusesUnknownObjectsTheCharacterAndCarriedItems()
+    {
+        using var runtime = GameRuntimeTestFactory.Create();
+        ClientObjectTable objects = runtime.InventoryOwner.Objects;
+        const uint player = 0x50000001u;
+        objects.AddOrUpdate(new ClientObject { ObjectId = player, Name = "Tester" });
+        objects.AddOrUpdate(new ClientObject { ObjectId = 0x70000010u, Name = "Shopkeeper" });
+        objects.AddOrUpdate(new ClientObject
+        {
+            ObjectId = 0x50000123u,
+            Name = "Pack Item",
+            ContainerId = player,
+        });
+
+        Assert.Equal(
+            PluginItemCommandStatus.InvalidTarget,
+            AppAutomationSurface.RefuseWorldUse(objects, player, 0x70000099u)?.Status);
+        Assert.Equal(
+            PluginItemCommandStatus.InvalidTarget,
+            AppAutomationSurface.RefuseWorldUse(objects, player, player)?.Status);
+        Assert.Equal(
+            PluginItemCommandStatus.InvalidItem,
+            AppAutomationSurface.RefuseWorldUse(objects, player, 0x50000123u)?.Status);
+        Assert.Null(AppAutomationSurface.RefuseWorldUse(objects, player, 0x70000010u));
+    }
+
+    [Fact]
+    public void WorldUseIsUnavailableWithoutALiveSession()
+    {
+        using var surface = new AppAutomationSurface();
+
+        Assert.Equal(
+            PluginItemCommandStatus.Unavailable,
+            ((IAutomationSurface)surface).Objects.Use(0x70000010u).Status);
+        Assert.Equal(
+            PluginItemCommandStatus.Unavailable,
+            NoOpAutomationSurface.Instance.Objects.Use(0x70000010u).Status);
+    }
+
+    [Fact]
+    public void WorldUseAndItemUseAreDifferentMethodsOnTheGraphicalSurface()
+    {
+        MethodTarget(typeof(IWorldObjectAutomation), out System.Reflection.MethodInfo world);
+        MethodTarget(typeof(IItemAutomation), out System.Reflection.MethodInfo item);
+
+        Assert.Equal(typeof(AppAutomationSurface), world.DeclaringType);
+        Assert.NotEqual(item, world);
+
+        static void MethodTarget(Type contract, out System.Reflection.MethodInfo target)
+        {
+            System.Reflection.InterfaceMapping map =
+                typeof(AppAutomationSurface).GetInterfaceMap(contract);
+            int index = Array.FindIndex(
+                map.InterfaceMethods,
+                method => method.Name == "Use" && method.GetParameters().Length == 1);
+            Assert.True(index >= 0, $"{contract.Name}.Use not found.");
+            target = map.TargetMethods[index];
+        }
+    }
+
+    private const uint VendorId = 0x70000010u;
+
+    private static VendorShopProfile Profile(float sellRate) => new(
+        MerchandiseItemTypes: uint.MaxValue,
+        MerchandiseMinValue: 0u,
+        MerchandiseMaxValue: uint.MaxValue,
+        DealMagicalItems: true,
+        BuyPrice: 0.5f,
+        SellPrice: sellRate,
+        AlternateCurrencyWcid: 0u,
+        AlternateCurrencyAmount: 0u,
+        AlternateCurrencyPluralName: string.Empty);
+
+    private static VendorShopItem Listing(uint id, int stock, int value) => new(
+        ItemGuid: id,
+        StackSize: stock,
+        WeenieClassId: 691u,
+        Name: "Prismatic Taper",
+        ItemType: (uint)ItemType.Misc,
+        IconId: 0u,
+        Value: value);
 }

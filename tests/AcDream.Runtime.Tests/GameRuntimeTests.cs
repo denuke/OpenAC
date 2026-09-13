@@ -314,6 +314,70 @@ public sealed class GameRuntimeTests
         public void OnCombat(in RuntimeCombatDelta delta) { }
     }
 
+    [Fact]
+    public void FrameControllersLetAScriptedMoveTakeTheFrameUntilThePlayerMoves()
+    {
+        using GameRuntime runtime = Create();
+        var controller = new PlayerMovementController(new AcDream.Core.Physics.PhysicsEngine());
+        controller.SeedPlacementForTest(
+            new System.Numerics.Vector3(96f, 96f, 50f),
+            0x0001u,
+            new System.Numerics.Vector3(96f, 96f, 50f));
+        runtime.MovementOwner.Controller = controller;
+        var frameInput = new FrameInput { Input = new MovementInput(Forward: true) };
+        RuntimeLocalPlayerFrameController frame =
+            runtime.CreateLocalPlayerFrameController(new FrameHost(controller), frameInput);
+
+        Assert.True(runtime.MovementOwner.BeginMove(
+            new RuntimeMoveRequest(RuntimeMoveDirection.StrafeLeft, RuntimeMovePace.Run, 0f)));
+        frame.AdvanceBeforeNetwork(0.015f);
+
+        Assert.Equal(RuntimeScriptedMoveState.Interrupted, runtime.MovementOwner.ScriptedMove.Strafe.State);
+    }
+
+    private sealed class FrameInput : IRuntimeMovementInputSource
+    {
+        public MovementInput Input { get; set; }
+
+        public MovementInput Capture() => Input;
+    }
+
+    private sealed class FrameHost(PlayerMovementController controller)
+        : IRuntimeLocalPlayerFrameHost
+    {
+        public bool CanAdvancePlayer => true;
+        public PlayerMovementController? Controller => controller;
+        public uint ResolveLocalEntityId() => 1u;
+
+        public void HandleTargeting()
+        {
+        }
+
+        public bool IsHidden => false;
+        public AcDream.Core.Physics.RetailObjectClockDisposition ObjectClockDisposition =>
+            AcDream.Core.Physics.RetailObjectClockDisposition.Advance;
+
+        public void Project(
+            PlayerMovementController controller,
+            MovementResult movement,
+            bool hidden)
+        {
+        }
+
+        public void SendPreNetwork(
+            PlayerMovementController controller,
+            MovementResult movement,
+            bool hidden)
+        {
+        }
+
+        public void SendPostNetwork(
+            PlayerMovementController controller,
+            bool hidden)
+        {
+        }
+    }
+
     private sealed class InjectedConstructionFailure : Exception
     {
     }
