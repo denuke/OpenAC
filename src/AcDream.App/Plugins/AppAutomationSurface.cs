@@ -1795,6 +1795,52 @@ internal sealed class AppAutomationSurface
     PluginItemCommandResult IWorldObjectAutomation.Identify(uint objectId) =>
         ((ILootAutomation)this).Identify(objectId);
 
+    PluginItemCommandResult IWorldObjectAutomation.Use(uint objectId)
+    {
+        Func<uint, bool>? use;
+        GameRuntime? runtime;
+        lock (_gate)
+        {
+            use = _useItem;
+            runtime = _runtime;
+        }
+        if (runtime is null || use is null || !IsAvailable)
+            return new(PluginItemCommandStatus.Unavailable);
+        if (RefuseWorldUse(
+                runtime.InventoryOwner.Objects,
+                runtime.PlayerIdentity.ServerGuid,
+                objectId) is { } refusal)
+        {
+            return refusal;
+        }
+        if (!runtime.InventoryOwner.Transactions.CanBeginRequest)
+            return new(PluginItemCommandStatus.Busy);
+        return use(objectId)
+            ? new(PluginItemCommandStatus.Started)
+            : new(PluginItemCommandStatus.Refused);
+    }
+
+    /// <summary>
+    /// Why an object cannot be used as a world object, or <see langword="null"/>
+    /// when it can. Carried items belong to <see cref="IItemAutomation.Use"/>.
+    /// </summary>
+    internal static PluginItemCommandResult? RefuseWorldUse(
+        ClientObjectTable objects,
+        uint playerId,
+        uint objectId)
+    {
+        ArgumentNullException.ThrowIfNull(objects);
+        if (objectId == 0u
+            || objectId == playerId
+            || objects.Get(objectId) is not { } item)
+        {
+            return new(PluginItemCommandStatus.InvalidTarget);
+        }
+        return IsPlayerOwned(item, playerId, objects)
+            ? new(PluginItemCommandStatus.InvalidItem, "Carried items are used as items.")
+            : null;
+    }
+
     private PluginWorldObject ProjectWorldObject(
         GameRuntime runtime,
         RuntimeEntityRecord? record,

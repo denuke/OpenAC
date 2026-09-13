@@ -547,6 +547,67 @@ public sealed class AppAutomationSurfaceTests
             map.TargetMethods[index].DeclaringType);
     }
 
+    [Fact]
+    public void WorldUseRefusesUnknownObjectsTheCharacterAndCarriedItems()
+    {
+        using var runtime = GameRuntimeTestFactory.Create();
+        ClientObjectTable objects = runtime.InventoryOwner.Objects;
+        const uint player = 0x50000001u;
+        objects.AddOrUpdate(new ClientObject { ObjectId = player, Name = "Tester" });
+        objects.AddOrUpdate(new ClientObject { ObjectId = 0x70000010u, Name = "Shopkeeper" });
+        objects.AddOrUpdate(new ClientObject
+        {
+            ObjectId = 0x50000123u,
+            Name = "Pack Item",
+            ContainerId = player,
+        });
+
+        Assert.Equal(
+            PluginItemCommandStatus.InvalidTarget,
+            AppAutomationSurface.RefuseWorldUse(objects, player, 0x70000099u)?.Status);
+        Assert.Equal(
+            PluginItemCommandStatus.InvalidTarget,
+            AppAutomationSurface.RefuseWorldUse(objects, player, player)?.Status);
+        Assert.Equal(
+            PluginItemCommandStatus.InvalidItem,
+            AppAutomationSurface.RefuseWorldUse(objects, player, 0x50000123u)?.Status);
+        Assert.Null(AppAutomationSurface.RefuseWorldUse(objects, player, 0x70000010u));
+    }
+
+    [Fact]
+    public void WorldUseIsUnavailableWithoutALiveSession()
+    {
+        using var surface = new AppAutomationSurface();
+
+        Assert.Equal(
+            PluginItemCommandStatus.Unavailable,
+            ((IAutomationSurface)surface).Objects.Use(0x70000010u).Status);
+        Assert.Equal(
+            PluginItemCommandStatus.Unavailable,
+            NoOpAutomationSurface.Instance.Objects.Use(0x70000010u).Status);
+    }
+
+    [Fact]
+    public void WorldUseAndItemUseAreDifferentMethodsOnTheGraphicalSurface()
+    {
+        MethodTarget(typeof(IWorldObjectAutomation), out System.Reflection.MethodInfo world);
+        MethodTarget(typeof(IItemAutomation), out System.Reflection.MethodInfo item);
+
+        Assert.Equal(typeof(AppAutomationSurface), world.DeclaringType);
+        Assert.NotEqual(item, world);
+
+        static void MethodTarget(Type contract, out System.Reflection.MethodInfo target)
+        {
+            System.Reflection.InterfaceMapping map =
+                typeof(AppAutomationSurface).GetInterfaceMap(contract);
+            int index = Array.FindIndex(
+                map.InterfaceMethods,
+                method => method.Name == "Use" && method.GetParameters().Length == 1);
+            Assert.True(index >= 0, $"{contract.Name}.Use not found.");
+            target = map.TargetMethods[index];
+        }
+    }
+
     private const uint VendorId = 0x70000010u;
 
     private static VendorShopProfile Profile(float sellRate) => new(
