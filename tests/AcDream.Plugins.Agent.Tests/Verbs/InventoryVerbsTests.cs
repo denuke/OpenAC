@@ -29,6 +29,37 @@ public sealed class InventoryVerbsTests
     }
 
     [Fact]
+    public void InventoryNarrowsToNamesContainingTheSearchAndCountsEverythingCarried()
+    {
+        var (host, verbs, _, _, ring) = Build();
+        host.FakeAutomation.FakeItems.Owned.Add(LootVerbsTests.Item(Scarabs, "Lead Scarab", Self));
+        host.FakeAutomation.FakeItems.Owned.Add(LootVerbsTests.Item(0x50000203u, "Iron Scarab", Self));
+        host.FakeAutomation.FakeItems.Owned.Add(LootVerbsTests.Item(0x50000204u, "Mana Stone", Self));
+
+        verbs.Handle(Line("inventory SCARAB"));
+
+        JsonElement inventory = Records(ring, RecordKinds.Inventory).Single();
+        Assert.Equal("SCARAB", inventory.GetProperty("search").GetString());
+        Assert.Equal(3, inventory.GetProperty("carriedCount").GetInt32());
+        Assert.Equal(
+            ["Lead Scarab", "Iron Scarab"],
+            inventory.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()));
+    }
+
+    [Fact]
+    public void InventoryListIsTheWholeInventory()
+    {
+        var (host, verbs, _, _, ring) = Build();
+        host.FakeAutomation.FakeItems.Owned.Add(LootVerbsTests.Item(Scarabs, "Lead Scarab", Self));
+
+        verbs.Handle(Line("inventory list"));
+
+        JsonElement inventory = Records(ring, RecordKinds.Inventory).Single();
+        Assert.Equal(JsonValueKind.Null, inventory.GetProperty("search").ValueKind);
+        Assert.Single(inventory.GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
     public void EquipmentSeparatesWhatIsWornFromWhatIsCarried()
     {
         var (host, verbs, _, _, ring) = Build();

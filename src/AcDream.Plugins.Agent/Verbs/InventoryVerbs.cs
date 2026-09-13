@@ -8,7 +8,7 @@ using AcDream.Plugins.Agent.Intake;
 namespace AcDream.Plugins.Agent.Verbs;
 
 /// <summary>
-/// What the character carries and wears, and moving it: <c>inventory</c>,
+/// What the character carries and wears, and moving it: <c>inventory [search]</c>,
 /// <c>equipment</c>, <c>drop</c>, <c>give</c>, <c>move</c>, <c>equip</c> and
 /// <c>unequip</c>.
 /// </summary>
@@ -47,21 +47,25 @@ internal sealed class InventoryVerbs : IVerbFamily
         };
     }
 
+    /// <summary>What is carried, narrowed to names containing the search text when one is given.</summary>
     private VerbResult Inventory(CommandLine line)
     {
-        if (line.Arguments.Length > 0
-            && !line.Arguments.Equals("list", StringComparison.OrdinalIgnoreCase))
-        {
-            return Refuse(line, "usage: inventory");
-        }
+        string search = line.Arguments.Equals("list", StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : line.Arguments;
         IAutomationSurface automation = _host.Automation;
+        IReadOnlyList<PluginInventoryItem> carried = automation.Items.CaptureOwnedItems();
         _publisher.Publish(RecordKinds.Inventory, new JsonObject
         {
             ["id"] = line.Id,
+            ["search"] = search.Length == 0 ? null : search,
             ["freeMainPackSlots"] = automation.Character.IsInWorld
                 ? Facts.Observed(automation.Character.MainPackFreeSlots)
                 : Facts.Unknown("no character is in the world"),
-            ["items"] = ItemRows.Rows(automation.Items.CaptureOwnedItems()),
+            ["carriedCount"] = carried.Count,
+            ["items"] = ItemRows.Rows(search.Length == 0
+                ? carried
+                : carried.Where(item => item.Name.Contains(search, StringComparison.OrdinalIgnoreCase))),
         });
         return VerbResult.Handled;
     }

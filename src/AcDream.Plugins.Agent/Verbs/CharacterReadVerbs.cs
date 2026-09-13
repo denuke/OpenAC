@@ -59,8 +59,7 @@ internal sealed class CharacterReadVerbs : IVerbFamily
                 Publish(RecordKinds.Buffs, line, "enchantments", Buffs);
                 return VerbResult.Handled;
             default:
-                Publish(RecordKinds.Spells, line, "spells", Spells);
-                return VerbResult.Handled;
+                return Spells(line);
         }
     }
 
@@ -119,31 +118,52 @@ internal sealed class CharacterReadVerbs : IVerbFamily
         return enchantments;
     }
 
-    private JsonArray Spells()
+    /// <summary>The known spells, narrowed to names containing the search text when one is given.</summary>
+    private VerbResult Spells(CommandLine line)
     {
         IAutomationSurface automation = _host.Automation;
-        ISpellCatalog catalog = automation.Spells;
-        var spells = new JsonArray();
-        foreach (PluginSpellInfo spell in SpellLists.Known(catalog))
+        string search = line.Arguments;
+        var fields = new JsonObject
         {
-            spells.Add(new JsonObject
-            {
-                ["id"] = spell.SpellId,
-                ["name"] = spell.Name,
-                ["school"] = spell.School,
-                ["tier"] = spell.Tier,
-                ["difficulty"] = spell.Difficulty,
-                ["manaCost"] = spell.ManaCost,
-                ["selfTargeted"] = spell.IsSelfTargeted,
-                ["untargeted"] = spell.IsUntargeted,
-                ["beneficial"] = spell.IsBeneficial,
-                ["offensive"] = spell.IsOffensive,
-                ["debuff"] = spell.IsDebuff,
-                ["hasComponents"] = automation.Magic.HasComponents(spell.SpellId),
-            });
+            ["id"] = line.Id,
+            ["search"] = search.Length == 0 ? null : search,
+        };
+        if (!(automation.IsAvailable && automation.Character.IsInWorld))
+        {
+            fields["known"] = Facts.Unknown(NotInWorld);
+            fields["spells"] = Facts.Unknown(NotInWorld);
         }
-        return spells;
+        else
+        {
+            IReadOnlyList<PluginSpellInfo> known = SpellLists.Known(automation.Spells);
+            var spells = new JsonArray();
+            foreach (PluginSpellInfo spell in known)
+            {
+                if (search.Length == 0 || spell.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
+                    spells.Add(SpellRow(automation, spell));
+            }
+            fields["known"] = Facts.Observed(known.Count);
+            fields["spells"] = Facts.Observed(spells);
+        }
+        _publisher.Publish(RecordKinds.Spells, fields);
+        return VerbResult.Handled;
     }
+
+    private static JsonObject SpellRow(IAutomationSurface automation, in PluginSpellInfo spell) => new()
+    {
+        ["id"] = spell.SpellId,
+        ["name"] = spell.Name,
+        ["school"] = spell.School,
+        ["tier"] = spell.Tier,
+        ["difficulty"] = spell.Difficulty,
+        ["manaCost"] = spell.ManaCost,
+        ["selfTargeted"] = spell.IsSelfTargeted,
+        ["untargeted"] = spell.IsUntargeted,
+        ["beneficial"] = spell.IsBeneficial,
+        ["offensive"] = spell.IsOffensive,
+        ["debuff"] = spell.IsDebuff,
+        ["hasComponents"] = automation.Magic.HasComponents(spell.SpellId),
+    };
 }
 
 /// <summary>

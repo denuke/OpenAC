@@ -118,6 +118,43 @@ public sealed class CharacterReadVerbsTests
     }
 
     [Fact]
+    public void SpellsNarrowToNamesContainingTheSearchInAnyCase()
+    {
+        var host = new FakePluginHost();
+        host.FakeAutomation.FakeSpells.KnownSpells =
+        [
+            FakeSpells.Spell(2u, "Strength Self VI"),
+            FakeSpells.Spell(3u, "Strength Other VI", selfTargeted: false),
+            FakeSpells.Spell(5u, "Flame Bolt VI", selfTargeted: false, beneficial: false),
+        ];
+        using var service = new AgentService(host, _ => new RecordingSink());
+
+        service.Commands.Deliver("spells STRENGTH", "mcp");
+
+        JsonElement record = Latest(service, RecordKinds.Spells);
+        Assert.Equal("STRENGTH", record.GetProperty("search").GetString());
+        Assert.Equal(3, record.GetProperty("known").GetProperty("value").GetInt32());
+        Assert.Equal(
+            ["Strength Other VI", "Strength Self VI"],
+            record.GetProperty("spells").GetProperty("value").EnumerateArray()
+                .Select(spell => spell.GetProperty("name").GetString()));
+    }
+
+    [Fact]
+    public void OutOfTheWorldTheSpellsAndTheirCountAreUnknown()
+    {
+        var host = new FakePluginHost();
+        host.FakeAutomation.IsAvailable = false;
+        using var service = new AgentService(host, _ => new RecordingSink());
+
+        service.Commands.Deliver("spells", "mcp");
+
+        JsonElement record = Latest(service, RecordKinds.Spells);
+        Assert.Equal("unknown", record.GetProperty("known").GetProperty("presence").GetString());
+        Assert.Equal("unknown", record.GetProperty("spells").GetProperty("presence").GetString());
+    }
+
+    [Fact]
     public void OutOfTheWorldAListIsUnknownRatherThanEmpty()
     {
         var host = new FakePluginHost();
