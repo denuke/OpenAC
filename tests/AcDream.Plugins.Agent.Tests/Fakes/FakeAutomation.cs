@@ -5,12 +5,13 @@ namespace AcDream.Plugins.Agent.Tests.Fakes;
 internal sealed class FakeAutomation : IAutomationSurface
 {
     public bool IsAvailable { get; set; } = true;
-    public ICharacterInfo Character => NoOpAutomationSurface.Instance.Character;
+    public ICharacterInfo Character => FakeCharacter;
     public ISpellCatalog Spells => NoOpAutomationSurface.Instance.Spells;
     public IMagicCommands Magic => NoOpAutomationSurface.Instance.Magic;
     public IPluginChat Chat => FakeChat;
 
     internal FakeChat FakeChat { get; } = new();
+    internal FakeCharacter FakeCharacter { get; } = new();
 }
 
 internal sealed class FakeChat : IPluginChat
@@ -49,5 +50,37 @@ internal sealed class FakeChat : IPluginChat
             channelName);
         _messages.Add(message);
         return message;
+    }
+}
+
+internal sealed class FakeCharacter : ICharacterInfo
+{
+    public bool IsInWorld { get; set; } = true;
+    public string Name { get; set; } = "Tester";
+    public string WorldName { get; set; } = "Testworld";
+    public int Level { get; set; }
+    public uint ObjectId { get; set; } = 0x50000001u;
+    public uint CurrentHealth { get; set; }
+    public uint MaxHealth { get; set; }
+    public uint CurrentStamina { get; set; }
+    public uint MaxStamina { get; set; }
+    public uint CurrentMana { get; set; }
+    public uint MaxMana { get; set; }
+    public IReadOnlyList<PluginSkillInfo> Skills { get; set; } = [];
+    public IReadOnlyList<PluginAttributeInfo> Attributes { get; set; } = [];
+    public IReadOnlyList<PluginActiveEnchantment> ActiveEnchantments { get; set; } = [];
+
+    public bool TryGetSkill(uint skillId, out PluginSkillInfo skill)
+    {
+        foreach (PluginSkillInfo candidate in Skills)
+        {
+            if (candidate.SkillId == skillId)
+            {
+                skill = candidate;
+                return true;
+            }
+        }
+        skill = default;
+        return false;
     }
 }

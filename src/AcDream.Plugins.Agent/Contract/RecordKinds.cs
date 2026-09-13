@@ -1,0 +1,18 @@
+namespace AcDream.Plugins.Agent.Contract;
+
+internal static class RecordKinds
+{
+    internal const string Session = "session";
+    internal const string Body = "body";
+    internal const string Vitals = "vitals";
+    internal const string Stats = "stats";
+    internal const string Target = "target";
+    internal const string CombatMode = "combat-mode";
+
+    /// <summary>
+    /// Kinds that describe current state. The latest record of each is kept
+    /// for readers even after it scrolls out of the recent records.
+    /// </summary>
+    internal static readonly IReadOnlyList<string> State =
+        [Session, Body, Vitals, Stats, Target, CombatMode];
+}

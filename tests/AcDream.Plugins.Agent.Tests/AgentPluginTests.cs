@@ -42,7 +42,7 @@ public sealed class AgentPluginTests
         Assert.True(host.FakeCommands.Run("/agent status"));
 
         Assert.Equal(
-            "Agent: not listening.",
+            "Agent: not listening. Not recording.",
             Assert.Single(host.FakeAutomation.FakeChat.SystemMessages));
     }
 
