@@ -55,6 +55,7 @@ internal sealed class AgentService : IDisposable
         _state.Add(new TargetProjection(host));
         _state.Add(new CombatModeProjection(host));
         _events.Add(new VitalChangeEvents(host));
+        _events.Add(new ChatEvents(host));
     }
 
     internal RecordRing Ring { get; }

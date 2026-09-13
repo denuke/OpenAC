@@ -77,6 +77,39 @@ public sealed class AgentServiceStateTests
         Assert.Equal(2, sink.OfKind(RecordKinds.Session).Count());
     }
 
+    [Fact]
+    public void ATellAfterRecordingStartsIsPublished()
+    {
+        var host = new FakePluginHost();
+        var sink = new RecordingSink();
+        using var service = new AgentService(host, _ => sink);
+        Run(service, $"record {FullPath}");
+
+        host.FakeAutomation.FakeChat.Receive(
+            "hello",
+            sender: "Friend",
+            kind: (int)PluginChatKind.Tell);
+        service.OnTick(0.016);
+
+        JsonElement line = Assert.Single(sink.OfKind(RecordKinds.Chat));
+        Assert.Equal("tell", line.GetProperty("chatKind").GetString());
+        Assert.Equal("hello", line.GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public void ChatFromBeforeRecordingIsNotReplayed()
+    {
+        var host = new FakePluginHost();
+        var sink = new RecordingSink();
+        using var service = new AgentService(host, _ => sink);
+        host.FakeAutomation.FakeChat.Receive("old news");
+
+        Run(service, $"record {FullPath}");
+        service.OnTick(0.016);
+
+        Assert.Empty(sink.OfKind(RecordKinds.Chat));
+    }
+
     private static void Run(AgentService service, string arguments) =>
         service.HandleCommand(new PluginCommand("agent", arguments, "/agent " + arguments));
 
