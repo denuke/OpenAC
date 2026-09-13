@@ -2159,6 +2159,7 @@ internal sealed class AppAutomationSurface
                 : default,
             HasAppraisalData = item is not null && HasPropertyData(item.Properties),
             LastIdTime = item?.LastAppraisalTimeMs ?? 0,
+            IsOpenable = Opens(publicFlags),
             IsDoorOpen = (publicFlags & (uint)PublicWeenieFlags.Door) != 0u
                 && (record is not null
                     ? record.FinalPhysicsState.HasFlag(PhysicsStateFlags.Ethereal)
@@ -2832,42 +2833,45 @@ internal sealed class AppAutomationSurface
         }
         if (runtime is null || sell is null || !IsAvailable)
             return new(PluginItemCommandStatus.Unavailable);
-        uint vendorId = runtime.InventoryOwner.Vendor.VendorId;
-        if (vendorId == 0u)
-            return new(PluginItemCommandStatus.InvalidTarget, "No vendor is open.");
-
         ClientObjectTable objects = runtime.InventoryOwner.Objects;
-        uint playerId = runtime.PlayerIdentity.ServerGuid;
-        if (!TryGetOwned(objects, playerId, objectId, out ClientObject? item))
-            return new(PluginItemCommandStatus.InvalidItem);
-        if (!ValidAmount(item!, amount))
-            return new(PluginItemCommandStatus.Refused, "Invalid stack quantity.");
-        int quantity = checked((int)(amount == 0u
-            ? (uint)Math.Max(1, item!.StackSize)
-            : amount));
-        int perUnitValue = VendorPricing.PerUnitValue(item!.Value, item.StackSize);
-        VendorShopProfile profile = runtime.InventoryOwner.Vendor.Profile;
-        VendorSellRejection rejection = VendorSellAcceptability.Evaluate(
-            ownedByPlayer: true,
-            containedItemCount: objects.GetContents(objectId).Count,
-            itemTypeMask: (uint)item.Type,
-            perUnitValue,
-            profile.MerchandiseItemTypes,
-            profile.MerchandiseMinValue,
-            profile.MerchandiseMaxValue,
-            item.PublicWeenieBitfield ?? 0u,
-            sellable: item.Properties.GetBool((uint)PropertyBool.IsSellable, def: true));
-        if (rejection != VendorSellRejection.None)
+        if (RefuseSell(runtime.InventoryOwner.Vendor, objects, runtime.PlayerIdentity.ServerGuid, objectId, amount)
+            is { } refusal)
         {
-            return new PluginItemCommandResult(
-                PluginItemCommandStatus.Refused,
-                VendorSellAcceptability.MessageFor(rejection));
+            return refusal;
         }
         if (!runtime.InventoryOwner.Transactions.CanBeginRequest)
             return new(PluginItemCommandStatus.Busy);
-        return sell(vendorId, objectId, quantity)
+        int quantity = checked((int)(amount == 0u
+            ? (uint)Math.Max(1, objects.Get(objectId)!.StackSize)
+            : amount));
+        return sell(runtime.InventoryOwner.Vendor.VendorId, objectId, quantity)
             ? new(PluginItemCommandStatus.Started)
             : new(PluginItemCommandStatus.Refused);
+    }
+
+    public PluginItemCommandResult CheckSell(uint objectId, uint amount = 0u)
+    {
+        Func<uint, uint, int, bool>? sell;
+        GameRuntime? runtime;
+        lock (_gate)
+        {
+            sell = _sellItem;
+            runtime = _runtime;
+        }
+        if (runtime is null || sell is null || !IsAvailable)
+            return new(PluginItemCommandStatus.Unavailable);
+        if (RefuseSell(
+                runtime.InventoryOwner.Vendor,
+                runtime.InventoryOwner.Objects,
+                runtime.PlayerIdentity.ServerGuid,
+                objectId,
+                amount) is { } refusal)
+        {
+            return refusal;
+        }
+        return runtime.InventoryOwner.Transactions.CanBeginRequest
+            ? new(PluginItemCommandStatus.Started)
+            : new(PluginItemCommandStatus.Busy);
     }
 
     public IReadOnlyList<PluginVendorItem> CaptureVendorStock()
@@ -2946,6 +2950,38 @@ internal sealed class AppAutomationSurface
     /// The reason a buy of <paramref name="amount"/> units of one listing
     /// cannot be requested, or <see langword="null"/> when it can.
     /// </summary>
+    /// <summary>Why the open vendor would not be offered a carried item, or null when it would.</summary>
+    internal static PluginItemCommandResult? RefuseSell(
+        VendorState vendor,
+        ClientObjectTable objects,
+        uint playerId,
+        uint objectId,
+        uint amount)
+    {
+        ArgumentNullException.ThrowIfNull(vendor);
+        ArgumentNullException.ThrowIfNull(objects);
+        if (vendor.VendorId == 0u)
+            return new(PluginItemCommandStatus.InvalidTarget, "No vendor is open.");
+        if (!TryGetOwned(objects, playerId, objectId, out ClientObject? item))
+            return new(PluginItemCommandStatus.InvalidItem);
+        if (!ValidAmount(item!, amount))
+            return new(PluginItemCommandStatus.Refused, "Invalid stack quantity.");
+        VendorShopProfile profile = vendor.Profile;
+        VendorSellRejection rejection = VendorSellAcceptability.Evaluate(
+            ownedByPlayer: true,
+            containedItemCount: objects.GetContents(objectId).Count,
+            itemTypeMask: (uint)item!.Type,
+            VendorPricing.PerUnitValue(item.Value, item.StackSize),
+            profile.MerchandiseItemTypes,
+            profile.MerchandiseMinValue,
+            profile.MerchandiseMaxValue,
+            item.PublicWeenieBitfield ?? 0u,
+            sellable: item.Properties.GetBool((uint)PropertyBool.IsSellable, def: true));
+        return rejection == VendorSellRejection.None
+            ? null
+            : new(PluginItemCommandStatus.Refused, VendorSellAcceptability.MessageFor(rejection));
+    }
+
     internal static PluginItemCommandResult? RefuseBuy(
         VendorState vendor,
         uint objectId,
@@ -3223,6 +3259,10 @@ internal sealed class AppAutomationSurface
         return true;
     }
 
+    /// <summary>Whether an object opens to show what it holds: a corpse, or an object marked openable.</summary>
+    internal static bool Opens(uint publicFlags) =>
+        ((PublicWeenieFlags)publicFlags & (PublicWeenieFlags.Corpse | PublicWeenieFlags.Openable)) != 0;
+
     public PluginItemCommandResult Open(uint containerObjectId)
     {
         GameRuntime? runtime;
@@ -3237,8 +3277,7 @@ internal sealed class AppAutomationSurface
         if (containerObjectId == 0u
             || runtime.InventoryOwner.Objects.Get(containerObjectId)
                 is not { } container
-            || ((PublicWeenieFlags)(container.PublicWeenieBitfield ?? 0u)
-                & (PublicWeenieFlags.Corpse | PublicWeenieFlags.Openable)) == 0)
+            || !Opens(container.PublicWeenieBitfield ?? 0u))
         {
             return new(PluginItemCommandStatus.InvalidTarget);
         }
