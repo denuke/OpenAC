@@ -350,19 +350,65 @@ public sealed class MotorVerbsTests
     }
 
     [Fact]
-    public void StanceEntersTheModeAndResolvesWhenTheModeIsReported()
+    public void StanceCombatPressesTheCombatKeyAndNamesTheStanceTheWeaponCalledFor()
     {
         var (host, verbs, correlator, _, ring) = Build();
 
-        verbs.Handle(Line("stance magic"));
+        verbs.Handle(Line("stance combat"));
+        correlator.Tick(inWorld: true);
+        Assert.Empty(Kinds(ring, RecordKinds.GoalResolved));
         host.FakeAutomation.FakeCombat.Snapshot = host.FakeAutomation.FakeCombat.Snapshot with
         {
             Mode = PluginCombatMode.Magic,
         };
         correlator.Tick(inWorld: true);
 
-        Assert.Equal(["mode:Magic"], host.FakeAutomation.FakeCombat.Calls);
+        Assert.Equal(["default"], host.FakeAutomation.FakeCombat.Calls);
+        JsonElement resolved = Kinds(ring, RecordKinds.GoalResolved).Single();
+        Assert.Equal("completed", resolved.GetProperty("outcome").GetString());
+        Assert.Equal("magic", resolved.GetProperty("mode").GetString());
+    }
+
+    [Fact]
+    public void StancePeaceLeavesCombat()
+    {
+        var (host, verbs, correlator, _, ring) = Build();
+        host.FakeAutomation.FakeCombat.Snapshot = host.FakeAutomation.FakeCombat.Snapshot with { Mode = PluginCombatMode.Melee };
+
+        verbs.Handle(Line("stance peace"));
+        host.FakeAutomation.FakeCombat.Snapshot = host.FakeAutomation.FakeCombat.Snapshot with { Mode = PluginCombatMode.Peace };
+        correlator.Tick(inWorld: true);
+
+        Assert.Equal(["mode:Peace"], host.FakeAutomation.FakeCombat.Calls);
         Assert.Equal("completed", Kinds(ring, RecordKinds.GoalResolved).Single().GetProperty("outcome").GetString());
+    }
+
+    [Fact]
+    public void AStanceAlreadyTakenCompletesAtOnce()
+    {
+        var (host, verbs, _, _, ring) = Build();
+        host.FakeAutomation.FakeCombat.Snapshot = host.FakeAutomation.FakeCombat.Snapshot with { Mode = PluginCombatMode.Missile };
+        host.FakeAutomation.FakeCombat.NextStatus = PluginCombatCommandStatus.AlreadyReady;
+
+        verbs.Handle(Line("stance combat"));
+
+        JsonElement resolved = Kinds(ring, RecordKinds.GoalResolved).Single();
+        Assert.Equal("completed", resolved.GetProperty("outcome").GetString());
+        Assert.Equal("missile", resolved.GetProperty("mode").GetString());
+    }
+
+    [Theory]
+    [InlineData("stance melee")]
+    [InlineData("stance missile")]
+    [InlineData("stance magic")]
+    public void NamingAStanceIsRefusedPointingAtStanceCombat(string text)
+    {
+        var (host, verbs, _, _, ring) = Build();
+
+        Assert.Equal("refused", verbs.Handle(Line(text)).Outcome);
+
+        Assert.Empty(host.FakeAutomation.FakeCombat.Calls);
+        Assert.Contains("stance combat", Kinds(ring, RecordKinds.GoalRefused).Single().GetProperty("reason").GetString());
     }
 
     [Fact]
@@ -371,7 +417,7 @@ public sealed class MotorVerbsTests
         var (host, verbs, _, _, ring) = Build();
         host.FakeAutomation.FakeCombat.NextStatus = PluginCombatCommandStatus.Busy;
 
-        Assert.Equal("refused", verbs.Handle(Line("stance melee")).Outcome);
+        Assert.Equal("refused", verbs.Handle(Line("stance combat")).Outcome);
         Assert.Contains("busy", Kinds(ring, RecordKinds.GoalRefused).Single().GetProperty("reason").GetString());
     }
 
