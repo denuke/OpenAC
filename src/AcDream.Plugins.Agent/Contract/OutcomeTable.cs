@@ -37,6 +37,10 @@ internal static class OutcomeTable
         [(RecordKinds.AttackOutcome, "refused")] = OutcomeClass.Refused,
         [(RecordKinds.AttackOutcome, "unconfirmed")] = OutcomeClass.Unconfirmed,
         [(RecordKinds.AttackOutcome, "lost")] = OutcomeClass.Lost,
+        [(RecordKinds.LoginOutcome, "completed")] = OutcomeClass.Confirmed,
+        [(RecordKinds.LoginOutcome, "refused")] = OutcomeClass.Refused,
+        [(RecordKinds.LoginOutcome, "unconfirmed")] = OutcomeClass.Unconfirmed,
+        [(RecordKinds.LoginOutcome, "lost")] = OutcomeClass.Lost,
     };
 
     /// <summary>Every record kind that carries an outcome word.</summary>

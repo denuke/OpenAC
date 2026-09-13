@@ -15,6 +15,7 @@ internal sealed class FakeAutomation : IAutomationSurface
     public IItemAutomation Items => FakeItems;
     public ILootAutomation Loot => FakeLoot;
     public IEquipmentAutomation Equipment => FakeEquipment;
+    public ILoginAutomation Login => FakeLogin;
 
     internal FakeChat FakeChat { get; } = new();
     internal FakeCharacter FakeCharacter { get; } = new();
@@ -26,6 +27,39 @@ internal sealed class FakeAutomation : IAutomationSurface
     internal FakeItems FakeItems { get; } = new();
     internal FakeLoot FakeLoot { get; } = new();
     internal FakeEquipment FakeEquipment { get; } = new();
+    internal FakeLogin FakeLogin { get; } = new();
+}
+
+/// <summary>A character list the test arranges. An accepted enter moves it on to entering the world.</summary>
+internal sealed class FakeLogin : ILoginAutomation
+{
+    internal bool Available { get; set; } = true;
+    internal PluginLoginSnapshot State { get; set; } = new(PluginLoginStage.InWorld, "account", "Testworld", 0u, null);
+    internal List<PluginLoginCharacter> Roster { get; } = [];
+    internal PluginLoginCommandStatus EnterStatus { get; set; } = PluginLoginCommandStatus.Accepted;
+    internal PluginLoginCommandStatus LogOutStatus { get; set; } = PluginLoginCommandStatus.Accepted;
+    internal List<uint> Entered { get; } = [];
+    internal int LogOuts { get; private set; }
+
+    public bool IsAvailable => Available;
+
+    public PluginLoginSnapshot Snapshot => State;
+
+    public IReadOnlyList<PluginLoginCharacter> CaptureRoster() => Roster.ToArray();
+
+    public PluginLoginCommandStatus EnterWorld(uint characterObjectId)
+    {
+        Entered.Add(characterObjectId);
+        if (EnterStatus == PluginLoginCommandStatus.Accepted)
+            State = State with { Stage = PluginLoginStage.EnteringWorld, ChosenObjectId = characterObjectId, Error = null };
+        return EnterStatus;
+    }
+
+    public PluginLoginCommandStatus LogOut()
+    {
+        LogOuts++;
+        return LogOutStatus;
+    }
 }
 
 internal sealed class FakeChat : IPluginChat

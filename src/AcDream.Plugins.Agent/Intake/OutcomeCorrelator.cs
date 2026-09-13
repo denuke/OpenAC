@@ -14,7 +14,8 @@ internal readonly record struct Resolution(
 /// Watches each accepted action until it resolves, and publishes exactly one
 /// terminal record for it. An action that does not resolve within its window
 /// is <c>unconfirmed</c>, never assumed to have worked; an action pending when
-/// the character leaves the world is <c>lost</c>.
+/// the character leaves the world is <c>lost</c>, unless it is one carried out
+/// with no character in the world, as logging in is.
 /// </summary>
 internal sealed class OutcomeCorrelator
 {
@@ -48,19 +49,22 @@ internal sealed class OutcomeCorrelator
     /// <summary>
     /// Watches line <paramref name="id"/> until <paramref name="probe"/> returns
     /// a resolution. The probe runs on the update thread and returns
-    /// <see langword="null"/> while the action is still pending.
+    /// <see langword="null"/> while the action is still pending. An action
+    /// <paramref name="outOfWorld"/> goes on being probed while no character is
+    /// in the world, instead of being lost.
     /// </summary>
     internal void Watch(
         long id,
         string verb,
         string outcomeKind,
         double windowSeconds,
-        Func<Resolution?> probe)
+        Func<Resolution?> probe,
+        bool outOfWorld = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(verb);
         ArgumentException.ThrowIfNullOrWhiteSpace(outcomeKind);
         ArgumentNullException.ThrowIfNull(probe);
-        _pending.Add(new Pending(id, verb, outcomeKind, _clock.Now + windowSeconds, probe));
+        _pending.Add(new Pending(id, verb, outcomeKind, _clock.Now + windowSeconds, probe, outOfWorld));
     }
 
     internal void ResolveNow(long id, string verb, string outcomeKind, Resolution resolution) =>
@@ -85,7 +89,7 @@ internal sealed class OutcomeCorrelator
         foreach (Pending pending in _pending.ToArray())
         {
             Resolution? resolution;
-            if (!inWorld)
+            if (!inWorld && !pending.OutOfWorld)
             {
                 resolution = new Resolution(Lost, "the character left the world before an answer arrived");
             }
@@ -144,5 +148,6 @@ internal sealed class OutcomeCorrelator
         string Verb,
         string OutcomeKind,
         double Deadline,
-        Func<Resolution?> Probe);
+        Func<Resolution?> Probe,
+        bool OutOfWorld);
 }

@@ -27,15 +27,11 @@ public sealed class UnavailableVerbsTests
     }
 
     [Fact]
-    public void LogoutIsRefusedWithoutAGoalRecord()
+    public void LogoutIsLeftToTheLoginVerbs()
     {
-        var ring = new RecordRing(8);
-        var verbs = new UnavailableVerbs(new Publisher(new AgentClock(), ring));
+        var verbs = new UnavailableVerbs(new Publisher(new AgentClock(), new RecordRing(8)));
 
-        VerbResult result = verbs.Handle(CommandLine.Parse(1, "logout", "mcp"));
-
-        Assert.Equal("refused", result.Outcome);
-        Assert.Equal(0, ring.Count);
+        Assert.DoesNotContain("logout", verbs.ReservedWords);
     }
 
     [Fact]

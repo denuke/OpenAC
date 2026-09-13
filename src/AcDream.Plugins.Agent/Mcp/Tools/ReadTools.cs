@@ -143,6 +143,15 @@ internal static class ReadTools
             () => new JsonObject { ["range"] = Property("number", "Maximum distance in meters; 30 when omitted.") },
             [],
             Corpses),
+        new ReadTool(context, "characters", "Who can I play?",
+            "The characters on the account while the client is at the character list, with each one's id and "
+            + "whether it can enter the world, and where the client stands: not-connected, connecting, "
+            + "choosing-character, entering-world or in-world. Act 'login <name>' to enter the world as one, "
+            + "and 'logout' to come back to the list."
+            + Nothing,
+            () => new JsonObject(),
+            [],
+            _ => ReadLine.Of("characters")),
     ];
 
     private static JsonObject Property(string type, string description) => new()

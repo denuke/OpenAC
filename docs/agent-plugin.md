@@ -5,25 +5,22 @@ the Model Context Protocol (MCP) on this computer's loopback address, turns shor
 command lines such as `buy prismatic taper 10` into the client's existing
 automation calls, and reports what actually happened rather than what was sent.
 
-It is bundled with the client and does nothing until a player types
-`/agent listen`. It is built only on `AcDream.Plugin.Abstractions`, so it can
-see and do exactly what any plugin can.
+It is bundled with the client and listens from the moment the client starts, so
+an AI client can log a character in from the character list, and out again. It
+is built only on `AcDream.Plugin.Abstractions`, so it can see and do exactly what
+any plugin can.
 
-## Connect in two commands
+## Connect in one command
 
-In the game's chat:
-
-```
-/agent listen
-```
-
-In a terminal, for Claude Code:
+Start the client. Then, in a terminal, for Claude Code:
 
 ```
 claude mcp add --transport http openac http://127.0.0.1:31337/mcp
 ```
 
-Then ask for something, such as "open the nearest vendor and buy ten prismatic
+At the character list, ask for a character by name: the model reads the list
+with `characters` and enters the world by acting `login <name>`. Then ask for
+something, such as "open the nearest vendor and buy ten prismatic
 tapers". The model finds the vendor with `nearby`, opens it by acting
 `use <vendor id>`, reads the listings with `vendor`, buys by acting
 `buy prismatic taper 10`, and checks the purchase with `outcome`. Any MCP client
@@ -33,13 +30,15 @@ that speaks Streamable HTTP connects the same way.
 
 | Command | What it does |
 |---|---|
-| `/agent listen [port]` | Lets AI clients on this computer connect. The port is 31337 unless one is given, and a given port is remembered. |
-| `/agent stop` | Closes the listener and ends every client session. |
-| `/agent status` | Whether clients can connect and where, and whether records are written to a file. |
+| `/agent status` | Where clients connect, and whether records are written to a file. |
 | `/agent record <path>` | Writes every record to a file, one JSON object per line. The path must be absolute or start with `~/`. |
 | `/agent record off` | Stops writing the file. |
 | `/agent do <line>` | Runs one command line from chat, as an AI client would. |
 | `/agent help` | Lists these commands. |
+
+AI clients connect on port 31337. When that port cannot be used, as when a
+second client on the same computer holds it, the listener takes a free port and
+says which in chat and in the client's log.
 
 ## Tools
 
@@ -61,6 +60,7 @@ Only `act` can make the character do anything. Every other tool only reads.
 | `vendor` | The open vendor's listings with prices and stock. |
 | `container` | The items in the open corpse or container. |
 | `corpses` | Corpses in range, and whether each has been opened. |
+| `characters` | The account's characters at the character list, and where the client stands in logging in. |
 
 `act` and `outcome` take `waitSeconds`, up to 30, to answer once the action
 settles instead of at once. An accepted action is not a finished one: the server
@@ -84,6 +84,7 @@ the read tools print, such as `0x70000001`.
 
 | Family | Lines |
 |---|---|
+| Session | `characters`, `login <name or id>`, `logout` |
 | Read | `vitals`, `stats`, `location`, `snapshot`, `skills`, `buffs`, `spells [search]`, `nearby [kind] [range]`, `inspect <id>`, `inventory [search]`, `equipment`, `vendor`, `loot list`, `loot corpses [range]` |
 | Chat | `say <text>`, `tell <name>, <message>`, `emote <text>` |
 | Target | `target <id>`, `target nearest [kind]`, `untarget` |
@@ -94,6 +95,16 @@ the read tools print, such as `0x70000001`.
 | Vendor | `buy <listing id or name> [quantity]`, `sell <item id> [amount]` |
 | Combat | `attack [id] [power from 0 to 1] [high\|medium\|low]` |
 
+`login` works at the character list, before any character is in the world. It
+enters the world as the named character, as choosing it and pressing enter does,
+and resolves `completed` once the character is in the world, or `refused` with
+the client's message, such as when another of the account's characters is still
+in the world. `logout` logs the character out the way the client's own log out
+does and resolves `completed` once the character list is back, so a model can
+switch characters without closing the client. `observe` shows where the client
+stands in `session.stage`: `not-connected`, `connecting`, `choosing-character`,
+`entering-world` or `in-world`.
+
 An amount is meters, or degrees for a turn, or seconds when written like `20s`.
 Walking or running, strafing and turning combine the way movement keys do:
 after `run forward 60s`, `turn left 5` and `strafe right 2s` steer the run
@@ -103,8 +114,9 @@ reports a move as blocked when the character stops making progress. A move
 without an amount keeps going until `stop`, for at most thirty seconds, and the
 player's own movement keys end every move at once. `go` and `goto` are refused,
 because finding a route to a named place is not part of this plugin. Client
-commands that end the session, kill the character, or change its player-killer
-status are refused too. Any other line is handed to the client as chat or a
+commands that close the client, kill the character, or change its player-killer
+status are refused too, and `logout` is how a model leaves the world. Any other
+line is handed to the client as chat or a
 client command, so a model can make the character speak.
 
 ## Records
@@ -132,9 +144,9 @@ how many were dropped and where the stream resumes.
 
 - The listener binds 127.0.0.1 only. Requests that name another host, and
   requests from web pages on other origins, are refused.
-- Nothing listens until `/agent listen`, and `/agent stop` or closing the client
-  stops it. There is no password: while it listens, any program running on this
-  computer can connect and act as the character.
+- It listens from the moment the client starts until the client closes. There is
+  no password: any program running on this computer can connect, log a character
+  in or out, and act as it.
 - Only `act` can make the character do anything, and it runs one line per call.
 
 ## Not included

@@ -44,7 +44,7 @@ is open.
 | `AcDream.UI.Abstractions` | Input actions, key chords and bindings, the input dispatcher, view models, and panel contracts shared by the game UI and plugins. | Core, Runtime |
 | `AcDream.Plugin.Abstractions` | The BCL-only contract plugins compile against: game state, events, commands, and markup panels. Plugins never reference `AcDream.App`. | BCL |
 | `AcDream.Plugins.MossTank` | A complete bundled plugin: VTank-style automation with the familiar tabbed UI. Doubles as the reference for plugin authors. | Plugin.Abstractions |
-| `AcDream.Plugins.Agent` | A bundled plugin that lets AI clients observe the game and act through the client. Inert until a player turns it on with `/agent listen`. | Plugin.Abstractions |
+| `AcDream.Plugins.Agent` | A bundled plugin that lets AI clients observe the game and act through the client. It serves MCP on loopback from the moment the client starts, including at the character list. | Plugin.Abstractions |
 | `AcDream.Bake` | Offline tool that builds `acdream.pak` from the DAT files. | Content, Platform |
 | `AcDream.Cli` | Offline DAT inspector. | Core |
 | `AcDream.Launcher.Core` | Installer, verified downloader, atomic updater, self-updater, profiles, and the client process supervisor. Testable without a GUI. | Platform |

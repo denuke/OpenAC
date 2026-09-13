@@ -42,6 +42,10 @@ internal static class RecordKinds
     internal const string AttackSent = "attack-sent";
     internal const string AttackRefused = "attack-refused";
     internal const string AttackOutcome = "attack-outcome";
+    internal const string Characters = "characters";
+    internal const string LoginSent = "login-sent";
+    internal const string LoginRefused = "login-refused";
+    internal const string LoginOutcome = "login-outcome";
 
     /// <summary>
     /// Kinds that describe current state. The latest record of each is kept

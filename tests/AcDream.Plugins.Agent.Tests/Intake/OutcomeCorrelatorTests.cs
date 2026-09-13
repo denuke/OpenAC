@@ -55,6 +55,21 @@ public sealed class OutcomeCorrelatorTests
     }
 
     [Fact]
+    public void AnActionCarriedOutOfTheWorldIsProbedThereInsteadOfLost()
+    {
+        var (_, correlator, ring) = Build();
+        bool entered = false;
+        correlator.Watch(1, "login", RecordKinds.LoginOutcome, 60d, () => entered ? new Resolution("completed") : null, outOfWorld: true);
+
+        correlator.Tick(inWorld: false);
+        Assert.Equal(0, ring.Count);
+        entered = true;
+        correlator.Tick(inWorld: false);
+
+        Assert.Equal("completed", Only(ring).GetProperty("outcome").GetString());
+    }
+
+    [Fact]
     public void AProbeThatThrowsEndsTheActionUnconfirmedAndIsCounted()
     {
         var (_, correlator, ring) = Build();

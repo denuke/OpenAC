@@ -19,13 +19,10 @@ internal sealed class UnavailableVerbs : IVerbFamily
         _publisher = publisher;
     }
 
-    public IReadOnlyCollection<string> ReservedWords { get; } = ["go", "goto", "logout"];
+    public IReadOnlyCollection<string> ReservedWords { get; } = ["go", "goto"];
 
     public VerbResult Handle(CommandLine line)
     {
-        if (line.Verb == "logout")
-            return VerbResult.Refused("ending the session is left to the player");
-
         const string reason =
             "going to a place needs navigation, which this plugin does not provide; "
             + "'walk', 'run' and 'strafe' move for a distance or a time, and 'turn' and 'face' aim the character";

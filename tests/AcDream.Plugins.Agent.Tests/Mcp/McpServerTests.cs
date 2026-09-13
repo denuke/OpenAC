@@ -22,7 +22,7 @@ public sealed class McpServerTests : IDisposable
     {
         _host.FakeAutomation.FakeNavigation.Snapshot = McpToolHarness.Body(heading: 0f);
         _service = new AgentService(_host, _ => new RecordingSink(), (endpoint, _) => _server = McpServer.Start(endpoint, 0));
-        _service.HandleCommand(new PluginCommand("agent", "listen", "/agent listen"));
+        _service.StartListening();
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public sealed class McpServerTests : IDisposable
     }
 
     [Fact]
-    public async Task StopEndsAWaitingCallAndClosesThePort()
+    public async Task ClosingTheServiceEndsAWaitingCallAndClosesThePort()
     {
         string session = await InitializeAsync();
         Task<HttpResponseMessage> waiting = PostAsync(session,
@@ -87,7 +87,7 @@ public sealed class McpServerTests : IDisposable
         await TickUntil(() => _service.Tools.RunningCount == 1);
         int port = _server!.Port;
 
-        _service.HandleCommand(new PluginCommand("agent", "stop", "/agent stop"));
+        _service.Dispose();
 
         await Assert.ThrowsAsync<HttpRequestException>(() => waiting.WaitAsync(Patience));
         Assert.Equal(0, _service.Tools.RunningCount);

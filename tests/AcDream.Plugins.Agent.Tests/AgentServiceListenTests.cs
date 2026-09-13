@@ -11,31 +11,29 @@ public sealed class AgentServiceListenTests
     private const string DefaultUrl = "http://127.0.0.1:31337/mcp";
 
     [Fact]
-    public void ListenStartsOnTheDefaultPortAndSaysHowToConnect()
+    public void ListeningStartsOnTheDefaultPortAndSaysHowToConnect()
     {
         var (host, service, listeners) = Build();
 
-        Run(service, "listen");
+        service.StartListening();
 
         Assert.Equal(AgentService.DefaultPort, Assert.Single(listeners).Port);
         Assert.Equal(DefaultUrl, service.ListenerUrl);
         Assert.True(service.IsActive);
-        Assert.Contains(
-            "Agent: connect an AI client with: claude mcp add --transport http openac " + DefaultUrl,
-            host.FakeAutomation.FakeChat.SystemMessages);
+        string connect = "Agent: connect an AI client with: claude mcp add --transport http openac " + DefaultUrl;
+        Assert.Contains(connect, host.FakeAutomation.FakeChat.SystemMessages);
+        Assert.Contains(connect, host.FakeLog.Lines);
     }
 
     [Fact]
-    public void AGivenPortIsUsedAndRememberedForNextTime()
+    public void ASavedPortIsUsed()
     {
         var (host, service, listeners) = Build();
+        host.FakeStorage.Files[AgentService.PortSettingKey] = "40000";
 
-        Run(service, "listen 40000");
-        Run(service, "stop");
-        Run(service, "listen");
+        service.StartListening();
 
-        Assert.Equal([40000, 40000], listeners.Select(listener => listener.Port));
-        Assert.Equal("40000", host.FakeStorage.Files[AgentService.PortSettingKey]);
+        Assert.Equal(40000, Assert.Single(listeners).Port);
     }
 
     [Fact]
@@ -44,97 +42,77 @@ public sealed class AgentServiceListenTests
         var (host, service, listeners) = Build();
         host.FakeStorage.Files[AgentService.PortSettingKey] = "banana";
 
-        Run(service, "listen");
+        service.StartListening();
 
         Assert.Equal(AgentService.DefaultPort, Assert.Single(listeners).Port);
     }
 
+    [Fact]
+    public void APortInUseFallsBackToAFreePortAndSaysSo()
+    {
+        var host = new FakePluginHost();
+        using var service = new AgentService(host, _ => new RecordingSink(), (endpoint, port) =>
+            port == AgentService.DefaultPort
+                ? throw new SocketException((int)SocketError.AddressAlreadyInUse)
+                : new FakeListener(endpoint, port == 0 ? 50123 : port));
+
+        service.StartListening();
+
+        Assert.Equal("http://127.0.0.1:50123/mcp", service.ListenerUrl);
+        Assert.Contains(
+            host.FakeAutomation.FakeChat.SystemMessages,
+            line => line.StartsWith("Agent: port 31337 could not be used", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void WhenNoPortOpensNothingListensAndItIsReported()
+    {
+        var host = new FakePluginHost();
+        using var service = new AgentService(host, _ => new RecordingSink(),
+            (_, _) => throw new SocketException((int)SocketError.AccessDenied));
+
+        service.StartListening();
+
+        Assert.Null(service.ListenerUrl);
+        Assert.False(service.IsActive);
+        Assert.StartsWith(
+            "Agent: AI clients cannot connect",
+            Assert.Single(host.FakeAutomation.FakeChat.SystemMessages));
+    }
+
+    [Fact]
+    public void StartingAgainWhileListeningDoesNothing()
+    {
+        var (host, service, listeners) = Build();
+        service.StartListening();
+        host.FakeAutomation.FakeChat.SystemMessages.Clear();
+
+        service.StartListening();
+
+        Assert.Single(listeners);
+        Assert.Empty(host.FakeAutomation.FakeChat.SystemMessages);
+    }
+
     [Theory]
-    [InlineData("listen 0")]
-    [InlineData("listen 65536")]
-    [InlineData("listen http")]
-    public void ABadPortIsRefusedWithUsage(string command)
+    [InlineData("listen")]
+    [InlineData("stop")]
+    public void ListenAndStopAreNotCommands(string command)
     {
         var (host, service, listeners) = Build();
 
         Run(service, command);
 
         Assert.Empty(listeners);
-        Assert.StartsWith("Usage: /agent listen", Assert.Single(host.FakeAutomation.FakeChat.SystemMessages));
-    }
-
-    [Fact]
-    public void APortInUseIsReportedAndNothingListens()
-    {
-        var host = new FakePluginHost();
-        using var service = new AgentService(host, _ => new RecordingSink(),
-            (_, _) => throw new SocketException((int)SocketError.AddressAlreadyInUse));
-
-        Run(service, "listen 31337");
-
-        Assert.Null(service.ListenerUrl);
-        Assert.False(service.IsActive);
-        Assert.StartsWith(
-            "Agent: could not listen on port 31337",
-            Assert.Single(host.FakeAutomation.FakeChat.SystemMessages));
-        Assert.False(host.FakeStorage.Files.ContainsKey(AgentService.PortSettingKey));
-    }
-
-    [Fact]
-    public void ListeningAgainSaysItAlreadyIs()
-    {
-        var (host, service, listeners) = Build();
-        Run(service, "listen");
-        host.FakeAutomation.FakeChat.SystemMessages.Clear();
-
-        Run(service, "listen 40000");
-
-        Assert.Single(listeners);
         Assert.Equal(
-            "Agent: already listening on " + DefaultUrl + ".",
+            $"Unknown /agent command '{command}'. Use /agent help.",
             Assert.Single(host.FakeAutomation.FakeChat.SystemMessages));
-    }
-
-    [Fact]
-    public async Task StopClosesTheListenerAndEndsEverySession()
-    {
-        var (host, service, listeners) = Build();
-        Run(service, "listen");
-        McpEndpoint endpoint = listeners[0].Endpoint;
-        McpHttpResponse initialized = await endpoint.HandleAsync(
-            new McpHttpRequest("POST", "/mcp", null, "application/json", null,
-                """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"""),
-            CancellationToken.None);
-        string session = initialized.Headers.Single(header => header.Key == McpEndpoint.SessionHeader).Value;
-
-        Run(service, "stop");
-
-        Assert.True(listeners[0].Disposed);
-        Assert.Null(service.ListenerUrl);
-        Assert.False(service.IsActive);
-        Assert.Equal("Agent: stopped listening.", host.FakeAutomation.FakeChat.SystemMessages.Last());
-        McpHttpResponse after = await endpoint.HandleAsync(
-            new McpHttpRequest("POST", "/mcp", session, "application/json", null,
-                """{"jsonrpc":"2.0","id":2,"method":"ping"}"""),
-            CancellationToken.None);
-        Assert.Equal(404, after.Status);
-    }
-
-    [Fact]
-    public void StopWhenNotListeningSaysSo()
-    {
-        var (host, service, _) = Build();
-
-        Run(service, "stop");
-
-        Assert.Equal("Agent: not listening.", Assert.Single(host.FakeAutomation.FakeChat.SystemMessages));
     }
 
     [Fact]
     public void StatusWhileListeningShowsTheAddressAndHowToConnect()
     {
         var (host, service, _) = Build();
-        Run(service, "listen");
+        service.StartListening();
         host.FakeAutomation.FakeChat.SystemMessages.Clear();
 
         Run(service, "status");
@@ -152,7 +130,7 @@ public sealed class AgentServiceListenTests
     {
         var (_, service, _) = Build();
 
-        Run(service, "listen");
+        service.StartListening();
 
         Assert.NotNull(service.Ring.Latest(RecordKinds.Session));
     }
@@ -163,7 +141,7 @@ public sealed class AgentServiceListenTests
         var (host, service, _) = Build();
         host.FakeAutomation.FakeChat.Receive("old news");
 
-        Run(service, "listen");
+        service.StartListening();
         service.OnTick(0.016);
 
         Assert.Empty(service.Ring.Read(-1, new HashSet<string> { RecordKinds.Chat }).Records);
@@ -177,7 +155,7 @@ public sealed class AgentServiceListenTests
         service.OnTick(0.016);
         host.FakeAutomation.FakeChat.Receive("arrived before listening");
 
-        Run(service, "listen");
+        service.StartListening();
         service.OnTick(0.016);
 
         Assert.Contains(
@@ -186,14 +164,37 @@ public sealed class AgentServiceListenTests
     }
 
     [Fact]
-    public void DisposingTheServiceStopsListening()
+    public async Task DisposingTheServiceClosesTheListenerAndEndsEverySession()
     {
         var (_, service, listeners) = Build();
-        Run(service, "listen");
+        service.StartListening();
+        McpEndpoint endpoint = listeners[0].Endpoint;
+        McpHttpResponse initialized = await endpoint.HandleAsync(
+            new McpHttpRequest("POST", "/mcp", null, "application/json", null,
+                """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"""),
+            CancellationToken.None);
+        string session = initialized.Headers.Single(header => header.Key == McpEndpoint.SessionHeader).Value;
 
         service.Dispose();
 
-        Assert.True(Assert.Single(listeners).Disposed);
+        Assert.True(listeners[0].Disposed);
+        Assert.Null(service.ListenerUrl);
+        McpHttpResponse after = await endpoint.HandleAsync(
+            new McpHttpRequest("POST", "/mcp", session, "application/json", null,
+                """{"jsonrpc":"2.0","id":2,"method":"ping"}"""),
+            CancellationToken.None);
+        Assert.Equal(404, after.Status);
+    }
+
+    [Fact]
+    public void ADisposedServiceDoesNotListen()
+    {
+        var (_, service, listeners) = Build();
+        service.Dispose();
+
+        service.StartListening();
+
+        Assert.Empty(listeners);
     }
 
     private static void Run(AgentService service, string arguments) =>
@@ -210,18 +211,5 @@ public sealed class AgentServiceListenTests
             return listener;
         });
         return (host, service, listeners);
-    }
-
-    private sealed class FakeListener(McpEndpoint endpoint, int port) : IMcpListener
-    {
-        internal McpEndpoint Endpoint { get; } = endpoint;
-
-        internal int Port { get; } = port;
-
-        internal bool Disposed { get; private set; }
-
-        public string Url => $"http://127.0.0.1:{Port}/mcp";
-
-        public void Dispose() => Disposed = true;
     }
 }

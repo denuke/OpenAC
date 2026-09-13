@@ -14,6 +14,7 @@ public sealed class OutcomeTableTests
         { RecordKinds.ObjectOutcome, [.. ObjectVerbs.OutcomeWords, .. OutcomeCorrelator.OutcomeWords] },
         { RecordKinds.InventoryOutcome, [.. InventoryOutcomes.Words, .. OutcomeCorrelator.OutcomeWords] },
         { RecordKinds.AttackOutcome, [.. AttackVerbs.OutcomeWords, .. OutcomeCorrelator.OutcomeWords] },
+        { RecordKinds.LoginOutcome, [.. LoginVerbs.OutcomeWords, .. OutcomeCorrelator.OutcomeWords] },
     };
 
     [Theory]

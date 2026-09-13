@@ -19,8 +19,11 @@ internal sealed class CommandDispatcher
     internal static readonly IReadOnlyList<string> OutcomeWords =
         ["handled", "chat", "refused", "failed"];
 
-    private static readonly HashSet<string> SessionEnding =
-        new(StringComparer.OrdinalIgnoreCase) { "logout", "logoff", "quit", "exit" };
+    private static readonly HashSet<string> ClientClosing =
+        new(StringComparer.OrdinalIgnoreCase) { "quit", "exit" };
+
+    private static readonly HashSet<string> LoggingOut =
+        new(StringComparer.OrdinalIgnoreCase) { "logout", "logoff" };
 
     /// <summary>
     /// Client commands that kill the character, change its player-killer status,
@@ -108,8 +111,10 @@ internal sealed class CommandDispatcher
             string command = line.Verb[1..];
             if (command.Equals(AgentService.Verb, StringComparison.OrdinalIgnoreCase))
                 return ("refused", "/agent commands cannot be issued through the agent");
-            if (SessionEnding.Contains(command))
-                return ("refused", "ending the session is left to the player");
+            if (ClientClosing.Contains(command))
+                return ("refused", "closing the client is left to the player");
+            if (LoggingOut.Contains(command))
+                return ("refused", "act 'logout' instead, which says when the character list is back");
             if (Irreversible.Contains(command))
             {
                 return ("refused", "commands that kill the character or expose it to "

@@ -16,6 +16,7 @@ internal static class ActionKinds
         RecordKinds.ObjectAction,
         RecordKinds.InventoryAction,
         RecordKinds.AttackSent,
+        RecordKinds.LoginSent,
     };
 
     internal static readonly IReadOnlySet<string> Terminal = OutcomeTable.Kinds

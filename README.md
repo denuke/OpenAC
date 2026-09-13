@@ -144,9 +144,9 @@ and is not expected to;** most of the real work lives on another branch and
 lands when it is ready.
 
 **Agent** is the other bundled plugin. It lets an AI client play through the
-client: type `/agent listen` in chat, connect with
-`claude mcp add --transport http openac http://127.0.0.1:31337/mcp`, and ask for
-something like buying from the nearest vendor. It serves the Model Context
+client: start the client, connect with
+`claude mcp add --transport http openac http://127.0.0.1:31337/mcp`, and ask it
+to log in a character and buy from the nearest vendor. It serves the Model Context
 Protocol on 127.0.0.1 only, and it reports what actually happened rather than
 what was sent. See [docs/agent-plugin.md](docs/agent-plugin.md).
 

@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using AcDream.Plugin.Abstractions;
 using AcDream.Plugins.Agent.Contract;
 using AcDream.Plugins.Agent.State;
 using AcDream.Plugins.Agent.Tests.Fakes;
@@ -16,7 +17,7 @@ public sealed class SessionProjectionTests
         JsonObject state = projection.Capture();
 
         Assert.Equal(
-            """{"state":"in-world","from":null,"character":{"presence":"observed","value":"Tester","because":null},"guid":{"presence":"observed","value":"0x50000001","because":null},"world":{"presence":"observed","value":"Testworld","because":null}}""",
+            """{"state":"in-world","from":null,"stage":"in-world","character":{"presence":"observed","value":"Tester","because":null},"guid":{"presence":"observed","value":"0x50000001","because":null},"world":{"presence":"observed","value":"Testworld","because":null}}""",
             state.ToJsonString(AgentJson.Options));
     }
 
@@ -45,5 +46,18 @@ public sealed class SessionProjectionTests
         JsonObject state = new SessionProjection(host).Capture();
 
         Assert.Equal("unknown", state["character"]!["presence"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AtTheCharacterListTheStageSaysSo()
+    {
+        var host = new FakePluginHost();
+        host.FakeAutomation.IsAvailable = false;
+        host.FakeAutomation.FakeLogin.State = new PluginLoginSnapshot(PluginLoginStage.ChoosingCharacter, "account", "Testworld", 0u, null);
+
+        JsonObject state = new SessionProjection(host).Capture();
+
+        Assert.Equal("out-of-world", state["state"]!.GetValue<string>());
+        Assert.Equal("choosing-character", state["stage"]!.GetValue<string>());
     }
 }

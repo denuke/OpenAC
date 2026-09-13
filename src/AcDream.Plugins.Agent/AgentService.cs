@@ -24,9 +24,7 @@ internal sealed class AgentService : IDisposable
 
     private static readonly string[] HelpLines =
     [
-        "/agent listen [port] - let AI clients on this computer connect over MCP (port 31337 unless given)",
-        "/agent stop - stop letting AI clients connect",
-        "/agent status - whether AI clients can connect, and what is recorded",
+        "/agent status - where AI clients on this computer connect over MCP, and what is recorded",
         "/agent record <path> - write every record to a file, one JSON object per line",
         "/agent record off - stop writing the file",
         "/agent do <line> - run one agent command line, as an AI client would",
@@ -86,6 +84,7 @@ internal sealed class AgentService : IDisposable
         Commands.Register(new InventoryVerbs(host, Publisher, Outcomes));
         Commands.Register(new VendorVerbs(host, Publisher, Outcomes, _clock));
         Commands.Register(new AttackVerbs(host, Publisher, Outcomes));
+        Commands.Register(new LoginVerbs(host, Publisher, Outcomes));
         Context = new AgentContext(host, Commands, Ring, Outcomes, _clock, Publisher);
         Tools = McpTools.Create(Context);
         _endpoint = new McpEndpoint(_sessions, Tools);
@@ -129,12 +128,6 @@ internal sealed class AgentService : IDisposable
                 break;
             case "status":
                 Status();
-                break;
-            case "listen":
-                Listen(rest);
-                break;
-            case "stop":
-                StopListening(announce: true);
                 break;
             case "record":
                 Record(rest);
@@ -183,7 +176,7 @@ internal sealed class AgentService : IDisposable
         if (_disposed)
             return;
         _disposed = true;
-        StopListening(announce: false);
+        StopListening();
         StopRecording(announce: false);
     }
 
@@ -198,60 +191,58 @@ internal sealed class AgentService : IDisposable
             Say(ConnectLine(_listener.Url));
     }
 
-    private void Listen(string argument)
+    /// <summary>
+    /// Lets AI clients on this computer connect, on the port saved in the
+    /// plugin's settings or 31337. When that port cannot be used, as when another
+    /// client on this computer holds it, any free port is used and named instead.
+    /// </summary>
+    internal void StartListening()
     {
-        if (_listener is not null)
-        {
-            Say($"Agent: already listening on {_listener.Url}.");
+        if (_disposed || _listener is not null)
             return;
-        }
-        int port;
-        if (argument.Length == 0)
+        int port = SavedPort() ?? DefaultPort;
+        IMcpListener? listener = TryStartListener(port, out string? refused);
+        if (listener is null)
         {
-            port = SavedPort() ?? DefaultPort;
-        }
-        else if (!int.TryParse(argument, NumberStyles.None, CultureInfo.InvariantCulture, out port)
-            || port is < 1 or > 65535)
-        {
-            Say("Usage: /agent listen [port], where the port is a number from 1 to 65535");
-            return;
+            listener = TryStartListener(0, out string? anyRefused);
+            if (listener is null)
+            {
+                Announce($"Agent: AI clients cannot connect, because no port could be opened ({anyRefused}).", warning: true);
+                return;
+            }
+            Announce($"Agent: port {port} could not be used ({refused}), so AI clients connect on another port.", warning: true);
         }
 
-        IMcpListener listener;
-        try
-        {
-            listener = _startListener(_endpoint, port);
-        }
-        catch (SocketException error)
-        {
-            Say($"Agent: could not listen on port {port}: {error.Message}");
-            return;
-        }
-
-        if (argument.Length > 0)
-            SavePort(port);
         bool wasActive = IsActive;
         _listener = listener;
         Activated(wasActive);
-        Say($"Agent: listening on {listener.Url}, reachable from this computer only.");
-        Say(ConnectLine(listener.Url));
+        Announce($"Agent: listening on {listener.Url}, reachable from this computer only.");
+        Announce(ConnectLine(listener.Url));
     }
 
-    private void StopListening(bool announce)
+    private IMcpListener? TryStartListener(int port, out string? refused)
+    {
+        try
+        {
+            refused = null;
+            return _startListener(_endpoint, port);
+        }
+        catch (SocketException error)
+        {
+            refused = error.Message;
+            return null;
+        }
+    }
+
+    private void StopListening()
     {
         if (_listener is null)
-        {
-            if (announce)
-                Say("Agent: not listening.");
             return;
-        }
         IMcpListener listener = _listener;
         _listener = null;
         listener.Dispose();
         Tools.EndAll("the agent stopped listening");
         _sessions.Clear();
-        if (announce)
-            Say("Agent: stopped listening.");
     }
 
     /// <summary>
@@ -278,20 +269,6 @@ internal sealed class AgentService : IDisposable
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or NotSupportedException)
         {
             return null;
-        }
-    }
-
-    private void SavePort(int port)
-    {
-        if (!_host.Storage.IsAvailable)
-            return;
-        try
-        {
-            _host.Storage.WriteText(PortSettingKey, port.ToString(CultureInfo.InvariantCulture));
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or NotSupportedException)
-        {
-            _host.Log.Warn($"Agent could not save the listen port: {error.Message}");
         }
     }
 
@@ -394,6 +371,16 @@ internal sealed class AgentService : IDisposable
 
     private void Say(string text) =>
         _host.Automation.Chat.PostSystemMessage(text);
+
+    /// <summary>Says a line in chat and writes it to the client's log, which can be read before any chat is shown.</summary>
+    private void Announce(string text, bool warning = false)
+    {
+        if (warning)
+            _host.Log.Warn(text);
+        else
+            _host.Log.Info(text);
+        Say(text);
+    }
 
     private static (string Subcommand, string Remainder) Split(string arguments)
     {

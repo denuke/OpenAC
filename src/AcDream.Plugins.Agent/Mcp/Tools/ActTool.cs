@@ -15,7 +15,7 @@ internal sealed class ActTool(AgentContext context) : IMcpTool
         + "list the names and ids to use. Returns a handle and a status: pending is not done, so "
         + "call outcome with the handle, or pass waitSeconds, to learn what actually happened. "
         + "A word no verb claims is said aloud as chat. This is the only tool that can make the "
-        + "character act.",
+        + "character act. At the character list, 'login <name>' enters the world, and 'logout' returns to the list.",
         new JsonObject
         {
             ["line"] = new JsonObject
