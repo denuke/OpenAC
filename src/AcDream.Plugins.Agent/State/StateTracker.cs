@@ -80,6 +80,19 @@ internal sealed class StateTracker
         }
     }
 
+    /// <summary>
+    /// Captures and publishes one state now, changed or not, carrying the
+    /// <paramref name="id"/> of the command line that asked for it.
+    /// </summary>
+    internal bool PublishNow(string kind, long id, double now)
+    {
+        Entry? entry = _entries.Find(candidate => candidate.Projection.Kind == kind);
+        if (entry is null || !TryCapture(entry, now))
+            return false;
+        Publish(entry, now, batch: null, id);
+        return true;
+    }
+
     private bool TryCapture(Entry entry, double now)
     {
         string json;
@@ -101,9 +114,17 @@ internal sealed class StateTracker
         return true;
     }
 
-    private void Publish(Entry entry, double now, JsonObject? batch)
+    private void Publish(Entry entry, double now, JsonObject? batch, long? id = null)
     {
-        JsonObject fields = JsonNode.Parse(entry.CapturedJson!)!.AsObject();
+        JsonObject captured = JsonNode.Parse(entry.CapturedJson!)!.AsObject();
+        var fields = new JsonObject();
+        if (id is { } commandId)
+            fields["id"] = commandId;
+        foreach (KeyValuePair<string, JsonNode?> field in captured.ToList())
+        {
+            captured.Remove(field.Key);
+            fields[field.Key] = field.Value;
+        }
         fields["ageSeconds"] = Math.Round(now - entry.Since, 3);
         _publisher.Publish(entry.Projection.Kind, fields, batch);
         entry.PublishedJson = entry.CapturedJson;

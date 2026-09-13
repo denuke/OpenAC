@@ -12,6 +12,9 @@ internal static class RecordKinds
     internal const string Chat = "chat";
     internal const string CommandOutcome = "command-outcome";
     internal const string GoalRefused = "goal-refused";
+    internal const string Skills = "skills";
+    internal const string Buffs = "buffs";
+    internal const string Spells = "spells";
 
     /// <summary>
     /// Kinds that describe current state. The latest record of each is kept

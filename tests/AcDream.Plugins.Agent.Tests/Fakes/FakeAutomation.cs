@@ -6,8 +6,8 @@ internal sealed class FakeAutomation : IAutomationSurface
 {
     public bool IsAvailable { get; set; } = true;
     public ICharacterInfo Character => FakeCharacter;
-    public ISpellCatalog Spells => NoOpAutomationSurface.Instance.Spells;
-    public IMagicCommands Magic => NoOpAutomationSurface.Instance.Magic;
+    public ISpellCatalog Spells => FakeSpells;
+    public IMagicCommands Magic => FakeMagic;
     public IPluginChat Chat => FakeChat;
     public INavigationAutomation Navigation => FakeNavigation;
     public ICombatAutomation Combat => FakeCombat;
@@ -18,6 +18,8 @@ internal sealed class FakeAutomation : IAutomationSurface
     internal FakeNavigation FakeNavigation { get; } = new();
     internal FakeCombat FakeCombat { get; } = new();
     internal FakeObjects FakeObjects { get; } = new();
+    internal FakeSpells FakeSpells { get; } = new();
+    internal FakeMagic FakeMagic { get; } = new();
 }
 
 internal sealed class FakeChat : IPluginChat
