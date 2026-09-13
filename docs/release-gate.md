@@ -15,7 +15,7 @@ explicit non-hermetic `Lane` trait (`InstalledDat`, `PreparedPackage`, `Live`,
 `Manual`, `Timing`, `Windows`, `Linux`, `Vulkan`, or `SystemFont`),
 `Purpose=Diagnostic`, or `Status=KnownFailure` are excluded from the hermetic
 total and run through their owned lane instead. The graph currently contains
-40 projects, including the shader compiler, the render-pack validator, and
+42 projects, including the shader compiler, the render-pack validator, and
 three render-pack SDK samples; tools and SDK samples are built but are not
 executed as tests.
 
