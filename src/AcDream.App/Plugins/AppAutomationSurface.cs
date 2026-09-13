@@ -71,6 +71,7 @@ internal sealed class AppAutomationSurface
         Array.Empty<PluginProjectileDebugSample>();
     private long _projectileDebugSamplesExpireAt;
     private CurrentGameRuntimeAdapter? _sessionCommands;
+    private AcDream.App.Navigation.NavigationWalkController? _navigationWalk;
     private IDisposable? _communicationSubscription;
     private readonly List<PluginChatMessage> _chatMessages = [];
     private ulong _pluginChatSequence;
@@ -451,6 +452,13 @@ internal sealed class AppAutomationSurface
         ArgumentNullException.ThrowIfNull(commands);
         lock (_gate)
             _sessionCommands = commands;
+    }
+
+    public void BindNavigationWalk(AcDream.App.Navigation.NavigationWalkController walk)
+    {
+        ArgumentNullException.ThrowIfNull(walk);
+        lock (_gate)
+            _navigationWalk = walk;
     }
 
     public void BindSpeciesNameResolver(Func<int, string> resolver)
@@ -1851,6 +1859,66 @@ internal sealed class AppAutomationSurface
                 : ProjectMoveReport(runtime.Movement.Snapshot.ScriptedMove);
         }
     }
+
+    /// <summary>The farthest from its object a walk may be asked to end.</summary>
+    internal const float MaximumGoToArrivalMeters = 50f;
+
+    public PluginNavigationCommandStatus GoTo(uint objectId, float arrivalMeters)
+    {
+        AcDream.App.Navigation.NavigationWalkController? walk;
+        lock (_gate)
+            walk = _navigationWalk;
+        if (walk is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        if (objectId == 0u || !(arrivalMeters > 0f) || arrivalMeters > MaximumGoToArrivalMeters)
+            return PluginNavigationCommandStatus.Rejected;
+        walk.WalkTo(objectId, arrivalMeters);
+        return PluginNavigationCommandStatus.Accepted;
+    }
+
+    public PluginNavigationCommandStatus StopGoTo()
+    {
+        AcDream.App.Navigation.NavigationWalkController? walk;
+        lock (_gate)
+            walk = _navigationWalk;
+        if (walk is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        if (!walk.IsBusy)
+            return PluginNavigationCommandStatus.Rejected;
+        walk.Stop();
+        return PluginNavigationCommandStatus.Accepted;
+    }
+
+    public PluginGoToReport GoToReport
+    {
+        get
+        {
+            AcDream.App.Navigation.NavigationWalkController? walk;
+            lock (_gate)
+                walk = _navigationWalk;
+            return walk is null || !IsAvailable ? default : ProjectGoToReport(walk.Report);
+        }
+    }
+
+    internal static PluginGoToReport ProjectGoToReport(in AcDream.App.Navigation.NavigationWalkReport report) =>
+        new(
+            report.Sequence,
+            report.State switch
+            {
+                AcDream.App.Navigation.NavigationWalkState.Planning => PluginGoToState.Planning,
+                AcDream.App.Navigation.NavigationWalkState.Walking => PluginGoToState.Walking,
+                AcDream.App.Navigation.NavigationWalkState.Arrived => PluginGoToState.Arrived,
+                AcDream.App.Navigation.NavigationWalkState.NoRoute => PluginGoToState.NoRoute,
+                AcDream.App.Navigation.NavigationWalkState.Blocked => PluginGoToState.Blocked,
+                AcDream.App.Navigation.NavigationWalkState.Stopped => PluginGoToState.Stopped,
+                AcDream.App.Navigation.NavigationWalkState.Interrupted => PluginGoToState.Interrupted,
+                AcDream.App.Navigation.NavigationWalkState.Lost => PluginGoToState.Lost,
+                _ => PluginGoToState.None,
+            },
+            report.ObjectId,
+            report.RemainingMeters,
+            report.Replans,
+            report.Reason);
 
     internal static RuntimeMoveRequest? ProjectMoveRequest(
         PluginMoveDirection direction,

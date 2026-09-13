@@ -158,6 +158,47 @@ public readonly record struct PluginMoveReport(
     };
 }
 
+/// <summary>Where a walk the client plans to an object stands.</summary>
+public enum PluginGoToState
+{
+    None = 0,
+
+    /// <summary>The client is building its navigation grid or searching it for a route.</summary>
+    Planning,
+
+    Walking,
+
+    Arrived,
+
+    /// <summary>No route joins the character to the object.</summary>
+    NoRoute,
+
+    /// <summary>The character stopped making progress, even after the client planned again.</summary>
+    Blocked,
+
+    /// <summary>A stop, or a later walk, ended it.</summary>
+    Stopped,
+
+    /// <summary>The player moved the character.</summary>
+    Interrupted,
+
+    /// <summary>The character entered portal space or left the world.</summary>
+    Lost,
+}
+
+/// <summary>
+/// The most recent walk the client planned to an object. <paramref name="Sequence"/>
+/// grows by one for every walk asked for, so a plugin can tell its own from a later
+/// one. <paramref name="Reason"/> says what the walk is doing, or why it ended.
+/// </summary>
+public readonly record struct PluginGoToReport(
+    long Sequence,
+    PluginGoToState State,
+    uint ObjectId,
+    float RemainingMeters,
+    int Replans,
+    string? Reason);
+
 public enum PluginNavigationCommandStatus
 {
     Unavailable = 0,
@@ -227,4 +268,24 @@ public interface INavigationAutomation
 
     /// <summary>The most recent client-driven move on each channel, and the most recent jump.</summary>
     PluginMoveReport MoveReport => default;
+
+    /// <summary>
+    /// Walks the character to an object along a route the client plans through
+    /// what it collides with: around walls and objects, through doorways, and up
+    /// and down ramps and stairs. The walk ends within
+    /// <paramref name="arrivalMeters"/> of the object, facing it. When the
+    /// character stops making progress the client plans again from where it
+    /// stands, a few times. A later walk, <see cref="StopGoTo"/>, the player
+    /// moving the character, or portal space ends it. The walk steers with
+    /// client-driven moves, so a plugin's own moves fight it while it lasts.
+    /// </summary>
+    PluginNavigationCommandStatus GoTo(uint objectId, float arrivalMeters) =>
+        PluginNavigationCommandStatus.Unavailable;
+
+    /// <summary>Ends the walk to an object under way, if there is one.</summary>
+    PluginNavigationCommandStatus StopGoTo() =>
+        PluginNavigationCommandStatus.Unavailable;
+
+    /// <summary>The most recent walk the client planned to an object.</summary>
+    PluginGoToReport GoToReport => default;
 }
