@@ -1,5 +1,6 @@
 using AcDream.App.Diagnostics;
 using AcDream.App.Input;
+using AcDream.App.Navigation;
 using AcDream.App.Rendering;
 using AcDream.App.Rendering.Scene;
 using AcDream.App.Rendering.Vfx;
@@ -71,7 +72,8 @@ internal sealed record FrameRootResult(
     FrameRootRuntimeBindings RuntimeBindings,
     IDisposable FrameGraphPublication,
     LiveSessionHost SessionHost,
-    CurrentGameRuntimeAdapter GameRuntime);
+    CurrentGameRuntimeAdapter GameRuntime,
+    NavigationWalkController? NavigationWalk = null);
 
 internal interface IGameWindowFrameRootPublication
 {
@@ -328,6 +330,11 @@ internal sealed class FrameRootCompositionPhase
             content.Audio is { } audio
                 ? audio.Engine.StopAllForOwner
                 : null);
+        var navigationWalk = new NavigationWalkController(
+            d.PhysicsEngine,
+            new RuntimeNavigationWalkBody(d.PlayerController, d.Runtime.Portal),
+            new RuntimeNavigationGoalSource(d.PhysicsEngine, d.Runtime, d.PlayerController),
+            d.WorldSceneDebugState.ReportNavigation);
         IWorldSceneFramePhase? worldSceneRenderer = null;
         CurrentRenderSceneOracle? currentRenderSceneOracle = null;
         RenderSceneShadowComparisonController? renderSceneShadowComparison = null;
@@ -429,12 +436,13 @@ internal sealed class FrameRootCompositionPhase
                     d.PhysicsEngine,
                     d.CellVisibility),
                 d.WorldSceneDebugState,
-                null,
+                foundation.DebugLines,
                 d.PhysicsEngine,
                 d.PlayerMode,
                 d.PlayerController,
                 d.DebugVmRenderFacts,
-                debugVmConsumerActive: false);
+                debugVmConsumerActive: false,
+                navMesh: new NavMeshDebugOverlay(navigationWalk));
             var worldScenePasses = new WorldScenePassExecutor(
                 worldPassSurface,
                 worldFrameGlState,
@@ -776,7 +784,11 @@ internal sealed class FrameRootCompositionPhase
             d.UpdateClock,
             new PhysicsScriptClockPublisher(content.ScriptRunner),
             session.StreamingFrame,
-            session.GameplayInput,
+            new NavigationWalkFramePhase(
+                navigationWalk,
+                d.WorldSceneDebugState,
+                d.Selection,
+                session.GameplayInput),
             liveFrameCoordinator,
             new LiveEntityLivenessFramePhase(
                 session.Liveness,
@@ -808,7 +820,8 @@ internal sealed class FrameRootCompositionPhase
             bindings,
             frameGraphPublication,
             session.SessionHost,
-            session.GameRuntime);
+            session.GameRuntime,
+            navigationWalk);
         _publication.PublishFrameRoots(result);
         graphLease.Transfer();
         bindingsLease.Transfer();
