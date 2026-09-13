@@ -1687,6 +1687,110 @@ internal sealed class AppAutomationSurface
             : PluginNavigationCommandStatus.Rejected;
     }
 
+    public PluginNavigationCommandStatus Move(
+        PluginMoveDirection direction,
+        PluginMovePace pace,
+        float amount,
+        PluginMoveUnit unit = PluginMoveUnit.MetersOrDegrees)
+    {
+        CurrentGameRuntimeAdapter? commands;
+        lock (_gate)
+            commands = _sessionCommands;
+        if (commands is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        if (ProjectMoveRequest(direction, pace, amount, unit) is not { } request)
+            return PluginNavigationCommandStatus.Rejected;
+        return commands.MovementCommands.BeginMove(commands.Generation, request).Status
+            == RuntimeCommandStatus.Accepted
+            ? PluginNavigationCommandStatus.Accepted
+            : PluginNavigationCommandStatus.Rejected;
+    }
+
+    public PluginNavigationCommandStatus StopMoving()
+    {
+        CurrentGameRuntimeAdapter? commands;
+        lock (_gate)
+            commands = _sessionCommands;
+        if (commands is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        return commands.MovementCommands.StopMove(commands.Generation).Status
+            == RuntimeCommandStatus.Accepted
+            ? PluginNavigationCommandStatus.Accepted
+            : PluginNavigationCommandStatus.Rejected;
+    }
+
+    public PluginNavigationCommandStatus StopMoving(PluginMoveChannel channel)
+    {
+        CurrentGameRuntimeAdapter? commands;
+        lock (_gate)
+            commands = _sessionCommands;
+        if (commands is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        return commands.MovementCommands.StopMove(commands.Generation, (RuntimeMoveChannel)(int)channel).Status
+            == RuntimeCommandStatus.Accepted
+            ? PluginNavigationCommandStatus.Accepted
+            : PluginNavigationCommandStatus.Rejected;
+    }
+
+    public PluginNavigationCommandStatus Jump(float power)
+    {
+        CurrentGameRuntimeAdapter? commands;
+        lock (_gate)
+            commands = _sessionCommands;
+        if (commands is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        return commands.MovementCommands.Jump(commands.Generation, power).Status
+            == RuntimeCommandStatus.Accepted
+            ? PluginNavigationCommandStatus.Accepted
+            : PluginNavigationCommandStatus.Rejected;
+    }
+
+    public PluginMoveReport MoveReport
+    {
+        get
+        {
+            GameRuntime? runtime;
+            lock (_gate)
+                runtime = _runtime;
+            return runtime is null || !IsAvailable
+                ? default
+                : ProjectMoveReport(runtime.Movement.Snapshot.ScriptedMove);
+        }
+    }
+
+    internal static RuntimeMoveRequest? ProjectMoveRequest(
+        PluginMoveDirection direction,
+        PluginMovePace pace,
+        float amount,
+        PluginMoveUnit unit)
+    {
+        var request = new RuntimeMoveRequest(
+            (RuntimeMoveDirection)(int)direction,
+            (RuntimeMovePace)(int)pace,
+            amount,
+            (RuntimeMoveUnit)(int)unit);
+        return RuntimeScriptedMovement.IsValid(request) ? request : null;
+    }
+
+    internal static PluginMoveReport ProjectMoveReport(in RuntimeScriptedMoveSnapshot snapshot) =>
+        new(
+            ProjectMoveProgress(snapshot.Travel),
+            ProjectMoveProgress(snapshot.Strafe),
+            ProjectMoveProgress(snapshot.Turn),
+            snapshot.JumpSequence,
+            snapshot.JumpCharging);
+
+    private static PluginMoveProgress ProjectMoveProgress(in RuntimeMoveChannelSnapshot channel) =>
+        new(
+            channel.Sequence,
+            (PluginMoveState)(int)channel.State,
+            (PluginMoveDirection)(int)channel.Request.Direction,
+            (PluginMovePace)(int)channel.Request.Pace,
+            channel.Request.Amount,
+            (PluginMoveUnit)(int)channel.Request.Unit,
+            channel.Covered,
+            channel.ElapsedSeconds);
+
     internal static PluginNavigationPosition ProjectNavigationPosition(
         Position position)
     {
