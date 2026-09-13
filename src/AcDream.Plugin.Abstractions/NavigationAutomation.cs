@@ -189,7 +189,10 @@ public enum PluginGoToState
 /// <summary>
 /// The most recent walk the client planned to an object. <paramref name="Sequence"/>
 /// grows by one for every walk asked for, so a plugin can tell its own from a later
-/// one. <paramref name="Reason"/> says what the walk is doing, or why it ended.
+/// one. <paramref name="RemainingMeters"/> is the length of route left while the walk
+/// goes on; once it has ended, the straight-line distance from the character to the
+/// object, or NaN when the client cannot tell. <paramref name="Reason"/> says what
+/// the walk is doing, or why it ended.
 /// </summary>
 public readonly record struct PluginGoToReport(
     long Sequence,
@@ -197,7 +200,14 @@ public readonly record struct PluginGoToReport(
     uint ObjectId,
     float RemainingMeters,
     int Replans,
-    string? Reason);
+    string? Reason)
+{
+    /// <summary>
+    /// The server object, such as a closed door, beside the spot where the walk
+    /// last stopped making progress, or zero.
+    /// </summary>
+    public uint BlockedByObjectId { get; init; }
+}
 
 public enum PluginNavigationCommandStatus
 {
@@ -273,9 +283,10 @@ public interface INavigationAutomation
     /// Walks the character to an object along a route the client plans through
     /// what it collides with: around walls and objects, through doorways, and up
     /// and down ramps and stairs. The walk ends within
-    /// <paramref name="arrivalMeters"/> of the object, facing it. When the
-    /// character stops making progress the client plans again from where it
-    /// stands, a few times. A later walk, <see cref="StopGoTo"/>, the player
+    /// <paramref name="arrivalMeters"/> of the object, at a spot with no wall
+    /// between the character and the object, facing it. When the character
+    /// stops making progress the client plans again from where it stands,
+    /// keeping out of the spot where it stuck, a few times. A later walk, <see cref="StopGoTo"/>, the player
     /// moving the character, or portal space ends it. The walk steers with
     /// client-driven moves, so a plugin's own moves fight it while it lasts.
     /// </summary>
