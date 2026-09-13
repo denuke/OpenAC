@@ -85,6 +85,8 @@ internal sealed class AppAutomationSurface
         Array.Empty<PluginSpellInfo>();
     private IReadOnlyList<PluginSpellInfo> _knownCombatSpells =
         Array.Empty<PluginSpellInfo>();
+    private IReadOnlyList<PluginSpellInfo> _knownSpells =
+        Array.Empty<PluginSpellInfo>();
     private IReadOnlyList<PluginActiveEnchantment> _enchantments =
         Array.Empty<PluginActiveEnchantment>();
 
@@ -459,6 +461,7 @@ internal sealed class AppAutomationSurface
         _knownSelfBuffs = Array.Empty<PluginSpellInfo>();
         _knownAttackSpells = Array.Empty<PluginSpellInfo>();
         _knownCombatSpells = Array.Empty<PluginSpellInfo>();
+        _knownSpells = Array.Empty<PluginSpellInfo>();
         _enchantments = Array.Empty<PluginActiveEnchantment>();
     }
 
@@ -605,16 +608,19 @@ internal sealed class AppAutomationSurface
             _knownSelfBuffs = Array.Empty<PluginSpellInfo>();
             _knownAttackSpells = Array.Empty<PluginSpellInfo>();
             _knownCombatSpells = Array.Empty<PluginSpellInfo>();
+            _knownSpells = Array.Empty<PluginSpellInfo>();
             return;
         }
 
         var buffs = new List<PluginSpellInfo>();
         var attacks = new List<PluginSpellInfo>();
         var combat = new List<PluginSpellInfo>();
+        var all = new List<PluginSpellInfo>();
         foreach (uint spellId in spellbook.LearnedSpells)
         {
             if (!spellbook.TryGetMetadata(spellId, out SpellMetadata meta))
                 continue;
+            all.Add(Project(meta));
             if (meta.IsOffensive || meta.IsDebuff)
                 combat.Add(Project(meta));
             if (!meta.IsBeneficial || meta.IsDebuff || meta.IsUntargeted)
@@ -657,6 +663,11 @@ internal sealed class AppAutomationSurface
                 : string.CompareOrdinal(a.Name, b.Name);
         });
         _knownCombatSpells = combat;
+        all.Sort(static (a, b) => string.Compare(
+            a.Name,
+            b.Name,
+            StringComparison.OrdinalIgnoreCase));
+        _knownSpells = all;
     }
 
     private void RebuildEnchantments()
@@ -988,6 +999,7 @@ internal sealed class AppAutomationSurface
     public IReadOnlyList<PluginSpellInfo> KnownSelfBuffs => _knownSelfBuffs;
     public IReadOnlyList<PluginSpellInfo> KnownAttackSpells => _knownAttackSpells;
     public IReadOnlyList<PluginSpellInfo> KnownCombatSpells => _knownCombatSpells;
+    public IReadOnlyList<PluginSpellInfo> KnownSpells => _knownSpells;
 
     public bool IsKnown(uint spellId)
     {
@@ -3741,6 +3753,7 @@ internal sealed class AppAutomationSurface
         _knownSelfBuffs = Array.Empty<PluginSpellInfo>();
         _knownAttackSpells = Array.Empty<PluginSpellInfo>();
         _knownCombatSpells = Array.Empty<PluginSpellInfo>();
+        _knownSpells = Array.Empty<PluginSpellInfo>();
         _enchantments = Array.Empty<PluginActiveEnchantment>();
         _peers.Dispose();
     }

@@ -146,22 +146,35 @@ internal sealed class CharacterReadVerbs : IVerbFamily
     }
 }
 
-/// <summary>The spells the character knows, as far as the host lists them.</summary>
+/// <summary>
+/// The spells the character knows: the host's complete list when it has one,
+/// otherwise every spell in its narrower lists.
+/// </summary>
 internal static class SpellLists
 {
     internal static IReadOnlyList<PluginSpellInfo> Known(ISpellCatalog catalog)
     {
         ArgumentNullException.ThrowIfNull(catalog);
+        IReadOnlyList<PluginSpellInfo> complete = catalog.KnownSpells;
         var byId = new Dictionary<uint, PluginSpellInfo>();
+        if (complete.Count > 0)
+        {
+            foreach (PluginSpellInfo spell in complete)
+                byId.TryAdd(spell.SpellId, spell);
+            return Ordered(byId.Values);
+        }
         foreach (PluginSpellInfo spell in catalog.KnownSelfBuffs
             .Concat(catalog.KnownAttackSpells)
             .Concat(catalog.KnownCombatSpells))
         {
             byId.TryAdd(spell.SpellId, spell);
         }
-        return byId.Values
+        return Ordered(byId.Values);
+    }
+
+    private static PluginSpellInfo[] Ordered(IEnumerable<PluginSpellInfo> spells) =>
+        spells
             .OrderBy(spell => spell.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(spell => spell.SpellId)
             .ToArray();
-    }
 }

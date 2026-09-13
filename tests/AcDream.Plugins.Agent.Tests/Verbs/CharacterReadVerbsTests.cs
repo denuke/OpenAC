@@ -97,6 +97,27 @@ public sealed class CharacterReadVerbsTests
     }
 
     [Fact]
+    public void SpellsPreferTheHostsCompleteList()
+    {
+        var host = new FakePluginHost();
+        host.FakeAutomation.FakeSpells.KnownSelfBuffs = [FakeSpells.Spell(2u, "Strength Self VI")];
+        host.FakeAutomation.FakeSpells.KnownSpells =
+        [
+            FakeSpells.Spell(2u, "Strength Self VI"),
+            FakeSpells.Spell(157u, "Lifestone Recall", selfTargeted: false, untargeted: true),
+        ];
+        using var service = new AgentService(host, _ => new RecordingSink());
+
+        service.Commands.Deliver("spells", "mcp");
+
+        JsonElement spells = Latest(service, RecordKinds.Spells)
+            .GetProperty("spells").GetProperty("value");
+        Assert.Equal(
+            ["Lifestone Recall", "Strength Self VI"],
+            spells.EnumerateArray().Select(spell => spell.GetProperty("name").GetString()));
+    }
+
+    [Fact]
     public void OutOfTheWorldAListIsUnknownRatherThanEmpty()
     {
         var host = new FakePluginHost();

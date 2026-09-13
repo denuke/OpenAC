@@ -7,11 +7,12 @@ internal sealed class FakeSpells : ISpellCatalog
     public IReadOnlyList<PluginSpellInfo> KnownSelfBuffs { get; set; } = [];
     public IReadOnlyList<PluginSpellInfo> KnownAttackSpells { get; set; } = [];
     public IReadOnlyList<PluginSpellInfo> KnownCombatSpells { get; set; } = [];
+    public IReadOnlyList<PluginSpellInfo> KnownSpells { get; set; } = [];
 
     internal Dictionary<uint, PluginSpellInfo> Catalog { get; } = [];
 
     public bool IsKnown(uint spellId) =>
-        KnownSelfBuffs.Concat(KnownAttackSpells).Concat(KnownCombatSpells)
+        KnownSelfBuffs.Concat(KnownAttackSpells).Concat(KnownCombatSpells).Concat(KnownSpells)
             .Any(spell => spell.SpellId == spellId);
 
     public bool TryGet(uint spellId, out PluginSpellInfo info) =>
@@ -21,8 +22,13 @@ internal sealed class FakeSpells : ISpellCatalog
         uint id,
         string name,
         bool selfTargeted = true,
-        bool beneficial = true) =>
-        new(id, name, 1u, 1, 50, 10, 1800f, 4u, string.Empty, selfTargeted, beneficial);
+        bool beneficial = true,
+        bool untargeted = false) =>
+        new(id, name, 1u, 1, 50, 10, 1800f, 4u, string.Empty, selfTargeted, beneficial)
+        {
+            IsUntargeted = untargeted,
+            IsOffensive = !beneficial,
+        };
 }
 
 internal sealed class FakeMagic : IMagicCommands

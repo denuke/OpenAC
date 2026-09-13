@@ -251,6 +251,54 @@ public sealed class AppAutomationSurfaceTests
         Assert.Empty(surface.Enchantments.Capture(200u));
     }
 
+    [Fact]
+    public void KnownSpellsIncludesSpellsTheNarrowerListsLeaveOut()
+    {
+        var operations = new SpellOperations();
+        using var runtime = GameRuntimeTestFactory.Create(spellCast: operations);
+        runtime.CharacterOwner.InstallSpellMetadata(SpellTable.Create([RecallSpell()]));
+        runtime.CharacterOwner.Spellbook.OnSpellLearned(157u);
+        using var surface = new AppAutomationSurface();
+        surface.Bind(runtime, runtime.CharacterOwner, runtime.ActionOwner.SpellCast);
+
+        PluginSpellInfo recall = Assert.Single(surface.Spells.KnownSpells);
+        Assert.Equal(157u, recall.SpellId);
+        Assert.Equal("Lifestone Recall", recall.Name);
+        Assert.DoesNotContain(
+            surface.Spells.KnownSelfBuffs
+                .Concat(surface.Spells.KnownAttackSpells)
+                .Concat(surface.Spells.KnownCombatSpells),
+            spell => spell.SpellId == 157u);
+
+        surface.Unbind();
+        Assert.Empty(surface.Spells.KnownSpells);
+    }
+
+    private static SpellMetadata RecallSpell() => new(
+        157u,
+        "Lifestone Recall",
+        "Item Enchantment",
+        0u,
+        0u,
+        string.Empty,
+        0f,
+        50,
+        false,
+        false,
+        string.Empty,
+        0,
+        100,
+        0u,
+        1,
+        false,
+        false,
+        true,
+        0f,
+        0u,
+        0u,
+        0u,
+        0);
+
     private static SpellMetadata DurationSpell() => new(
         42u,
         "Fire Vulnerability Other VII",

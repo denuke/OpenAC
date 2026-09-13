@@ -176,6 +176,13 @@ public interface ISpellCatalog
     IReadOnlyList<PluginSpellInfo> KnownCombatSpells =>
         Array.Empty<PluginSpellInfo>();
 
+    /// <summary>
+    /// Every spell the character has learned, including ones the lists above
+    /// leave out, such as untargeted beneficial spells.
+    /// </summary>
+    IReadOnlyList<PluginSpellInfo> KnownSpells =>
+        Array.Empty<PluginSpellInfo>();
+
     bool IsKnown(uint spellId) => false;
 
     bool TryGet(uint spellId, out PluginSpellInfo info);
