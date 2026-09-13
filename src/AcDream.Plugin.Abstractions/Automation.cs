@@ -189,13 +189,31 @@ public interface ISpellCatalog
     double GetCooldownRemaining(uint cooldownId) => 0d;
 }
 
+/// <summary>What kind of line a chat message is, numbered like the client's chat log.</summary>
+public enum PluginChatKind
+{
+    LocalSpeech = 0,
+    RangedSpeech = 1,
+    Channel = 2,
+    Tell = 3,
+    System = 4,
+    Popup = 5,
+    Emote = 6,
+    SoulEmote = 7,
+    Combat = 8,
+}
+
 public readonly record struct PluginChatMessage(
     ulong Sequence,
     uint SenderObjectId,
     int Kind,
     string Sender,
     string Text,
-    string ChannelName);
+    string ChannelName)
+{
+    /// <summary><see cref="Kind"/> as a named value.</summary>
+    public PluginChatKind ChatKind => (PluginChatKind)Kind;
+}
 
 public interface IPluginChat
 {
