@@ -18,29 +18,30 @@ public sealed class DebugLineRenderer : IDisposable
 
     private readonly ICurrentGpuFrameSource _frameSource;
     private readonly IGpuPipeline _pipeline;
+    private readonly IWorldPassScope? _worldPass;
+    private readonly IGpuPipeline? _worldPipeline;
 
     private readonly List<float> _buffer = new(4096);
     private int _vertexCount;
 
-    internal DebugLineRenderer(IGpuDevice device, ICurrentGpuFrameSource frameSource, string shaderDir)
+    /// <summary>
+    /// Lines draw in a pass of their own, or, given <paramref name="worldPass"/>,
+    /// into the world pass while it is open, since a frame holds one pass at a time.
+    /// </summary>
+    internal DebugLineRenderer(
+        IGpuDevice device,
+        ICurrentGpuFrameSource frameSource,
+        string shaderDir,
+        IWorldPassScope? worldPass = null)
     {
         ArgumentNullException.ThrowIfNull(device);
         _frameSource = frameSource ?? throw new ArgumentNullException(nameof(frameSource));
         ArgumentException.ThrowIfNullOrWhiteSpace(shaderDir);
 
-        _pipeline = device.CreatePipeline(new GpuPipelineDescription
-        {
-            Name = "debug-line",
-            Shaders = new GpuShaderSet("debug_line"),
-            VertexLayout = VertexLayout,
-            Topology = GpuPrimitiveTopology.LineList,
-            Blend = GpuBlendMode.None,
-            Depth = GpuDepthState.Disabled,
-            Cull = GpuCullMode.None,
-            AlphaToCoverage = false,
-            ColorWrite = true,
-            SampleCount = 1,
-        });
+        _pipeline = device.CreatePipeline(PipelineFor("debug-line", sampleCount: 1));
+        _worldPass = worldPass;
+        if (worldPass is not null)
+            _worldPipeline = device.CreatePipeline(PipelineFor("debug-line-world", worldPass.SampleCount));
     }
 
     public void Begin()
@@ -115,7 +116,7 @@ public sealed class DebugLineRenderer : IDisposable
         AddLine(c[2], c[6], color); AddLine(c[3], c[7], color);
     }
 
-    /// <summary>Upload + draw all accumulated lines.</summary>
+    /// <summary>Upload and draw all accumulated lines, into the world pass when one is open.</summary>
     public void Flush(Matrix4x4 view, Matrix4x4 projection)
     {
         if (_vertexCount == 0) return;
@@ -124,6 +125,12 @@ public sealed class DebugLineRenderer : IDisposable
             ?? throw new InvalidOperationException(
                 "DebugLineRenderer.Flush requires an open IGpuFrame (see GpuDeviceFrameLifetime) — " +
                 "the host must drive IGpuDevice.BeginFrame() before rendering debug lines.");
+
+        if (_worldPass?.CurrentEncoder is { } world)
+        {
+            Draw(frame, world, _worldPipeline!, view, projection);
+            return;
+        }
 
         using IGpuPassEncoder encoder = frame.BeginPass(new GpuPassDescription
         {
@@ -136,7 +143,23 @@ public sealed class DebugLineRenderer : IDisposable
             Depth = null,
             SampleCount = 1,
         });
-        encoder.BindPipeline(_pipeline);
+        Draw(frame, encoder, _pipeline, view, projection);
+    }
+
+    public void Dispose()
+    {
+        _pipeline.Dispose();
+        _worldPipeline?.Dispose();
+    }
+
+    private void Draw(
+        IGpuFrame frame,
+        IGpuPassEncoder encoder,
+        IGpuPipeline pipeline,
+        Matrix4x4 view,
+        Matrix4x4 projection)
+    {
+        encoder.BindPipeline(pipeline);
 
         GpuPushConstants constants = GpuPushConstants.Default;
         constants.ViewProjection = view * projection;
@@ -149,8 +172,17 @@ public sealed class DebugLineRenderer : IDisposable
         encoder.Draw((uint)_vertexCount, 1, 0, 0);
     }
 
-    public void Dispose()
+    private static GpuPipelineDescription PipelineFor(string name, int sampleCount) => new()
     {
-        _pipeline.Dispose();
-    }
+        Name = name,
+        Shaders = new GpuShaderSet("debug_line"),
+        VertexLayout = VertexLayout,
+        Topology = GpuPrimitiveTopology.LineList,
+        Blend = GpuBlendMode.None,
+        Depth = GpuDepthState.Disabled,
+        Cull = GpuCullMode.None,
+        AlphaToCoverage = false,
+        ColorWrite = true,
+        SampleCount = sampleCount,
+    };
 }
