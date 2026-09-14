@@ -167,7 +167,12 @@ seconds to plan the first time. Each route is planned three ways at once, from
 the shortest to one keeping well clear of walls, and the tidiest is walked, its
 corners taken wide where there is room so the character does not brush them. A
 route keeps out of objects the server placed, such as ore deposits, whenever
-another way arrives. A door the client has not appraised is appraised before a
+another way arrives. A route passes creatures and players around them where
+there is room, and through them where going around would bring the character
+nearer walls than going through. A walk plans a way around one that steps onto
+its route without stopping, and a walk stopped by one waits for it to move
+aside, up to twice, before planning around it; it never keeps out of the spot a
+creature stood in for good. A door the client has not appraised is appraised before a
 walk uses it; a locked door, or one that will not open, is walked around, and
 with no other way the walk ends `blocked` naming it. Where no walk reaches, a
 route leaps: it hops off ledges of up to 12 m, the deepest fall measured to do

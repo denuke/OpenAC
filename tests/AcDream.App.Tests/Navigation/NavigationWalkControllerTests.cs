@@ -14,6 +14,9 @@ public sealed class NavigationWalkControllerTests
     private const uint Other = 0x50000002u;
     private const uint Door = 0x7A000001u;
 
+    /// <summary>How near a creature's middle the simulated body's middle can come, for a creature 0.8 m across its footprint's radius.</summary>
+    private static readonly float Reach = 0.8f + NavBody.Player(0.6f, 1.5f).Radius;
+
     [Fact]
     public void AWalkIsPlannedWalkedToItsGoalAndEndsFacingIt()
     {
@@ -282,6 +285,112 @@ public sealed class NavigationWalkControllerTests
         Assert.Equal(Other, report.BlockedByObjectId);
         Assert.Contains("Ore Deposit", report.Reason);
         Assert.Contains("stands in the way, and no other way around it was found", report.Reason);
+    }
+
+    [Fact]
+    public void AWalkPlansAroundACreatureInItsWayAndKeepsClearOfIt()
+    {
+        var creature = new Vector2(40f, 70f);
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f)) { Obstacle = (creature, Reach) };
+        var goals = new Goals
+        {
+            [Target] = new Vector3(40f, 100f, 0f),
+            CrowdNow = () => [new NavAvoidance(new Vector3(creature, 0f), 0.8f)],
+        };
+        var walk = new NavigationWalkController(FlatWorld(), body, goals);
+        float nearest = float.PositiveInfinity;
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntil(walk, body, report =>
+        {
+            nearest = MathF.Min(nearest, Vector2.Distance(body.Flat, creature));
+            return report.State is not (NavigationWalkState.Planning or NavigationWalkState.Walking or NavigationWalkState.Waiting);
+        });
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.Equal(0, report.Replans);
+        Assert.True(nearest >= Reach - 0.05f, $"the walk came within {nearest:0.00} m of the creature");
+    }
+
+    [Fact]
+    public void AWalkStepsAroundACreatureThatWalksOntoItsRouteWithoutStopping()
+    {
+        var creature = new Vector2(40f, 80f);
+        bool there = false;
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f)) { Obstacle = (creature, Reach), ObstacleActive = () => there };
+        var goals = new Goals
+        {
+            [Target] = new Vector3(40f, 120f, 0f),
+            CrowdNow = () => there ? [new NavAvoidance(new Vector3(creature, 0f), 0.8f)] : [],
+        };
+        var walk = new NavigationWalkController(FlatWorld(), body, goals);
+        float nearest = float.PositiveInfinity;
+        int longestStill = 0;
+        bool planning = false;
+
+        walk.WalkTo(Target);
+        RunUntil(walk, body, report => report.State == NavigationWalkState.Walking && body.Position.Y > 60f);
+        there = true;
+        NavigationWalkReport report = RunUntil(walk, body, report =>
+        {
+            nearest = MathF.Min(nearest, Vector2.Distance(body.Flat, creature));
+            longestStill = Math.Max(longestStill, body.StillFrames);
+            planning |= report.State == NavigationWalkState.Planning;
+            return report.State is not (NavigationWalkState.Planning or NavigationWalkState.Walking or NavigationWalkState.Waiting);
+        });
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.Equal(0, report.Replans);
+        Assert.False(planning, "the walk stopped to plan again");
+        Assert.True(nearest >= Reach - 0.05f, $"the walk came within {nearest:0.00} m of the creature");
+        Assert.True(longestStill <= 10, $"the walk stood still for {longestStill} frames");
+    }
+
+    [Fact]
+    public void AWalkStoppedByACreatureWaitsForItToMoveAsideAndGoesOn()
+    {
+        bool movedAside = false;
+        var body = new SimulatedBody(new Vector3(5f, 5f, -30f))
+        {
+            Obstacle = (new Vector2(5f, 10f), Reach),
+            ObstacleActive = () => !movedAside,
+        };
+        var goals = new Goals
+        {
+            [Target] = new Vector3(5f, 15f, -30f),
+            Blocker = new NavigationBlocker(Other, "Drudge Skulker", IsClosedDoor: false, new Vector3(5f, 10f, -30f), 0.8f, Moves: true),
+            CrowdNow = () => movedAside ? [] : [new NavAvoidance(new Vector3(5f, 10f, -30f), 0.8f)],
+        };
+        var walk = new NavigationWalkController(RoomWithDoorways(5f), body, goals);
+
+        walk.WalkTo(Target);
+        NavigationWalkReport waiting = RunUntil(walk, body, report => report.Reason.Contains("waiting for it to move"));
+        movedAside = true;
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Contains("Drudge Skulker", waiting.Reason);
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.Equal(0, report.Replans);
+    }
+
+    [Fact]
+    public void AWalkThatACreatureNeverLetsByEndsBlockedNamingIt()
+    {
+        var body = new SimulatedBody(new Vector3(5f, 8f, -30f)) { Stuck = true };
+        var goals = new Goals
+        {
+            [Target] = new Vector3(5f, 15f, -30f),
+            Blocker = new NavigationBlocker(Other, "Drudge Skulker", IsClosedDoor: false, new Vector3(5f, 10f, -30f), 0.8f, Moves: true),
+            CrowdNow = () => [new NavAvoidance(new Vector3(5f, 10f, -30f), 0.8f)],
+        };
+        var walk = new NavigationWalkController(RoomWithDoorways(5f), body, goals);
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Blocked, report.State);
+        Assert.Equal(Other, report.BlockedByObjectId);
+        Assert.Contains("Drudge Skulker", report.Reason);
     }
 
     [Fact]
@@ -753,7 +862,7 @@ public sealed class NavigationWalkControllerTests
             NavigationWalkReport report = walk.Report;
             if (done(report))
                 return report;
-            if (report.State == NavigationWalkState.Planning)
+            if (report.State == NavigationWalkState.Planning || walk.IsSearching)
             {
                 Thread.Sleep(1);
                 continue;
@@ -783,6 +892,11 @@ public sealed class NavigationWalkControllerTests
         public bool TryLocate(uint objectId, out Vector3 position) => TryGetValue(objectId, out position);
 
         public IReadOnlyList<NavAvoidance> FindObstacles(Vector3 around, float radius, uint goalObjectId) => Obstacles;
+
+        /// <summary>The creatures and players standing around, as a walk asks for them now.</summary>
+        public Func<IReadOnlyList<NavAvoidance>>? CrowdNow { get; init; }
+
+        public IReadOnlyList<NavAvoidance> FindCrowd(Vector3 around, float radius, uint goalObjectId) => CrowdNow?.Invoke() ?? [];
 
         public bool TryFindBlocker(Vector3 position, float radius, out NavigationBlocker blocker)
         {

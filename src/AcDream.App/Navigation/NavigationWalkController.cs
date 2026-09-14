@@ -73,13 +73,18 @@ internal readonly record struct NavigationWalkBodySample(
     NavLeapAbility? Leaps = null,
     bool Airborne = false);
 
-/// <summary>A server object standing where a walk stopped making progress, and the point it stands on and radius it fills.</summary>
+/// <summary>
+/// A server object standing where a walk stopped making progress, the point it
+/// stands on and radius it fills, and whether it is a creature or player, which
+/// moves and moves aside when bumped.
+/// </summary>
 internal readonly record struct NavigationBlocker(
     uint ObjectId,
     string Name,
     bool IsClosedDoor,
     Vector3 Position = default,
-    float Radius = 0f);
+    float Radius = 0f,
+    bool Moves = false);
 
 /// <summary>A door a walk can open, and the point it stands on and radius it fills, when known.</summary>
 internal readonly record struct NavigationDoor(uint ObjectId, string Name, Vector3 Position = default, float Radius = 0f);
@@ -144,6 +149,15 @@ internal interface INavigationGoalSource
     /// creatures, players and the object <paramref name="goalObjectId"/> are left out.
     /// </summary>
     IReadOnlyList<NavAvoidance> FindObstacles(Vector3 around, float radius, uint goalObjectId) => [];
+
+    /// <summary>
+    /// The creatures and players within <paramref name="radius"/> of
+    /// <paramref name="around"/>, as the points they stand on and the radii they fill.
+    /// They move, and move aside when bumped, so routes pass them where they stand now
+    /// rather than keep out of those spots for good. The object
+    /// <paramref name="goalObjectId"/> is left out.
+    /// </summary>
+    IReadOnlyList<NavAvoidance> FindCrowd(Vector3 around, float radius, uint goalObjectId) => [];
 }
 
 /// <summary>
@@ -163,7 +177,11 @@ internal interface INavigationGoalSource
 /// that stops making progress beside an object keeps out of all of it after, and
 /// with no other way ends blocked naming it. A walk waits where the character
 /// stands while something else needs the character, such as a plugin fighting a
-/// monster, and plans again from there once nothing has for a moment.
+/// monster, and plans again from there once nothing has for a moment. Routes pass
+/// creatures and players around them where there is room, and through them where
+/// going around would bring the character nearer walls. A walk looks ahead for one
+/// that steps onto its route and plans a way around it without stopping, and a walk
+/// stopped by one waits for it to move aside before planning around it.
 /// </summary>
 internal sealed class NavigationWalkController
 {
@@ -258,6 +276,31 @@ internal sealed class NavigationWalkController
     /// </summary>
     internal const double PauseSettleSeconds = 1.5d;
 
+    /// <summary>
+    /// Routes pass the creatures and players within <see cref="CrowdReach"/> of the
+    /// character where they stand when planned. While walking, the next
+    /// <see cref="CrowdLookAheadMeters"/> of the route are looked along every
+    /// <see cref="CrowdCheckTicks"/> frames for one that has stepped onto it since, and a
+    /// way around it is planned while the walk goes on, at most once every
+    /// <see cref="DetourIntervalSeconds"/>. A creature counts as one the route was
+    /// planned with while it stands within <see cref="CrowdMovedMeters"/> of where it stood.
+    /// </summary>
+    internal const float CrowdReach = 30f;
+    internal const float CrowdLookAheadMeters = 6f;
+    internal const int CrowdCheckTicks = 15;
+    internal const float CrowdMovedMeters = 0.75f;
+    internal const double DetourIntervalSeconds = 1d;
+
+    /// <summary>
+    /// A walk stopped by a creature or player waits this long for it to move aside,
+    /// at most this many times, before planning a way around it, and may wait again
+    /// once it has walked on this far. A creature's spot is never kept out of for the
+    /// rest of a walk, since it moves.
+    /// </summary>
+    internal const double ShuffleWaitSeconds = 1.5d;
+    internal const int MaximumShuffles = 2;
+    internal const float ShuffleProgressMeters = 3f;
+
     private readonly PhysicsEngine _physics;
     private readonly INavigationWalkBody _body;
     private readonly INavigationGoalSource _goals;
@@ -343,6 +386,9 @@ internal sealed class NavigationWalkController
 
     /// <summary>Whether the route being walked is one stage of a walk to a goal beyond it.</summary>
     public bool IsStaged => _active is { Staged: true };
+
+    /// <summary>Whether a grid is being built or a route searched for, off the update thread.</summary>
+    internal bool IsSearching => _routing is not null || _building is not null;
 
     /// <summary>Whether a request is waiting, being planned or being walked.</summary>
     public bool IsBusy
@@ -534,6 +580,8 @@ internal sealed class NavigationWalkController
             WaitForDoor(active, wait, sample);
             return;
         }
+        if (active.ShuffleUntil > _seconds)
+            return;
         if (_driver is { } driver)
         {
             Drive(active, driver, sample);
@@ -594,19 +642,115 @@ internal sealed class NavigationWalkController
             staged = true;
         }
 
-        NavGrid grid = usable;
+        SearchRoute(active, usable, sample, staged, detour: false);
+    }
+
+    /// <summary>
+    /// Starts searching a grid for a route from where the character stands to the
+    /// goal, or toward it for one stage, passing the creatures and players near the
+    /// character where they stand now. A detour is searched while the walk goes on.
+    /// </summary>
+    private void SearchRoute(Request active, NavGrid grid, in NavigationWalkBodySample sample, bool staged, bool detour)
+    {
         Vector3 from = sample.Position;
         Vector3 to = active.Goal;
         float arrival = PlanningRadius(active.ArrivalMeters);
-        NavAvoidance[] avoid = [.. active.Avoid];
+        NavAvoidance[] avoid = [.. active.Avoid, .. active.PassingAvoid];
+        active.PassingAvoid.Clear();
         NavAvoidance[] obstacles = Obstacles(grid, sample.Body, active.ObjectId);
+        NavAvoidance[] crowd = Crowd(sample, active.ObjectId);
         active.PlannedObstacles = obstacles;
+        active.PlannedCrowd = crowd;
+        active.Detouring = detour;
         NavLeapAbility? leaps = sample.Leaps;
         active.Staged = staged;
         _routingFor = active;
         _routing = staged
-            ? Task.Run(() => AroundObstacles(to, avoid, obstacles, spots => NavRouter.FindToward(grid, from, to, RegionMargin, spots, leaps)))
-            : Task.Run(() => AroundObstacles(to, avoid, obstacles, spots => NavRouter.Find(grid, from, to, arrival, spots, leaps)));
+            ? Task.Run(() => AroundObstacles(to, avoid, obstacles, spots => NavRouter.FindToward(grid, from, to, RegionMargin, spots, leaps, crowd)))
+            : Task.Run(() => AroundObstacles(to, avoid, obstacles, spots => NavRouter.Find(grid, from, to, arrival, spots, leaps, crowd)));
+    }
+
+    /// <summary>The creatures and players near the character, each widened by the body's radius, for a route to pass.</summary>
+    private NavAvoidance[] Crowd(in NavigationWalkBodySample sample, uint goalObjectId)
+    {
+        IReadOnlyList<NavAvoidance> found = _goals.FindCrowd(sample.Position, CrowdReach, goalObjectId);
+        var crowd = new NavAvoidance[found.Count];
+        for (int index = 0; index < found.Count; index++)
+            crowd[index] = found[index] with { Radius = found[index].Radius + sample.Body.Radius };
+        return crowd;
+    }
+
+    /// <summary>Whether a creature or player the route was not planned with stands across the next stretch of it.</summary>
+    private bool CrowdSteppedOnto(Request active, RuntimeRouteDriver driver, in NavigationWalkBodySample sample)
+    {
+        if (driver.LegIndex >= driver.Legs.Count)
+            return false;
+        foreach (NavAvoidance spot in Crowd(sample, active.ObjectId))
+        {
+            if (HorizontalDistance(spot.Centre, sample.Position) > CrowdLookAheadMeters + spot.Radius
+                || active.PlannedCrowd.Any(planned => HorizontalDistance(planned.Centre, spot.Centre) <= CrowdMovedMeters))
+            {
+                continue;
+            }
+            Vector3 from = sample.Position;
+            float left = CrowdLookAheadMeters;
+            for (int index = driver.LegIndex; index < driver.Legs.Count && left > 0f; index++)
+            {
+                Vector3 to = driver.Legs[index];
+                float length = HorizontalDistance(from, to);
+                Vector3 end = length > left ? Vector3.Lerp(from, to, left / length) : to;
+                if (FlatDistanceToSegment(spot.Centre, from, end) < spot.Radius
+                    && MathF.Abs(spot.Centre.Z - end.Z) <= NavigationObstacleHeight)
+                {
+                    return true;
+                }
+                left -= length;
+                from = to;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Starts planning a way around creatures on the route from where the character is, while the walk goes on.</summary>
+    private void StartDetour(Request active, in NavigationWalkBodySample sample)
+    {
+        if (_grid is not { } grid
+            || grid.Body != sample.Body
+            || !grid.Contains(sample.Position, CoverMargin)
+            || (!active.Staged && !grid.Contains(active.Goal, CoverMargin)))
+        {
+            return;
+        }
+        active.DetouredAt = _seconds;
+        SearchRoute(active, grid, sample, active.Staged, detour: true);
+    }
+
+    /// <summary>
+    /// A route's legs from where the character is once planning has taken a moment:
+    /// the character's position, then the leg ends it has not yet passed.
+    /// </summary>
+    private static List<Vector3> OnwardLegs(NavRoute route, Vector3 position, out int skipped)
+    {
+        int first = 1;
+        while (first < route.Legs.Count - 1
+            && Vector2.Dot(Flat(route.Legs[first]) - Flat(position), Flat(route.Legs[first]) - Flat(route.Legs[first - 1])) <= 0f)
+        {
+            first++;
+        }
+        skipped = first - 1;
+        var legs = new List<Vector3>(route.Legs.Count - skipped) { position };
+        for (int index = first; index < route.Legs.Count; index++)
+            legs.Add(route.Legs[index]);
+        return legs;
+    }
+
+    private static float FlatDistanceToSegment(Vector3 point, Vector3 from, Vector3 to)
+    {
+        Vector2 start = Flat(from);
+        Vector2 along = Flat(to) - start;
+        float lengthSquared = along.LengthSquared();
+        float t = lengthSquared > 1e-6f ? Math.Clamp(Vector2.Dot(Flat(point) - start, along) / lengthSquared, 0f, 1f) : 0f;
+        return Vector2.Distance(Flat(point), start + (along * t));
     }
 
     private void Drive(Request active, RuntimeRouteDriver driver, in NavigationWalkBodySample sample)
@@ -621,6 +765,16 @@ internal sealed class NavigationWalkController
             _driver = null;
             OpenDoor(active, door, sample.Body.Radius);
             return;
+        }
+        if (active.Shuffles > 0 && HorizontalDistance(sample.Position, active.ShuffledAt) >= ShuffleProgressMeters)
+            active.Shuffles = 0;
+        if (_tick % CrowdCheckTicks == 0
+            && !driver.IsLeaping
+            && _routing is null
+            && _seconds - active.DetouredAt >= DetourIntervalSeconds
+            && CrowdSteppedOnto(active, driver, sample))
+        {
+            StartDetour(active, sample);
         }
         bool wasLeaping = driver.IsLeaping;
         RuntimeRouteDriveStep step = driver.Advance(new RuntimeRouteDriveSample(
@@ -703,12 +857,32 @@ internal sealed class NavigationWalkController
             OpenDoor(active, new NavigationDoor(door.ObjectId, door.Name, door.Position, door.Radius), sample.Body.Radius);
             return;
         }
-        if (active.BlockedBy is { Radius: > 0f } solid)
+        if (active.BlockedBy is { Moves: true } mover)
         {
-            active.Avoid.Add(new NavAvoidance(solid.Position, solid.Radius + sample.Body.Radius));
-            active.AvoidedObject = solid;
+            if (active.Shuffles < MaximumShuffles)
+            {
+                active.Shuffles++;
+                active.ShuffledAt = sample.Position;
+                active.ShuffleUntil = _seconds + ShuffleWaitSeconds;
+                active.Builds = 0;
+                _driver = null;
+                string waiting = $"{mover.Name} (0x{mover.ObjectId:X8}) stands in the way; waiting for it to move ({active.Shuffles} of {MaximumShuffles})";
+                Publish(active, NavigationWalkState.Walking, waiting, float.NaN);
+                _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {waiting}");
+                return;
+            }
+            if (mover.Radius > 0f)
+                active.PassingAvoid.Add(new NavAvoidance(mover.Position, mover.Radius + sample.Body.Radius));
         }
-        active.Avoid.Add(new NavAvoidance(spot, BlockedSpotRadius));
+        else
+        {
+            if (active.BlockedBy is { Radius: > 0f } solid)
+            {
+                active.Avoid.Add(new NavAvoidance(solid.Position, solid.Radius + sample.Body.Radius));
+                active.AvoidedObject = solid;
+            }
+            active.Avoid.Add(new NavAvoidance(spot, BlockedSpotRadius));
+        }
         if (active.Replans >= MaximumReplans)
         {
             End(active, NavigationWalkState.Blocked, BlockedReason(active));
@@ -1176,6 +1350,26 @@ internal sealed class NavigationWalkController
         _routingFor = null;
         if (requester is null || !ReferenceEquals(requester, _active))
             return;
+        if (requester.Detouring)
+        {
+            requester.Detouring = false;
+            if (_driver is not { State: RuntimeRouteDriveState.Driving, IsLeaping: false }
+                || !routing.IsCompletedSuccessfully
+                || routing.Result is not { Outcome: NavRouteOutcome.Routed } detour
+                || detour.Legs.Count < 2
+                || !_body.TrySample(out NavigationWalkBodySample now))
+            {
+                return;
+            }
+            Route = detour;
+            List<Vector3> onward = OnwardLegs(detour, now.Position, out int skipped);
+            RuntimeRouteLeap[] leaps = [.. detour.Leaps
+                .Where(leap => leap.LegIndex - skipped >= 1)
+                .Select(leap => new RuntimeRouteLeap(leap.LegIndex - skipped, leap.Power, leap.Run))];
+            _driver = new RuntimeRouteDriver(onward, leaps, takeOverMoves: true);
+            _say?.Invoke($"Walk to 0x{requester.ObjectId:X8}: planned a way around a creature or player on the route");
+            return;
+        }
         if (!routing.IsCompletedSuccessfully)
         {
             End(
@@ -1405,6 +1599,26 @@ internal sealed class NavigationWalkController
 
         /// <summary>The door the walk last planned a way around, and why, named if no way around it is found.</summary>
         public (NavigationDoor Door, string Why)? AvoidedDoor { get; set; }
+
+        /// <summary>The creatures and players the latest plan passed, where they stood, each widened by the body's radius.</summary>
+        public NavAvoidance[] PlannedCrowd { get; set; } = [];
+
+        /// <summary>Whether the route being searched for is a way around creatures, searched while the walk goes on.</summary>
+        public bool Detouring { get; set; }
+
+        /// <summary>When the walk last planned a way around creatures, in the controller's seconds.</summary>
+        public double DetouredAt { get; set; } = double.NegativeInfinity;
+
+        /// <summary>How often the walk has waited for a creature or player to move aside since it last walked on.</summary>
+        public int Shuffles { get; set; }
+
+        /// <summary>Where the walk last waited for a creature or player to move aside, and until when.</summary>
+        public Vector3 ShuffledAt { get; set; }
+
+        public double ShuffleUntil { get; set; }
+
+        /// <summary>Spots the next plan alone keeps out of, such as where a creature that would not move aside stood.</summary>
+        public List<NavAvoidance> PassingAvoid { get; } = [];
 
         /// <summary>What the walk waits on while something else needs the character.</summary>
         public string? PausedFor { get; set; }

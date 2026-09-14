@@ -152,7 +152,8 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
             item?.Name ?? nearestRecord.Snapshot.Name ?? $"0x{objectId:X8}",
             closed,
             nearestFootprint.Centre,
-            nearestFootprint.Radius);
+            nearestFootprint.Radius,
+            Moves: item is not null && Moves(item));
         return true;
     }
 
@@ -184,6 +185,40 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
         }
         return obstacles;
     }
+
+    /// <summary>
+    /// The creatures and players near a point, other than the character and the
+    /// goal, each as the largest footprint among its parts' collision.
+    /// </summary>
+    public IReadOnlyList<NavAvoidance> FindCrowd(Vector3 around, float radius, uint goalObjectId)
+    {
+        uint player = _runtime.PlayerIdentity.ServerGuid;
+        var flatAround = new Vector2(around.X, around.Y);
+        var crowd = new Dictionary<uint, NavAvoidance>();
+        foreach (ShadowEntry entry in _physics.ShadowObjects.AllEntriesForDebug())
+        {
+            if (Vector2.Distance(new Vector2(entry.Position.X, entry.Position.Y), flatAround) > radius + entry.Radius
+                || ((PhysicsStateFlags)entry.State).HasFlag(PhysicsStateFlags.Ethereal)
+                || !_runtime.EntityObjects.Entities.TryGetByLocalId(entry.EntityId, out RuntimeEntityRecord record)
+                || record.ServerGuid == player
+                || record.ServerGuid == goalObjectId
+                || record.FinalPhysicsState.HasFlag(PhysicsStateFlags.Ethereal)
+                || _runtime.InventoryOwner.Objects.Get(record.ServerGuid) is not { } item
+                || !Moves(item))
+            {
+                continue;
+            }
+            NavAvoidance footprint = NavGeometry.FootprintOf(entry, _physics.DataCache);
+            if (!crowd.TryGetValue(record.ServerGuid, out NavAvoidance kept) || footprint.Radius > kept.Radius)
+                crowd[record.ServerGuid] = footprint;
+        }
+        return [.. crowd.Values];
+    }
+
+    /// <summary>Whether an object is a creature or a player, which moves.</summary>
+    private static bool Moves(ClientObject item) =>
+        (item.Type & ItemType.Creature) != 0
+        || ((PublicWeenieFlags)(item.PublicWeenieBitfield ?? 0u) & PublicWeenieFlags.Player) != 0;
 }
 
 /// <summary>
