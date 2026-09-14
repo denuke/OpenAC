@@ -598,6 +598,7 @@ internal sealed class NavigationWalkController
             OpenDoor(active, door, sample.Body.Radius);
             return;
         }
+        bool wasLeaping = driver.IsLeaping;
         RuntimeRouteDriveStep step = driver.Advance(new RuntimeRouteDriveSample(
             sample.Position,
             sample.HeadingDegrees,
@@ -609,6 +610,18 @@ internal sealed class NavigationWalkController
             Apply(driver.Cancel());
             End(active, NavigationWalkState.Stopped, "the client refused a move");
             return;
+        }
+        if (driver.IsLeaping && !wasLeaping)
+        {
+            Vector3 takeoff = driver.Legs[driver.LegIndex - 1];
+            Vector3 landing = driver.Legs[driver.LegIndex];
+            _say?.Invoke(
+                $"Walk to 0x{active.ObjectId:X8}: leaping from {takeoff.Z:0.0} m to {landing.Z:0.0} m, "
+                + $"{HorizontalDistance(takeoff, landing):0.0} m on");
+        }
+        else if (wasLeaping && !driver.IsLeaping && driver.State == RuntimeRouteDriveState.Driving)
+        {
+            _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: the leap landed at {sample.Position.Z:0.0} m");
         }
 
         switch (driver.State)
