@@ -21,6 +21,22 @@ public sealed class RuntimeRouteDriverTests
     }
 
     [Fact]
+    public void ADriveThatTakesOverAMoveUnderWayGoesOnWithoutStartingItAgain()
+    {
+        var body = new SimulatedBody();
+        Drive(new RuntimeRouteDriver([new Vector3(0f, 0f, 0f), new Vector3(0f, 30f, 0f)]), body, seconds: 1f);
+        Assert.True(body.Travelling);
+        Vector3[] legs = [new Vector3(body.Position, 0f), new Vector3(0.5f, 30f, 0f)];
+
+        RuntimeRouteDriveStep taken = new RuntimeRouteDriver(legs, takeOverMoves: true).Advance(body.Sample());
+        RuntimeRouteDriveStep started = new RuntimeRouteDriver(legs).Advance(body.Sample());
+
+        Assert.Null(taken.Travel);
+        Assert.False(taken.StopTravel);
+        Assert.NotNull(started.Travel);
+    }
+
+    [Fact]
     public void ALegPointingBehindIsFacedBeforeRunning()
     {
         var body = new SimulatedBody { Heading = 180f };

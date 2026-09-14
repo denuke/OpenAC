@@ -101,8 +101,17 @@ public sealed class RuntimeRouteDriver
     private long _turnBaseline;
     private LeapPhase _phase;
     private bool _leapTravelBegun;
+    private readonly bool _takeOverMoves;
 
-    public RuntimeRouteDriver(IReadOnlyList<Vector3> legs, IReadOnlyList<RuntimeRouteLeap>? leaps = null)
+    /// <summary>
+    /// A drive along <paramref name="legs"/>. With <paramref name="takeOverMoves"/>, moves
+    /// already under way when it starts, such as those of a drive it replaces, count as
+    /// its own, so a new plan goes on without stopping the character to start again.
+    /// </summary>
+    public RuntimeRouteDriver(
+        IReadOnlyList<Vector3> legs,
+        IReadOnlyList<RuntimeRouteLeap>? leaps = null,
+        bool takeOverMoves = false)
     {
         ArgumentNullException.ThrowIfNull(legs);
         if (legs.Count < 2)
@@ -115,6 +124,7 @@ public sealed class RuntimeRouteDriver
             _leaps[leap.LegIndex] = leap;
         }
         LegIndex = 1;
+        _takeOverMoves = takeOverMoves;
     }
 
     public RuntimeRouteDriveState State { get; private set; } = RuntimeRouteDriveState.Driving;
@@ -137,8 +147,8 @@ public sealed class RuntimeRouteDriver
         if (!_started)
         {
             _started = true;
-            _travelBaseline = sample.Moves.Travel.Sequence;
-            _turnBaseline = sample.Moves.Turn.Sequence;
+            _travelBaseline = Baseline(sample.Moves.Travel);
+            _turnBaseline = Baseline(sample.Moves.Turn);
         }
 
         RuntimeMoveChannelSnapshot travel = sample.Moves.Travel;
@@ -194,6 +204,11 @@ public sealed class RuntimeRouteDriver
             Travel: renew ? new RuntimeMoveRequest(RuntimeMoveDirection.Forward, pace, 0f) : null,
             Turn: !turning && MathF.Abs(error) > SteerToleranceDegrees ? TurnBy(error) : null);
     }
+
+    private long Baseline(in RuntimeMoveChannelSnapshot channel) =>
+        _takeOverMoves && channel.State == RuntimeScriptedMoveState.Moving
+            ? channel.Sequence - 1
+            : channel.Sequence;
 
     /// <summary>Ends the drive at once, stopping whatever it had begun.</summary>
     public RuntimeRouteDriveStep Cancel()
