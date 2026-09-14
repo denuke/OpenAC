@@ -11,6 +11,7 @@ internal static class McpTools
         [
             new ObserveTool(context),
             new ActTool(context),
+            new ConfigureTool(context),
             new OutcomeTool(context),
             new EventsTool(context),
             .. ReadTools.Create(context),

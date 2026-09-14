@@ -185,6 +185,21 @@ internal static class ReadTools
             () => new JsonObject(),
             [],
             _ => ReadLine.Of("characters")),
+        new ReadTool(context, "settings", "How are my plugins set up?",
+            "The settings other plugins share, such as MossTank's. With no plugin, which plugins share settings; "
+            + "with plugin, all of its settings and howToChange, which says how configure changes them; with "
+            + "section, one part, such as options, monsters, items or buffs for MossTank. MossTank shares whether "
+            + "its macro runs and what it is doing, every option including the advanced ones, its monster rules "
+            + "with their priorities, actions, damage types and weapons, its items and consumables, and its extra "
+            + "and blacklisted buffs."
+            + Nothing,
+            () => new JsonObject
+            {
+                ["plugin"] = Property("string", "A plugin's name or settings id, such as mosstank; leave it out to list them."),
+                ["section"] = Property("string", "One part of the plugin's settings, such as options or monsters."),
+            },
+            [],
+            Settings),
     ];
 
     private static JsonObject Property(string type, string description) => new()
@@ -232,6 +247,29 @@ internal static class ReadTools
             : ReadLine.Refuse(
                 "guid must be an object id such as 0x70000001; leave it out to ask about everything around the character");
     }
+
+    private static ReadLine Settings(JsonObject arguments)
+    {
+        string? plugin = ToolArguments.Text(arguments, "plugin")?.Trim();
+        string? section = ToolArguments.Text(arguments, "section")?.Trim();
+        if (string.IsNullOrEmpty(plugin))
+        {
+            return string.IsNullOrEmpty(section)
+                ? ReadLine.Of("settings")
+                : ReadLine.Refuse("section needs plugin, such as mosstank");
+        }
+        if (!IsOneWord(plugin))
+            return ReadLine.Refuse("plugin must be one word, such as mosstank");
+        if (string.IsNullOrEmpty(section))
+            return ReadLine.Of("settings " + plugin);
+        return IsOneWord(section)
+            ? ReadLine.Of($"settings {plugin} {section}")
+            : ReadLine.Refuse("section must be one word, such as options");
+    }
+
+    private static bool IsOneWord(string text) =>
+        text.Length <= MaximumSearchLength
+        && !text.Any(character => char.IsWhiteSpace(character) || char.IsControl(character));
 
     private static ReadLine Corpses(JsonObject arguments) =>
         !Range(arguments, out double? range)

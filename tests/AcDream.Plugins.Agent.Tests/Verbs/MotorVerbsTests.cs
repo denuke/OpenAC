@@ -463,6 +463,53 @@ public sealed class MotorVerbsTests
     }
 
     [Fact]
+    public void AWalkWaitingWhileSomethingElseNeedsTheCharacterKeepsItsOutcomeOpen()
+    {
+        var (host, verbs, correlator, clock, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Healer", eastMeters: 24d));
+        FakeNavigation navigation = host.FakeAutomation.FakeNavigation;
+        verbs.Handle(Line("go to 0x70000001"));
+        navigation.GoToReport = navigation.GoToReport with
+        {
+            State = PluginGoToState.Waiting,
+            Reason = "waiting: MossTank is running Attack",
+        };
+
+        for (int second = 0; second < 2 * MotorVerbs.MaximumMoveSeconds; second++)
+        {
+            clock.Advance(1d);
+            correlator.Tick(inWorld: true);
+        }
+        Assert.Empty(Kinds(ring, RecordKinds.GoalResolved));
+
+        navigation.EndGoTo(PluginGoToState.Arrived, "arrived");
+        correlator.Tick(inWorld: true);
+
+        Assert.Equal("completed", Kinds(ring, RecordKinds.GoalResolved).Single().GetProperty("outcome").GetString());
+    }
+
+    [Fact]
+    public void AWalkThatGoesOnAfterWaitingRunsItsWindowDownAgain()
+    {
+        var (host, verbs, correlator, clock, ring) = Build();
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Healer", eastMeters: 24d));
+        FakeNavigation navigation = host.FakeAutomation.FakeNavigation;
+        verbs.Handle(Line("go to 0x70000001"));
+        navigation.GoToReport = navigation.GoToReport with { State = PluginGoToState.Waiting };
+        for (int second = 0; second < 1000; second++)
+        {
+            clock.Advance(1d);
+            correlator.Tick(inWorld: true);
+        }
+
+        navigation.GoToReport = navigation.GoToReport with { State = PluginGoToState.Walking };
+        clock.Advance((2d * MotorVerbs.MaximumMoveSeconds) + 1d);
+        correlator.Tick(inWorld: true);
+
+        Assert.Equal("unconfirmed", Kinds(ring, RecordKinds.GoalResolved).Single().GetProperty("outcome").GetString());
+    }
+
+    [Fact]
     public void AWalkThatArrivesWithoutALineOfSightSaysSo()
     {
         var (host, verbs, correlator, _, ring) = Build();

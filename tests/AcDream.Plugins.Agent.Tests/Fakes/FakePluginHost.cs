@@ -18,6 +18,7 @@ internal sealed class FakePluginHost : IPluginHost
     public IPluginCommandRegistry Commands => FakeCommands;
     public IPluginStorage Storage => FakeStorage;
     public IAutomationSurface Automation => FakeAutomation;
+    public IPluginSettingsRegistry SharedSettings => FakeSettings;
 
     internal FakeLogger FakeLog { get; } = new();
     internal FakeGameState FakeState { get; } = new();
@@ -26,6 +27,7 @@ internal sealed class FakePluginHost : IPluginHost
     internal FakeCommands FakeCommands { get; } = new();
     internal FakeStorage FakeStorage { get; } = new();
     internal FakeAutomation FakeAutomation { get; }
+    internal FakeSettingsRegistry FakeSettings { get; } = new();
 }
 
 internal sealed class FakeLogger : IPluginLogger

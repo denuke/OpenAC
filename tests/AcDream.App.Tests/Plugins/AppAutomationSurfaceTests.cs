@@ -35,6 +35,63 @@ public sealed class AppAutomationSurfaceTests
     }
 
     [Fact]
+    public void WalksWaitOnWhatAPluginSaysItNeedsUntilThePluginLetsGo()
+    {
+        using var surface = new AppAutomationSurface();
+        var walk = new AcDream.App.Navigation.NavigationWalkController(new PhysicsEngine(), new NoWalkBody(), new NoWalkGoals());
+        surface.BindNavigationWalk(walk);
+        string? need = "MossTank is running Attack";
+        IDisposable broken = surface.Navigation.PauseGoToWhile(() => throw new InvalidOperationException("a broken plugin"));
+        IDisposable pause = surface.Navigation.PauseGoToWhile(() => need);
+
+        Assert.Equal("MossTank is running Attack", walk.PausedBy?.Invoke());
+        need = null;
+        Assert.Null(walk.PausedBy?.Invoke());
+        need = "MossTank is buffing";
+        pause.Dispose();
+        pause.Dispose();
+        Assert.Null(surface.GoToPauseReason());
+        broken.Dispose();
+    }
+
+    [Fact]
+    public void AWalkWaitingOnSomethingElseIsReportedToPluginsAsWaiting()
+    {
+        PluginGoToReport report = AppAutomationSurface.ProjectGoToReport(new AcDream.App.Navigation.NavigationWalkReport(
+            4,
+            AcDream.App.Navigation.NavigationWalkState.Waiting,
+            0x50000001u,
+            float.NaN,
+            0,
+            "waiting: MossTank is running Attack"));
+
+        Assert.Equal(PluginGoToState.Waiting, report.State);
+        Assert.Equal("waiting: MossTank is running Attack", report.Reason);
+    }
+
+    private sealed class NoWalkBody : AcDream.App.Navigation.INavigationWalkBody
+    {
+        public bool TrySample(out AcDream.App.Navigation.NavigationWalkBodySample sample)
+        {
+            sample = default;
+            return false;
+        }
+
+        public bool BeginMove(in RuntimeMoveRequest request) => false;
+
+        public bool StopMove(RuntimeMoveChannel channel) => false;
+    }
+
+    private sealed class NoWalkGoals : AcDream.App.Navigation.INavigationGoalSource
+    {
+        public bool TryLocate(uint objectId, out Vector3 position)
+        {
+            position = default;
+            return false;
+        }
+    }
+
+    [Fact]
     public void SelectionAutomationUsesTheBoundCanonicalActionRoute()
     {
         using var surface = new AppAutomationSurface();

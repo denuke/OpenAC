@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using AcDream.Plugin.Abstractions;
 
 namespace AcDream.Plugins.MossTank.Tests;
@@ -25,6 +26,189 @@ public sealed class MossTankPanelTests
                 StringComparison.Ordinal));
         Assert.Contains("profiles/index.json", backup.Value, StringComparison.Ordinal);
         Assert.Contains("{ this is not json", backup.Value, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false, "Attack", false, false, false, 99d, null)]
+    [InlineData(true, null, false, false, false, 99d, null)]
+    [InlineData(true, "IdlePeace", false, false, false, 99d, null)]
+    [InlineData(true, "RandomHelper", false, false, false, 99d, null)]
+    [InlineData(true, "NavigateRouteIdle", false, false, false, 99d, null)]
+    [InlineData(true, "Attack", false, false, false, 99d, "MossTank is running Attack")]
+    [InlineData(true, "BuffSelf", false, false, false, 99d, "MossTank is running BuffSelf")]
+    [InlineData(true, "NavigateCorpseIdle", false, false, true, 99d, "MossTank is running NavigateCorpseIdle")]
+    [InlineData(true, "NavigateRouteIdle", false, true, false, 99d, "MossTank is following its route")]
+    [InlineData(true, "NavigateRouteIdle", false, false, true, 1d, "MossTank is waiting for a corpse to loot")]
+    [InlineData(true, "NavigateRouteIdle", false, false, false, 1d, null)]
+    [InlineData(true, "NavigateRouteIdle", false, false, true, 3d, null)]
+    [InlineData(false, null, true, false, false, 99d, "MossTank is buffing")]
+    public void AWalkTheClientPlansWaitsWhileTheMacroHasSomethingToDo(
+        bool running,
+        string? lastRule,
+        bool buffing,
+        bool routeNavigation,
+        bool looting,
+        double secondsSinceAttack,
+        string? expected)
+    {
+        Assert.Equal(
+            expected,
+            MossTankPanel.WalkPauseReasonFor(running, lastRule, buffing, routeNavigation, looting, secondsSinceAttack));
+    }
+
+    [Fact]
+    public void AWalkTheClientPlansTakesTheRouteSlotSoRulesBelowItWaitAndItIsNotHeld()
+    {
+        var automation = new FakeAutomation
+        {
+            CurrentHealth = 100,
+            MaxHealth = 100,
+            CurrentStamina = 100,
+            MaxStamina = 100,
+            CurrentMana = 100,
+            MaxMana = 100,
+        };
+        var panel = new MossTankPanel(new FakeHost(automation));
+        panel.ToggleCombat();
+        IMacroRule route = panel.MacroRules.Single(static rule => rule.Name == "NavigateRouteIdle");
+
+        for (int tick = 0; tick < 4; tick++)
+            panel.OnTick(0.3d);
+        Assert.False(route.Running);
+
+        automation.GoToReport = new PluginGoToReport(1, PluginGoToState.Walking, 0x50000001u, 20f, 0, "walking");
+        for (int tick = 0; tick < 4; tick++)
+            panel.OnTick(0.3d);
+
+        Assert.True(route.Running);
+        Assert.Null(panel.WalkPauseReason);
+    }
+
+    [Fact]
+    public void SharedSettingsShowEveryOptionTheMonsterRulesAndTheMacro()
+    {
+        var panel = new MossTankPanel(new FakeHost(new FakeAutomation()));
+
+        using JsonDocument settings = JsonDocument.Parse(panel.ReadSharedSettings(null)!);
+        JsonElement root = settings.RootElement;
+
+        Assert.Equal(MossTankPanel.SharedSections, root.EnumerateObject().Select(static part => part.Name));
+        JsonElement options = root.GetProperty("options");
+        Assert.Equal(VtankOptionCatalog.Names.Distinct(StringComparer.Ordinal).Count(), options.EnumerateObject().Count());
+        Assert.Contains(
+            options.GetProperty("UseProjectileAwareness").ValueKind,
+            new[] { JsonValueKind.True, JsonValueKind.False });
+        Assert.Equal(JsonValueKind.Number, options.GetProperty("AttackDistance").ValueKind);
+        Assert.Contains(
+            root.GetProperty("monsters").EnumerateArray(),
+            static rule => MonsterRule.IsDefaultName(rule.GetProperty("name").GetString()));
+        Assert.False(root.GetProperty("macro").GetProperty("running").GetBoolean());
+        Assert.Null(panel.ReadSharedSettings("nothing"));
+        using JsonDocument one = JsonDocument.Parse(panel.ReadSharedSettings("MONSTERS")!);
+        Assert.Equal(["monsters"], one.RootElement.EnumerateObject().Select(static part => part.Name));
+        Assert.Contains("DEFAULT rule", MossTankPanel.SharedSettingsHelp, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASharedChangeSetsOptionsRulesItemsAndBuffsAndSavesThemToTheProfile()
+    {
+        var automation = new FakeAutomation { ItemEntries = [Item(70, "Heavy Crossbow", 0x100)] };
+        var storage = new MemoryStorage();
+        var panel = new MossTankPanel(new FakeHost(automation, storage));
+
+        PluginSettingsChangeResult result = panel.ChangeSharedSettings("""
+            {
+              "options": { "EnableBuffing": false, "AttackDistance": 0.1 },
+              "monsters": { "set": [ { "name": "Drudge Skulker", "priority": 3, "actions": ["Attack", "Imperil"], "damage": "fire", "weapon": "Heavy Crossbow" } ] },
+              "items": { "add": ["heavy crossbow"] },
+              "buffs": { "addSpells": ["Strength Self VII"] }
+            }
+            """);
+
+        Assert.True(result.Applied, result.Message);
+        Assert.Equal("Set 2 options, set 1 monster rule, added 1 item, added 1 buff spell.", result.Message);
+        using JsonDocument changed = JsonDocument.Parse(result.SettingsJson!);
+        JsonElement root = changed.RootElement;
+        Assert.False(root.GetProperty("options").GetProperty("EnableBuffing").GetBoolean());
+        Assert.Equal(0.1d, root.GetProperty("options").GetProperty("AttackDistance").GetDouble(), 3);
+        JsonElement skulker = Assert.Single(
+            root.GetProperty("monsters").EnumerateArray(),
+            static rule => rule.GetProperty("name").GetString() == "Drudge Skulker");
+        Assert.Equal(3, skulker.GetProperty("priority").GetInt32());
+        Assert.Equal(["Imperil", "Attack"], skulker.GetProperty("actions").EnumerateArray().Select(static action => action.GetString()));
+        Assert.Equal("Fire", skulker.GetProperty("damage").GetString());
+        Assert.Equal("Heavy Crossbow", skulker.GetProperty("weapon").GetString());
+        Assert.Equal(
+            "Heavy Crossbow",
+            Assert.Single(root.GetProperty("items").GetProperty("combat").EnumerateArray()).GetProperty("name").GetString());
+        Assert.Equal(["Strength Self VII"], root.GetProperty("buffs").GetProperty("extraSpells").EnumerateArray().Select(static spell => spell.GetString()));
+
+        var reloaded = new MossTankPanel(new FakeHost(automation, storage));
+        string saved = reloaded.ReadSharedSettings(null)!;
+        Assert.Contains("Drudge Skulker", saved, StringComparison.Ordinal);
+        Assert.Contains("Strength Self VII", saved, StringComparison.Ordinal);
+        using JsonDocument savedOptions = JsonDocument.Parse(reloaded.ReadSharedSettings("options")!);
+        Assert.False(savedOptions.RootElement.GetProperty("options").GetProperty("EnableBuffing").GetBoolean());
+    }
+
+    [Fact]
+    public void ASharedChangeWrongInAnyPartChangesNothingAndGivesEveryReason()
+    {
+        var panel = new MossTankPanel(new FakeHost(new FakeAutomation()));
+        string before = panel.ReadSharedSettings(null)!;
+
+        PluginSettingsChangeResult result = panel.ChangeSharedSettings("""
+            {
+              "options": { "EnableBuffing": false, "NoSuchOption": 1, "AttackDistance": "far" },
+              "monsters": { "remove": ["DEFAULT", "Mite"], "set": [ { "name": "Drudge", "priority": 9 } ] },
+              "items": { "add": ["Nothing Carried"] },
+              "macro": { "running": "yes" },
+              "loot": {}
+            }
+            """);
+
+        Assert.False(result.Applied);
+        Assert.StartsWith("Nothing was changed: ", result.Message, StringComparison.Ordinal);
+        foreach (string reason in new[]
+        {
+            "'NoSuchOption' is not an option",
+            "AttackDistance takes",
+            "the DEFAULT rule cannot be removed",
+            "no monster rule is named 'Mite'",
+            "Drudge: priority must be a whole number from -1 to 4",
+            "'Nothing Carried' is not carried",
+            "macro takes",
+            "'loot' is not a part MossTank changes",
+        })
+        {
+            Assert.Contains(reason, result.Message, StringComparison.Ordinal);
+        }
+        Assert.Null(result.SettingsJson);
+        Assert.Equal(before, panel.ReadSharedSettings(null));
+        Assert.False(panel.ChangeSharedSettings("not json").Applied);
+    }
+
+    [Fact]
+    public void ASharedChangeToARuleKeepsWhatItDoesNotNameAndCanStartTheMacro()
+    {
+        var panel = new MossTankPanel(new FakeHost(new FakeAutomation()));
+        Assert.True(panel.ChangeSharedSettings("""{"monsters":{"set":[{"name":"Mite","priority":2,"damage":"Cold"}]}}""").Applied);
+
+        PluginSettingsChangeResult result = panel.ChangeSharedSettings(
+            """{"monsters":{"set":[{"name":"mite","priority":-1}]},"macro":{"running":true}}""");
+
+        Assert.True(result.Applied, result.Message);
+        using JsonDocument changed = JsonDocument.Parse(result.SettingsJson!);
+        JsonElement mite = Assert.Single(
+            changed.RootElement.GetProperty("monsters").EnumerateArray(),
+            static rule => rule.GetProperty("name").GetString() == "Mite");
+        Assert.Equal(-1, mite.GetProperty("priority").GetInt32());
+        Assert.Equal("Cold", mite.GetProperty("damage").GetString());
+        Assert.True(changed.RootElement.GetProperty("macro").GetProperty("running").GetBoolean());
+        Assert.True(panel.CombatMacroRunning);
+
+        Assert.True(panel.ChangeSharedSettings("""{"monsters":{"remove":["MITE"]}}""").Applied);
+        Assert.DoesNotContain("Mite", panel.ReadSharedSettings("monsters"), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -5243,6 +5427,7 @@ public sealed class MossTankPanelTests
         public int BusyReferences { get; set; }
         public PluginNavigationSnapshot NavigationSnapshot { get; set; }
         public PluginNavigationSnapshot Snapshot => NavigationSnapshot;
+        public PluginGoToReport GoToReport { get; set; }
         public int CaptureOwnedItemsCallCount { get; private set; }
         public IReadOnlyList<PluginInventoryItem> CaptureOwnedItems()
         {

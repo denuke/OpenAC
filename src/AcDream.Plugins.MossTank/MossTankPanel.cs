@@ -189,6 +189,10 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
     private string _routeNotice = "Add the current position or a selected object.";
     private string _routeChatDraft = "/ls";
     private int _routePauseSeconds = 5;
+
+    /// <summary>Seconds the panel has ticked, and when the macro last won a pass attacking, for a walk waiting on a corpse.</summary>
+    private double _walkClock;
+    private double _lastAttackSeconds = double.NegativeInfinity;
     private RouteRecallKind _routeRecallKind = RouteRecallKind.PrimaryPortalRecall;
     private RouteInsertMode _routeInsertMode = RouteInsertMode.AddToEnd;
     private IReadOnlyList<string> _metaRows = Array.Empty<string>();
@@ -530,6 +534,68 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
     public string BuffStatus => _status;
     public string CombatButtonText => _combat.ButtonText;
     public bool CombatMacroRunning => _combat.Enabled;
+
+    /// <summary>
+    /// How long after the macro last attacked it may still loot what it killed, so
+    /// a walk the client plans waits that long for the corpse to appear.
+    /// </summary>
+    internal const double CorpseWaitSeconds = 2.5d;
+
+    /// <summary>
+    /// What the macro is doing that needs the character, so a walk the client plans
+    /// waits for it, or null while the macro is idle.
+    /// </summary>
+    internal string? WalkPauseReason => WalkPauseReasonFor(
+        _scheduler.IsRunning,
+        _scheduler.LastExecutedRule?.Name,
+        _buffRule.IsBursting,
+        _navigationSettings.Enabled,
+        _inventorySettings.Loot.Enabled,
+        _walkClock - _lastAttackSeconds);
+
+    /// <summary>
+    /// The macro needs the character while it buffs, while its own route navigation
+    /// runs, while a rule that outranks navigation won its last pass, and, when it
+    /// loots, for <see cref="CorpseWaitSeconds"/> after it last attacked. It is idle
+    /// while stopped, and when navigation or a rule below navigation won.
+    /// </summary>
+    internal static string? WalkPauseReasonFor(
+        bool running,
+        string? lastRule,
+        bool buffing,
+        bool routeNavigation,
+        bool looting,
+        double secondsSinceAttack)
+    {
+        if (buffing)
+            return "MossTank is buffing";
+        if (!running)
+            return null;
+        switch (lastRule)
+        {
+            case null or "RandomHelper" or "IdlePeace":
+                break;
+            case "NavigateRoutePriority" or "NavigateRouteIdle":
+                if (routeNavigation)
+                    return "MossTank is following its route";
+                break;
+            default:
+                return $"MossTank is running {lastRule}";
+        }
+        return looting && secondsSinceAttack < CorpseWaitSeconds
+            ? "MossTank is waiting for a corpse to loot"
+            : null;
+    }
+
+    /// <summary>
+    /// Whether a walk the client plans is under way while the macro's own route
+    /// navigation is off. The walk takes the route's place among the macro's rules,
+    /// so whatever outranks navigation interrupts it and nothing below it does.
+    /// </summary>
+    private bool ClientWalkHoldsRouteSlot =>
+        !_navigationSettings.Enabled
+        && _host.Automation.Navigation.GoToReport.State
+            is PluginGoToState.Planning or PluginGoToState.Walking or PluginGoToState.Waiting;
     public string CombatStatus => _combat.Status;
     public string CombatTarget => _combat.TargetText;
     public string CombatMode => _combat.ModeText;
@@ -2632,6 +2698,16 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
             _profileNotice = "Select an owned inventory item first.";
             return;
         }
+        AddProfileItem(item, noBuffs);
+        _profileNotice = noBuffs
+            ? $"Added {item.Name} (no buffs)."
+            : $"Added {item.Name}.";
+        RefreshItemEditors();
+        SaveProfile();
+    }
+
+    private void AddProfileItem(in PluginInventoryItem item, bool noBuffs)
+    {
         _combatSettings.CombatItemObjectIds.Add(item.ObjectId);
         if (_combatSettings.CombatItemNames.Add(item.Name))
             _combatSettings.CombatItemOrder.Add(item.Name);
@@ -2640,11 +2716,6 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
         else
             _noBuffItemNames.Remove(item.Name);
         PopulateItemEnchantRows(item, noBuffs);
-        _profileNotice = noBuffs
-            ? $"Added {item.Name} (no buffs)."
-            : $"Added {item.Name}.";
-        RefreshItemEditors();
-        SaveProfile();
     }
 
     private void PopulateItemEnchantRows(in PluginInventoryItem item, bool noBuffs)
@@ -4361,6 +4432,10 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
         ObserveCastSuspension(elapsedSeconds);
         _scheduler.ExternalSuspension = _prologueOwnsAction;
         _scheduler.Advance(elapsedSeconds);
+        if (double.IsFinite(elapsedSeconds) && elapsedSeconds > 0d)
+            _walkClock += elapsedSeconds;
+        if (_scheduler.LastExecutedRule?.Name == "Attack")
+            _lastAttackSeconds = _walkClock;
         _combatModeGate.AdvancePass(elapsedSeconds);
 
         // Display the idle-peace owner's status on the pass it wins.

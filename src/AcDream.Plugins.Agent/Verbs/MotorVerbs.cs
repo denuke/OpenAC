@@ -278,7 +278,7 @@ internal sealed class MotorVerbs : IVerbFamily
             PluginGoToReport report = navigation.GoToReport;
             if (report.Sequence != sequence)
                 return new Resolution(Cancelled, "a later walk replaced it");
-            if (report.State is PluginGoToState.Planning or PluginGoToState.Walking)
+            if (report.State is PluginGoToState.Planning or PluginGoToState.Walking or PluginGoToState.Waiting)
                 return null;
             var fields = new JsonObject
             {
@@ -298,7 +298,8 @@ internal sealed class MotorVerbs : IVerbFamily
                 PluginGoToState.Lost => new Resolution(OutcomeCorrelator.Lost, report.Reason, fields),
                 _ => new Resolution(OutcomeCorrelator.Unconfirmed, "the client lost track of the walk", fields),
             };
-        });
+        },
+        waiting: () => navigation.GoToReport is { State: PluginGoToState.Waiting } waiting && waiting.Sequence == sequence);
         return VerbResult.Handled;
     }
 

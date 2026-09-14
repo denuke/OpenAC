@@ -72,6 +72,7 @@ internal sealed class AppAutomationSurface
     private long _projectileDebugSamplesExpireAt;
     private CurrentGameRuntimeAdapter? _sessionCommands;
     private AcDream.App.Navigation.NavigationWalkController? _navigationWalk;
+    private readonly List<Func<string?>> _goToPauses = [];
     private IDisposable? _communicationSubscription;
     private readonly List<PluginChatMessage> _chatMessages = [];
     private ulong _pluginChatSequence;
@@ -457,6 +458,7 @@ internal sealed class AppAutomationSurface
     public void BindNavigationWalk(AcDream.App.Navigation.NavigationWalkController walk)
     {
         ArgumentNullException.ThrowIfNull(walk);
+        walk.PausedBy = GoToPauseReason;
         lock (_gate)
             _navigationWalk = walk;
     }
@@ -1914,6 +1916,73 @@ internal sealed class AppAutomationSurface
         }
     }
 
+    public IDisposable PauseGoToWhile(Func<string?> need)
+    {
+        ArgumentNullException.ThrowIfNull(need);
+        lock (_gate)
+            _goToPauses.Add(need);
+        return new GoToPause(this, need);
+    }
+
+    /// <summary>
+    /// What needs the character now, so that a walk to an object waits for it: a
+    /// plugin that asked walks to wait while it does, an attack under way, or a
+    /// movement intent a plugin holds. Null when nothing does. A plugin whose
+    /// answer throws is taken to need nothing.
+    /// </summary>
+    internal string? GoToPauseReason()
+    {
+        Func<string?>[] pauses;
+        GameRuntime? runtime;
+        lock (_gate)
+        {
+            pauses = [.. _goToPauses];
+            runtime = _runtime;
+        }
+        foreach (Func<string?> pause in pauses)
+        {
+            string? need;
+            try
+            {
+                need = pause();
+            }
+            catch (Exception)
+            {
+                continue;
+            }
+            if (!string.IsNullOrWhiteSpace(need))
+                return need.Trim();
+        }
+        if (runtime is null || !IsAvailable)
+            return null;
+        RuntimeCombatAttackState attack = runtime.ActionOwner.CombatAttack;
+        if (attack.AttackRequestInProgress || attack.AttackServerResponsePending || attack.RepeatAttackInProgress)
+            return "the character is attacking";
+        RuntimeMovementSnapshot movement = runtime.Movement.Snapshot;
+        MovementInput held = movement.CommandInput;
+        return movement.HasCommandInput
+            && (held.Forward || held.Backward || held.StrafeLeft || held.StrafeRight || held.TurnLeft || held.TurnRight)
+                ? "a plugin is steering the character"
+                : null;
+    }
+
+    /// <summary>A plugin's request that walks wait while it needs the character, ended by disposing it.</summary>
+    private sealed class GoToPause(AppAutomationSurface surface, Func<string?> need) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            lock (surface._gate)
+            {
+                if (_disposed)
+                    return;
+                _disposed = true;
+                surface._goToPauses.Remove(need);
+            }
+        }
+    }
+
     internal static PluginGoToReport ProjectGoToReport(in AcDream.App.Navigation.NavigationWalkReport report) =>
         new(
             report.Sequence,
@@ -1921,6 +1990,7 @@ internal sealed class AppAutomationSurface
             {
                 AcDream.App.Navigation.NavigationWalkState.Planning => PluginGoToState.Planning,
                 AcDream.App.Navigation.NavigationWalkState.Walking => PluginGoToState.Walking,
+                AcDream.App.Navigation.NavigationWalkState.Waiting => PluginGoToState.Waiting,
                 AcDream.App.Navigation.NavigationWalkState.Arrived => PluginGoToState.Arrived,
                 AcDream.App.Navigation.NavigationWalkState.NoRoute => PluginGoToState.NoRoute,
                 AcDream.App.Navigation.NavigationWalkState.Blocked => PluginGoToState.Blocked,

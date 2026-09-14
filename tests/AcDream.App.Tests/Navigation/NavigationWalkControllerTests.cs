@@ -49,6 +49,84 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
+    public void AWalkWaitsWhileSomethingElseNeedsTheCharacterAndGoesOnFromWhereItWasLeft()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
+        string? need = null;
+        var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(40f, 150f, 0f) })
+        {
+            PausedBy = () => need,
+        };
+
+        walk.WalkTo(Target);
+        RunUntil(walk, body, _ => body.Position.Y > 60f);
+        need = "MossTank is running Attack";
+        walk.Tick(Frame);
+
+        Assert.Equal(NavigationWalkState.Waiting, walk.Report.State);
+        Assert.Equal("waiting: MossTank is running Attack", walk.Report.Reason);
+        Assert.False(body.Travelling);
+        body.Place(new Vector3(55f, 70f, 0f));
+        Run(walk, body, 10f);
+        Assert.Equal(NavigationWalkState.Waiting, walk.Report.State);
+        Assert.Equal(new Vector2(55f, 70f), body.Flat);
+
+        need = null;
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.Equal(0, report.Replans);
+        Assert.InRange(
+            Vector2.Distance(body.Flat, new Vector2(40f, 150f)),
+            0f,
+            NavigationWalkController.DefaultArrivalMeters + 0.05f);
+    }
+
+    [Fact]
+    public void AWalkSetsOffAgainOnlyOnceNothingHasNeededTheCharacterForAMoment()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
+        string? need = null;
+        var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(40f, 150f, 0f) })
+        {
+            PausedBy = () => need,
+        };
+        walk.WalkTo(Target);
+        RunUntil(walk, body, report => report.State == NavigationWalkState.Walking);
+        need = "MossTank is running Attack";
+        Run(walk, body, 1f);
+        int moves = body.MovesBegun;
+
+        for (int gap = 0; gap < 5; gap++)
+        {
+            need = null;
+            Run(walk, body, (float)NavigationWalkController.PauseSettleSeconds * 0.5f);
+            need = "MossTank is running LootCorpseIdle";
+            Run(walk, body, 0.2f);
+        }
+
+        Assert.Equal(NavigationWalkState.Waiting, walk.Report.State);
+        Assert.Equal("waiting: MossTank is running LootCorpseIdle", walk.Report.Reason);
+        Assert.Equal(moves, body.MovesBegun);
+        need = null;
+        Assert.Equal(NavigationWalkState.Arrived, RunUntilSettled(walk, body).State);
+    }
+
+    [Fact]
+    public void ARouteAskedForAloneIsFoundWhileSomethingElseNeedsTheCharacter()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
+        var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(60f, 75f, 0f) })
+        {
+            PausedBy = () => "MossTank is running Attack",
+        };
+
+        walk.RouteTo(Target);
+
+        Assert.Equal(NavigationWalkState.Planned, RunUntilSettled(walk, body).State);
+    }
+
+    [Fact]
     public void ARouteAskedForAloneIsFoundWithoutMovingTheCharacter()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
@@ -658,7 +736,7 @@ public sealed class NavigationWalkControllerTests
         RunUntil(
             walk,
             body,
-            report => report.State is not (NavigationWalkState.Planning or NavigationWalkState.Walking),
+            report => report.State is not (NavigationWalkState.Planning or NavigationWalkState.Walking or NavigationWalkState.Waiting),
             seconds);
 
     private static NavigationWalkReport RunUntil(
@@ -887,6 +965,9 @@ public sealed class NavigationWalkControllerTests
             if (_turn.State == RuntimeScriptedMoveState.Moving)
                 _turn = _turn with { State = RuntimeScriptedMoveState.Interrupted };
         }
+
+        /// <summary>Puts the body somewhere else, as something other than the walk moving it would.</summary>
+        public void Place(Vector3 position) => Position = position;
 
         public float HeadingErrorTo(Vector2 target)
         {

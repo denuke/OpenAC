@@ -33,6 +33,9 @@ public sealed class ReadToolsTests
     [InlineData("capabilities", "{}", "capabilities")]
     [InlineData("capabilities", """{"guid":"  "}""", "capabilities")]
     [InlineData("capabilities", """{"guid":"0x70000001"}""", "capabilities 0x70000001")]
+    [InlineData("settings", "{}", "settings")]
+    [InlineData("settings", """{"plugin":" mosstank "}""", "settings mosstank")]
+    [InlineData("settings", """{"plugin":"mosstank","section":"options"}""", "settings mosstank options")]
     public async Task EachReadRunsItsLine(string tool, string arguments, string line)
     {
         using var harness = new McpToolHarness();
@@ -60,6 +63,9 @@ public sealed class ReadToolsTests
     [InlineData("vendor", """{"limit":2.5}""")]
     [InlineData("container", """{"limit":"all"}""")]
     [InlineData("capabilities", """{"guid":"everything"}""")]
+    [InlineData("settings", """{"section":"options"}""")]
+    [InlineData("settings", """{"plugin":"moss tank"}""")]
+    [InlineData("settings", """{"plugin":"mosstank","section":"two words"}""")]
     public async Task BadArgumentsAreAnErrorAndRunNothing(string tool, string arguments)
     {
         using var harness = new McpToolHarness();

@@ -17,15 +17,50 @@ public sealed class McpToolsTests
 
         Assert.Equal(
             [
-                "act", "buffs", "capabilities", "characters", "container", "corpses", "equipment", "events", "inspect",
-                "inventory", "nearby", "observe", "outcome", "skills", "spells", "vendor",
+                "act", "buffs", "capabilities", "characters", "configure", "container", "corpses", "equipment", "events",
+                "inspect", "inventory", "nearby", "observe", "outcome", "settings", "skills", "spells", "vendor",
             ],
             definitions.Select(tool => tool["name"]!.GetValue<string>()).Order(StringComparer.Ordinal));
         foreach (JsonObject tool in definitions)
         {
             bool readOnly = tool["annotations"]!["readOnlyHint"]!.GetValue<bool>();
-            Assert.Equal(tool["name"]!.GetValue<string>() != "act", readOnly);
+            Assert.Equal(tool["name"]!.GetValue<string>() is not ("act" or "configure"), readOnly);
         }
+    }
+
+    [Fact]
+    public async Task ConfigureHandsAPluginItsChangeAndAnswersWithWhatChanged()
+    {
+        using var harness = new McpToolHarness();
+        var provider = new FakeSettingsProvider();
+        harness.Host.FakeSettings.Register("acdream.mosstank/settings", "MossTank", provider);
+
+        JsonObject result = await harness.CallAsync("configure", new JsonObject
+        {
+            ["plugin"] = "mosstank",
+            ["change"] = new JsonObject { ["options"] = new JsonObject { ["EnableCombat"] = false } },
+        });
+
+        JsonElement answer = McpToolHarness.Structured(result);
+        Assert.False(McpToolHarness.IsError(result));
+        Assert.Equal("done", answer.GetProperty("status").GetString());
+        Assert.Equal("""{"options":{"EnableCombat":false}}""", Assert.Single(provider.Changes));
+        Assert.Contains(
+            answer.GetProperty("records").EnumerateArray(),
+            record => record.GetProperty("kind").GetString() == "settings-changed");
+    }
+
+    [Theory]
+    [InlineData("""{"change":{"options":{}}}""")]
+    [InlineData("""{"plugin":"moss tank","change":{"options":{}}}""")]
+    [InlineData("""{"plugin":"mosstank","change":"EnableCombat"}""")]
+    public async Task ConfigureRefusesArgumentsItCannotSend(string arguments)
+    {
+        using var harness = new McpToolHarness();
+
+        JsonObject result = await harness.CallAsync("configure", JsonNode.Parse(arguments)!.AsObject());
+
+        Assert.True(McpToolHarness.IsError(result));
     }
 
     [Fact]

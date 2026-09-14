@@ -61,7 +61,7 @@ internal sealed class FakeNavigation : INavigationAutomation
     public PluginNavigationCommandStatus StopGoTo()
     {
         GoToStops++;
-        if (GoToReport.State is not (PluginGoToState.Planning or PluginGoToState.Walking))
+        if (GoToReport.State is not (PluginGoToState.Planning or PluginGoToState.Walking or PluginGoToState.Waiting))
             return PluginNavigationCommandStatus.Rejected;
         EndGoTo(PluginGoToState.Stopped, "stopped");
         return PluginNavigationCommandStatus.Accepted;
