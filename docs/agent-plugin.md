@@ -42,7 +42,8 @@ says which in chat and in the client's log.
 
 ## Tools
 
-Only `act` can make the character do anything. Every other tool only reads.
+Only `act` can make the character do anything, and only `configure` changes
+another plugin's settings. Every other tool only reads.
 
 | Tool | Answers with |
 |---|---|
@@ -62,6 +63,8 @@ Only `act` can make the character do anything. Every other tool only reads.
 | `container` | The items in the open corpse or container. |
 | `corpses` | Corpses in range, and whether each has been opened. |
 | `characters` | The account's characters at the character list, and where the client stands in logging in. |
+| `settings` | The settings other plugins share, such as MossTank's options, monster rules, items and buffs, and how to change them. |
+| `configure` | Changes a plugin's shared settings with one JSON object, and answers with the parts it changed as the plugin now holds them. |
 
 `capabilities` answers what the character can do in one call. It lists everything around the
 character, nearest first, each object with the lines this client would take for it now, such as
@@ -112,6 +115,7 @@ the read tools print, such as `0x70000001`.
 | Items | `loot <item id>`, `drop <item id> [amount]`, `give <item id> to <id> [amount]`, `move <item id> to <container id> [amount]`, `equip <item id>`, `unequip <item id>` |
 | Vendor | `buy <listing id or name> [quantity]`, `sell <item id> [amount]` |
 | Combat | `attack [id] [power from 0 to 1] [high\|medium\|low]` |
+| Plugin settings | `settings [plugin] [section]`, `configure <plugin> <change>` |
 
 `login` works at the character list, before any character is in the world. It
 enters the world as the named character, as choosing it and pressing enter does,
@@ -179,6 +183,20 @@ commands that close the client, kill the character, or change its player-killer
 status are refused, and `logout` is how a model leaves the world. Any other line is handed to the client as chat or a
 client command, so a model can make the character speak.
 
+`settings` reads the settings other plugins share, and `configure` changes them.
+MossTank shares all of its own: whether its macro runs and what it is doing,
+every option by name, the advanced ones included, its monster rules in order
+with each rule's priority, actions, damage types and weapons, the items and
+consumables it uses, its extra and blacklisted buffs, and which profiles are
+loaded. `settings mosstank` answers with all of it and with `howToChange`, and
+`settings mosstank options` with one section. `configure mosstank <change>`
+takes one JSON object, such as
+`{"options":{"EnableCombat":true},"macro":{"running":true}}`, and saves the
+change to the loaded profile as MossTank's own panel does. A change wrong in any
+part changes nothing and is refused with every reason. An applied change answers
+with the parts it touched as MossTank now holds them, so a range MossTank kept
+within its limits shows the value it kept.
+
 Objects in `nearby` and `inspect` carry `sight`: a verdict for an arc spell, a war
 bolt and an arrow, each `visible`, `blocked`, or `cannot-say` with `because`. The
 three fly different paths, so an arc can clear a ledge that stops a bolt, and
@@ -216,6 +234,8 @@ how many were dropped and where the stream resumes.
   no password: any program running on this computer can connect, log a character
   in or out, and act as it.
 - Only `act` can make the character do anything, and it runs one line per call.
+- `configure` changes other plugins' settings, such as starting MossTank's
+  macro, which can set the character fighting.
 
 ## Not included
 

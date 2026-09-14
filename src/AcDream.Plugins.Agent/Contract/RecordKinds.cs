@@ -48,6 +48,9 @@ internal static class RecordKinds
     internal const string LoginOutcome = "login-outcome";
     internal const string Capabilities = "capabilities";
     internal const string PlayerCapabilities = "player-capabilities";
+    internal const string PluginSettings = "plugin-settings";
+    internal const string SettingsChanged = "settings-changed";
+    internal const string SettingsRefused = "settings-refused";
 
     /// <summary>
     /// Kinds that describe current state. The latest record of each is kept
