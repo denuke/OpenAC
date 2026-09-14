@@ -95,6 +95,7 @@ public interface IWorldObjectAutomation
         return false;
     }
 
+    /// <summary>Asks the server to appraise an object the client knows, carried or in the world.</summary>
     PluginItemCommandResult Identify(uint objectId) =>
         new(PluginItemCommandStatus.Unavailable);
 
