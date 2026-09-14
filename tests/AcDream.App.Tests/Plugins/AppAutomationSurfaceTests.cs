@@ -59,7 +59,10 @@ public sealed class AppAutomationSurfaceTests
             AcDream.App.Navigation.NavigationPlacesState.Ready,
             [
                 new AcDream.App.Navigation.NavigationPlace(
-                    new Vector3(202f, 30296f, 0.005f), 12.5f, AcDream.App.Navigation.NavigationPlaceKind.Passage, 30f, 2f, 2.5f, 3),
+                    new Vector3(202f, 30296f, 0.005f), 12.5f, AcDream.App.Navigation.NavigationPlaceKind.Passage, 30f, 2f, 2.5f, 3)
+                {
+                    Neighbours = [1],
+                },
                 new AcDream.App.Navigation.NavigationPlace(
                     new Vector3(24480f, 30432f, 12f), float.NaN, AcDream.App.Navigation.NavigationPlaceKind.Landblock, 36864f, 192f, 0f, 0)
                 {
@@ -86,6 +89,8 @@ public sealed class AppAutomationSurfaceTests
         Assert.Equal(12.5f, place.WalkMeters);
         Assert.Equal(PluginPlaceKind.Passage, place.Kind);
         Assert.Equal(3, place.Exits);
+        Assert.Equal([1], place.Neighbours);
+        Assert.Empty(report.Places[1].Neighbours);
         Assert.Equal(-101.075d, report.From.EastWest, 4);
     }
 

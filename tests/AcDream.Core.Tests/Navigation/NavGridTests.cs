@@ -34,6 +34,7 @@ public sealed class NavGridTests
 
         Assert.Equal([NavPlaceKind.Room, NavPlaceKind.Passage, NavPlaceKind.Room], places.Select(place => place.Kind));
         Assert.Equal([1, 2, 1], places.Select(place => place.Exits));
+        Assert.Equal(["1", "0,2", "1"], places.Select(place => string.Join(",", place.Neighbours)));
         Assert.InRange(places[0].Position.X, 4f, 8f);
         Assert.InRange(places[2].Position.X, 32f, 36f);
         Assert.True(places[1].WidthMeters < places[0].WidthMeters);

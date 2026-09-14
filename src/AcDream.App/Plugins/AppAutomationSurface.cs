@@ -1992,6 +1992,7 @@ internal sealed class AppAutomationSurface
             {
                 LandblockId = place.LandblockId,
                 IsWater = place.IsWater,
+                Neighbours = place.Neighbours,
             };
         }
         PluginPlacesState state = report.State switch

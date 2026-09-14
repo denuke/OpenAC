@@ -1491,10 +1491,14 @@ internal sealed class NavigationWalkController
             return;
         }
         var places = new List<NavigationPlace>(placing.Result.Count);
-        foreach (NavPlace place in placing.Result)
+        var indexOf = new int[placing.Result.Count];
+        for (int index = 0; index < placing.Result.Count; index++)
         {
+            NavPlace place = placing.Result[index];
+            indexOf[index] = -1;
             if (_goals.TryGlobalOf(place.Position, out Vector3 global))
             {
+                indexOf[index] = places.Count;
                 places.Add(new NavigationPlace(
                     global,
                     place.WalkMeters,
@@ -1503,6 +1507,16 @@ internal sealed class NavigationWalkController
                     place.WidthMeters,
                     place.RiseMeters,
                     place.Exits));
+            }
+        }
+        for (int index = 0; index < placing.Result.Count; index++)
+        {
+            if (indexOf[index] >= 0)
+            {
+                places[indexOf[index]] = places[indexOf[index]] with
+                {
+                    Neighbours = [.. placing.Result[index].Neighbours.Select(neighbour => indexOf[neighbour]).Where(neighbour => neighbour >= 0)],
+                };
             }
         }
         if (!_placingInDungeon)
