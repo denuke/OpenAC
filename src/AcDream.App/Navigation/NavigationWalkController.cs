@@ -161,8 +161,9 @@ internal interface INavigationGoalSource
 
     /// <summary>
     /// Where a place stands in the physics world: a point in the landblock-local frame
-    /// of the cell <paramref name="cellId"/>, as the client's /loc gives it. False when
-    /// the client cannot place it relative to the character.
+    /// of the cell <paramref name="cellId"/>, as the client's /loc gives it, or for a cell
+    /// of zero a point measured from the corner of the first landblock. False when the
+    /// client cannot place it relative to the character.
     /// </summary>
     bool TryLocatePlace(uint cellId, Vector3 local, out Vector3 position)
     {
@@ -434,7 +435,8 @@ internal sealed class NavigationWalkController
 
     /// <summary>
     /// Asks to walk to a place, a point in the landblock-local frame of the cell
-    /// <paramref name="cellId"/> as the client's /loc gives it, and returns the request's
+    /// <paramref name="cellId"/> as the client's /loc gives it, or for a cell of zero a
+    /// point measured from the corner of the first landblock, and returns the request's
     /// sequence. A walk to a place reports no object and faces nothing on arrival.
     /// </summary>
     public long WalkToPlace(uint cellId, Vector3 local, float arrivalMeters = DefaultArrivalMeters) =>

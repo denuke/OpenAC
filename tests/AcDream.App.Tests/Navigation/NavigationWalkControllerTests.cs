@@ -130,6 +130,20 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
+    public void APlaceKnownOnlyByItsMapCoordinatesLiesWhereItsCellPlacesIt()
+    {
+        var here = new Vector3(15.259f, -39.938f, 0.005f);
+        Vector3 byCell = RuntimeNavigationGoalSource.PlaceOffset(0x019E0114u, new Vector3(10f, -40f, 0.005f), 0x019E0123u, here);
+        Vector3 byMap = RuntimeNavigationGoalSource.PlaceOffset(0u, new Vector3(202f, 30296f, 0.005f), 0x019E0123u, here);
+
+        Assert.Equal(-5.259d, byCell.X, 3);
+        Assert.Equal(-0.062d, byCell.Y, 3);
+        Assert.Equal(byCell.X, byMap.X, 2);
+        Assert.Equal(byCell.Y, byMap.Y, 2);
+        Assert.Equal(byCell.Z, byMap.Z, 3);
+    }
+
+    [Fact]
     public void AWalkToAPlaceArrivesThereWithoutTurningToFaceIt()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 0f));

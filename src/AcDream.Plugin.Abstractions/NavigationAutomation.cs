@@ -309,7 +309,9 @@ public interface INavigationAutomation
     /// an object: along a route the client plans, ending within
     /// <paramref name="arrivalMeters"/> of <paramref name="position"/>, and waiting while
     /// something else needs the character. It does not turn the character to face
-    /// anything on arrival. <see cref="GoToReport"/> reports the walk with no object id.
+    /// anything on arrival. A position with no cell, such as one read from a VTank route
+    /// file, is placed by its map coordinates alone. <see cref="GoToReport"/> reports the
+    /// walk with no object id.
     /// </summary>
     PluginNavigationCommandStatus GoTo(PluginNavigationPosition position, float arrivalMeters) =>
         PluginNavigationCommandStatus.Unavailable;

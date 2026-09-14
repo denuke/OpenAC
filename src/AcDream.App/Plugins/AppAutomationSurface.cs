@@ -1899,8 +1899,7 @@ internal sealed class AppAutomationSurface
             walk = _navigationWalk;
         if (walk is null || !IsAvailable)
             return PluginNavigationCommandStatus.Unavailable;
-        if (position.CellId == 0u
-            || !double.IsFinite(position.EastWest)
+        if (!double.IsFinite(position.EastWest)
             || !double.IsFinite(position.NorthSouth)
             || !double.IsFinite(position.Elevation)
             || !(arrivalMeters > 0f)
@@ -1912,7 +1911,10 @@ internal sealed class AppAutomationSurface
         return PluginNavigationCommandStatus.Accepted;
     }
 
-    /// <summary>A plugin position's point in its landblock's own frame, the way <see cref="ProjectNavigationPosition"/> was given it.</summary>
+    /// <summary>
+    /// A plugin position's point in its landblock's own frame, the way <see cref="ProjectNavigationPosition"/> was given it;
+    /// for a position with no cell, the point measured from the corner of the first landblock.
+    /// </summary>
     internal static System.Numerics.Vector3 LandblockLocal(in PluginNavigationPosition position)
     {
         uint blockX = (position.CellId >> 24) & 0xFFu;

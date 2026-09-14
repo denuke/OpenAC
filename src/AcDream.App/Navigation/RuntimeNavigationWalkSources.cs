@@ -189,19 +189,29 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
     /// <summary>A place in a cell's landblock frame, set relative to where the character stands in the physics world.</summary>
     public bool TryLocatePlace(uint cellId, Vector3 local, out Vector3 position)
     {
-        if (cellId == 0u || _movement.Controller is not { } controller)
+        if (_movement.Controller is not { } controller)
         {
             position = default;
             return false;
         }
         AcDream.Core.Physics.Position here = controller.CellPosition;
-        int blocksEast = (int)((cellId >> 24) & 0xFFu) - (int)((here.ObjCellId >> 24) & 0xFFu);
-        int blocksNorth = (int)((cellId >> 16) & 0xFFu) - (int)((here.ObjCellId >> 16) & 0xFFu);
-        position = controller.Position + new Vector3(
-            (blocksEast * NavGeometry.LandblockSize) + local.X - here.Frame.Origin.X,
-            (blocksNorth * NavGeometry.LandblockSize) + local.Y - here.Frame.Origin.Y,
-            local.Z - here.Frame.Origin.Z);
+        position = controller.Position + PlaceOffset(cellId, local, here.ObjCellId, here.Frame.Origin);
         return true;
+    }
+
+    /// <summary>
+    /// How far a place lies from where the character stands, each given as a cell and a
+    /// point in that cell's landblock frame. A cell of zero measures its point from the
+    /// corner of the first landblock, the way a place known only by its map coordinates is.
+    /// </summary>
+    internal static Vector3 PlaceOffset(uint cellId, Vector3 local, uint hereCellId, Vector3 hereLocal)
+    {
+        int blocksEast = (int)((cellId >> 24) & 0xFFu) - (int)((hereCellId >> 24) & 0xFFu);
+        int blocksNorth = (int)((cellId >> 16) & 0xFFu) - (int)((hereCellId >> 16) & 0xFFu);
+        return new Vector3(
+            (blocksEast * NavGeometry.LandblockSize) + local.X - hereLocal.X,
+            (blocksNorth * NavGeometry.LandblockSize) + local.Y - hereLocal.Y,
+            local.Z - hereLocal.Z);
     }
 
     /// <summary>
