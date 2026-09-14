@@ -344,6 +344,14 @@ internal sealed class NavigationController
     private uint _activeLockpickObjectId;
     private double _doorElapsed;
     private double _doorRetryElapsed;
+
+    /// <summary>
+    /// The door whose lock was last asked about, how long it has been asked about, and how
+    /// long since it was last asked.
+    /// </summary>
+    private uint _identifyingDoorObjectId;
+    private double _doorIdentifyElapsed;
+    private double _doorIdentifySinceAsked;
     private PluginNavigationPosition _portalOrigin;
     private bool _hasPortalOrigin;
     private bool _hadMovementIntent;
@@ -448,6 +456,7 @@ internal sealed class NavigationController
         _clientLegFailures = 0;
         _clientWalksOnePointAtATime = false;
         LastSkippedLeg = string.Empty;
+        _identifyingDoorObjectId = 0u;
         _index = 0;
         _reverse = false;
         _onceComplete = false;
@@ -670,12 +679,13 @@ internal sealed class NavigationController
             ClearDoor();
             return false;
         }
-        if (!door.HasLockState)
+        if (!door.HasLockState && !DoorIdentifyTimedOut(door.ObjectId, elapsedSeconds))
         {
-            if (nearest <= _settings.DoorIdentifyRangeMeters
+            if (_doorIdentifySinceAsked >= UseRetrySeconds
                 && _host.Automation.Loot.Appraisal.AwaitingObjectId == 0u)
             {
-                _ = _host.Automation.Loot.Identify(door.ObjectId);
+                _ = _host.Automation.Objects.Identify(door.ObjectId);
+                _doorIdentifySinceAsked = 0d;
             }
             if (nearest <= _settings.DoorOpenRangeMeters)
             {
@@ -729,6 +739,25 @@ internal sealed class NavigationController
                 : $"Waiting for door: {door.Name}.";
         }
         return true;
+    }
+
+    /// <summary>
+    /// Counts how long the lock of <paramref name="doorId"/> has been asked about, starting
+    /// over for a different door, and says when it has gone unanswered too long to wait for:
+    /// the door is then opened as though unlocked.
+    /// </summary>
+    private bool DoorIdentifyTimedOut(uint doorId, double elapsedSeconds)
+    {
+        if (doorId != _identifyingDoorObjectId)
+        {
+            _identifyingDoorObjectId = doorId;
+            _doorIdentifyElapsed = 0d;
+            _doorIdentifySinceAsked = UseRetrySeconds;
+            return false;
+        }
+        _doorIdentifyElapsed += elapsedSeconds;
+        _doorIdentifySinceAsked += elapsedSeconds;
+        return _doorIdentifyElapsed >= DoorActionTimeoutSeconds;
     }
 
     private uint SelectLockpick(int difficulty)

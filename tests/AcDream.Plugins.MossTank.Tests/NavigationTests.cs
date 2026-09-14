@@ -314,6 +314,58 @@ public sealed class NavigationTests
     }
 
     [Fact]
+    public void AnUnappraisedDoorIsAppraisedAsAWorldObjectAndOpenedOnceItsLockIsKnown()
+    {
+        var automation = new FakeAutomation
+        {
+            NavigationSnapshot = Snapshot(Position(0d, 0d, heading: 90f)),
+        };
+        automation.WorldObjects.Add(new PluginNavigationObject(55u, "Dungeon Door", Position(0.01d, 0d))
+        {
+            IsDoor = true,
+            IsOpen = false,
+            HasLockState = false,
+        });
+        var settings = new NavigationSettings { Enabled = true, OpenDoors = true, Mode = RouteMode.Circular };
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Position(1d, 0d)));
+        var controller = new NavigationController(new FakeHost(automation), settings);
+
+        Assert.True(controller.Tick(0.5d, canAct: true));
+        Assert.True(controller.Tick(0.5d, canAct: true));
+        Assert.Equal([55u], automation.IdentifiedObjects);
+        Assert.Equal("Identifying door: Dungeon Door.", controller.Status);
+        Assert.Empty(automation.UsedObjects);
+
+        automation.WorldObjects[0] = automation.WorldObjects[0] with { HasLockState = true };
+        Assert.True(controller.Tick(0.5d, canAct: true));
+        Assert.Equal([55u], automation.UsedObjects);
+    }
+
+    [Fact]
+    public void ADoorWhoseAppraisalGoesUnansweredIsOpenedAnyway()
+    {
+        var automation = new FakeAutomation
+        {
+            NavigationSnapshot = Snapshot(Position(0d, 0d, heading: 90f)),
+        };
+        automation.WorldObjects.Add(new PluginNavigationObject(55u, "Dungeon Door", Position(0.01d, 0d))
+        {
+            IsDoor = true,
+            IsOpen = false,
+            HasLockState = false,
+        });
+        var settings = new NavigationSettings { Enabled = true, OpenDoors = true, Mode = RouteMode.Circular };
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Position(1d, 0d)));
+        var controller = new NavigationController(new FakeHost(automation), settings);
+
+        for (int pass = 0; pass < 6; pass++)
+            Assert.True(controller.Tick(1d, canAct: true));
+
+        Assert.Equal([55u, 55u, 55u], automation.IdentifiedObjects);
+        Assert.Equal([55u], automation.UsedObjects);
+    }
+
+    [Fact]
     public void PauseAndChatActionsObserveOfficialInitialDelay()
     {
         var automation = new FakeAutomation
@@ -1431,8 +1483,17 @@ public sealed class NavigationTests
 
     private sealed class FakeAutomation
         : IAutomationSurface, INavigationAutomation, IPluginChat, IItemAutomation,
-          ICombatAutomation, IEquipmentAutomation
+          ICombatAutomation, IEquipmentAutomation, IWorldObjectAutomation
     {
+        IWorldObjectAutomation IAutomationSurface.Objects => this;
+        public List<uint> IdentifiedObjects { get; } = [];
+
+        PluginItemCommandResult IWorldObjectAutomation.Identify(uint objectId)
+        {
+            IdentifiedObjects.Add(objectId);
+            return new PluginItemCommandResult(PluginItemCommandStatus.Started);
+        }
+
         public bool IsAvailable => true;
         public ICombatAutomation Combat => this;
         public IEquipmentAutomation Equipment => this;
