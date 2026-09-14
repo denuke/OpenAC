@@ -200,7 +200,9 @@ within its limits shows the value it kept.
 Objects in `nearby` and `inspect` carry `sight`: a verdict for an arc spell, a war
 bolt and an arrow, each `visible`, `blocked`, or `cannot-say` with `because`. The
 three fly different paths, so an arc can clear a ledge that stops a bolt, and
-`blockedBy` names what stopped a blocked shot, such as a closed door. The client
+`blockedBy` names what stopped a blocked shot: an object, such as a closed door,
+or `geometry` for the landscape and the walls, floors and ceilings of buildings
+and dungeons. The client
 traces each path through its own collision world, as a prediction: the server
 still decides at launch. One `nearby` answer traces its nearest twelve objects
 within 80 m, and `inspect` traces any one.
