@@ -211,6 +211,8 @@ change to the loaded profile as MossTank's own panel does. A route is replaced
 whole, its points written the way `/loc` writes them, with pauses in seconds
 and chat lines between them, such as
 `{"route":{"waypoints":[{"point":"0xA9B40019 [84 7.1 94]"},{"pause":5},{"chat":"/say hi"}],"mode":"Circular","walkLegs":true,"enabled":true}}`.
+Every position the agent reports, the character's own and each object's, carries
+`loc` in that form, so a model can build a route from where it has stood.
 A change wrong in any
 part changes nothing and is refused with every reason. An applied change answers
 with the parts it touched as MossTank now holds them, so a range MossTank kept

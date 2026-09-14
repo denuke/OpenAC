@@ -19,6 +19,21 @@ public sealed class BodyProjectionTests
     }
 
     [Fact]
+    public void APositionCarriesItsCellAndPointTheWayLocWritesThem()
+    {
+        var position = new PluginNavigationPosition(
+            0xA9B40019u,
+            (((0xA9 - 127d) * 192d) + 84d - 84d) / 240d,
+            (((0xB4 - 127d) * 192d) + 7.1d - 84d) / 240d,
+            94.005d / 240d,
+            0f,
+            IsOutdoor: true);
+
+        Assert.Equal("0xA9B40019 [84 7.1 94.005]", Coordinates.Describe(position)["loc"]!.GetValue<string>());
+        Assert.False(Coordinates.Describe(new PluginNavigationPosition(0u, 1d, 2d, 0d, 0f, true)).ContainsKey("loc"));
+    }
+
+    [Fact]
     public void TheSimulatedPositionIsStatedInMapCoordinates()
     {
         var host = new FakePluginHost();
