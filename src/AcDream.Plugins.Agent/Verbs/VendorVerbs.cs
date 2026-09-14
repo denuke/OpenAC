@@ -11,11 +11,16 @@ namespace AcDream.Plugins.Agent.Verbs;
 /// <c>vendor</c>, <c>buy &lt;listing&gt; [quantity]</c> and <c>sell &lt;item id&gt; [amount]</c>
 /// with the vendor that is open. A purchase completes when the items arrive in
 /// the pack, and a sale when the item leaves it, since the client gets no
-/// separate answer for either.
+/// separate answer for either. A sale of an item the client has never appraised
+/// appraises it first: an item that cannot be sold says so only in its
+/// appraisal, and the server does not answer an offer of one.
 /// </summary>
 internal sealed class VendorVerbs : IVerbFamily
 {
     internal const double CheckSeconds = 0.5d;
+
+    /// <summary>How long a sale waits for the appraisal it asked for before offering the item regardless.</summary>
+    internal const double AppraisalSeconds = 3d;
 
     /// <summary>Listings shown unless a read asks for more.</summary>
     internal const int DefaultListingRows = 100;
@@ -144,7 +149,7 @@ internal sealed class VendorVerbs : IVerbFamily
                 "unit price and amount",
                 "unit price times amount"),
         });
-        Watch(line, () =>
+        Watch(line, InventoryOutcomes.WindowSeconds, () =>
         {
             int carried = Carried(automation, chosen);
             return carried >= before + quantity
@@ -170,36 +175,44 @@ internal sealed class VendorVerbs : IVerbFamily
 
         int before = Math.Max(1, item.StackSize);
         int leaving = amount == 0u ? before : (int)Math.Min(amount, (uint)before);
-        PluginItemCommandResult result = automation.Items.Sell(id, amount);
-        if (!result.Accepted)
-            return RefuseStatus(line, result);
+        if (Unappraised(automation, id) && automation.Objects.Identify(id).Accepted)
+        {
+            Offered(line, id, item.Name, leaving, appraisingFirst: true);
+            double stopWaiting = _clock.Now + AppraisalSeconds;
+            bool sent = false;
+            Watch(line, InventoryOutcomes.WindowSeconds + AppraisalSeconds, () =>
+            {
+                if (!sent)
+                {
+                    if (Unappraised(automation, id) && _clock.Now < stopWaiting)
+                        return null;
+                    PluginItemCommandResult result = automation.Items.Sell(id, amount);
+                    if (!result.Accepted)
+                    {
+                        return new Resolution(
+                            InventoryOutcomes.Refused,
+                            result.Notice ?? $"the client did not do it ({WireNames.Kebab(result.Status.ToString())})");
+                    }
+                    sent = true;
+                }
+                return SaleAnswered(automation, id, before, leaving);
+            });
+            return VerbResult.Handled;
+        }
 
-        _publisher.Publish(RecordKinds.InventoryAction, new JsonObject
-        {
-            ["id"] = line.Id,
-            ["verb"] = line.Verb,
-            ["guid"] = Facts.Hex(id),
-            ["name"] = item.Name,
-            ["amount"] = leaving,
-        });
-        Watch(line, () =>
-        {
-            PluginInventoryItem now = automation.Items.CaptureOwnedItems()
-                .FirstOrDefault(owned => owned.ObjectId == id);
-            if (now.ObjectId == 0u)
-                return new Resolution(InventoryOutcomes.Completed, "the item left the pack");
-            return Math.Max(1, now.StackSize) <= before - leaving
-                ? new Resolution(InventoryOutcomes.Completed, "the stack shrank")
-                : null;
-        });
+        PluginItemCommandResult sold = automation.Items.Sell(id, amount);
+        if (!sold.Accepted)
+            return RefuseStatus(line, sold);
+        Offered(line, id, item.Name, leaving, appraisingFirst: false);
+        Watch(line, InventoryOutcomes.WindowSeconds, () => SaleAnswered(automation, id, before, leaving));
         return VerbResult.Handled;
     }
 
     /// <summary>Checks for the effect every half second rather than on every frame.</summary>
-    private void Watch(CommandLine line, Func<Resolution?> effect)
+    private void Watch(CommandLine line, double seconds, Func<Resolution?> effect)
     {
         double next = _clock.Now;
-        _outcomes.Watch(line.Id, line.Verb, RecordKinds.InventoryOutcome, InventoryOutcomes.WindowSeconds, () =>
+        _outcomes.Watch(line.Id, line.Verb, RecordKinds.InventoryOutcome, seconds, () =>
         {
             if (_clock.Now < next)
                 return null;
@@ -207,6 +220,36 @@ internal sealed class VendorVerbs : IVerbFamily
             return effect();
         });
     }
+
+    private void Offered(CommandLine line, uint id, string name, int amount, bool appraisingFirst) =>
+        _publisher.Publish(RecordKinds.InventoryAction, new JsonObject
+        {
+            ["id"] = line.Id,
+            ["verb"] = line.Verb,
+            ["guid"] = Facts.Hex(id),
+            ["name"] = name,
+            ["amount"] = amount,
+            ["appraisingFirst"] = appraisingFirst ? true : null,
+        });
+
+    /// <summary>Whether a sale went through: the item left the pack, or its stack shrank by the amount sold.</summary>
+    private static Resolution? SaleAnswered(IAutomationSurface automation, uint id, int before, int leaving)
+    {
+        PluginInventoryItem now = automation.Items.CaptureOwnedItems()
+            .FirstOrDefault(owned => owned.ObjectId == id);
+        if (now.ObjectId == 0u)
+            return new Resolution(InventoryOutcomes.Completed, "the item left the pack");
+        return Math.Max(1, now.StackSize) <= before - leaving
+            ? new Resolution(InventoryOutcomes.Completed, "the stack shrank")
+            : null;
+    }
+
+    /// <summary>
+    /// Whether the client has never appraised an object it knows, so a property
+    /// only an appraisal carries, such as one that stops a sale, may be missing.
+    /// </summary>
+    internal static bool Unappraised(IAutomationSurface automation, uint id) =>
+        automation.Objects.TryGet(id, out PluginWorldObject value) && value.LastIdTime == 0;
 
     private static int Carried(IAutomationSurface automation, PluginVendorItem listing) =>
         automation.Items.CaptureOwnedItems()

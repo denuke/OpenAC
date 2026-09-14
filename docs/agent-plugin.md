@@ -71,7 +71,10 @@ alike for every object are said once in `legend`, with `<guid>` in place of the 
 act on the character itself, such as `buy` at the open vendor, `stance combat` or `logout`, come
 under `character`. With `guid` it answers for one object, including one the character carries. A
 line graded `available` can still be refused by the server, and that answer arrives on the line's
-own outcome.
+own outcome. The client learns that an item cannot be sold only by appraising it, and the server
+does not answer an offer of such an item, so a sale of an item the client has never appraised is
+graded `unknown`, and `sell` appraises the item before offering it; an item that cannot be sold is
+then refused with the game's reason.
 
 `spells` shows at most 50 rows, and `inventory`, `vendor` and `container` at most 100, unless
 `limit` asks for another number up to 500. Each answer says how many rows matched, how many are

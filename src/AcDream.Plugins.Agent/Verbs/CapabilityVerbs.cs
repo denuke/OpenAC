@@ -44,6 +44,10 @@ internal sealed class CapabilityVerbs : IVerbFamily
         "whether a spell can be cast depends on the spell; 'spells' lists what the character knows and whether it "
         + "carries the components";
 
+    private const string NotAppraised =
+        "the client has not appraised it, and an item that cannot be sold says so only in its appraisal; "
+        + "'sell' appraises it first";
+
     private readonly IPluginHost _host;
     private readonly Publisher _publisher;
     private readonly OutcomeCorrelator _outcomes;
@@ -263,6 +267,8 @@ internal sealed class CapabilityVerbs : IVerbFamily
         PluginItemCommandResult check = situation.Automation.Items.CheckSell(objectId);
         return check.Status switch
         {
+            PluginItemCommandStatus.Started when VendorVerbs.Unappraised(situation.Automation, objectId) =>
+                new("sell", label, line, Unknown, NotAppraised),
             PluginItemCommandStatus.Started => new("sell", label, line, Available, null),
             PluginItemCommandStatus.Unavailable =>
                 new("sell", label, line, Unknown, "this client cannot check a sale before the item is offered"),

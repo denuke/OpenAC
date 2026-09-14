@@ -217,6 +217,15 @@ internal sealed class FakeObjects : IWorldObjectAutomation
         Uses.Add(objectId);
         return new PluginItemCommandResult(UseStatus);
     }
+
+    internal List<uint> Identifies { get; } = [];
+    internal PluginItemCommandStatus IdentifyStatus { get; set; } = PluginItemCommandStatus.Started;
+
+    public PluginItemCommandResult Identify(uint objectId)
+    {
+        Identifies.Add(objectId);
+        return new PluginItemCommandResult(IdentifyStatus);
+    }
 }
 
 internal sealed class FakeItems : IItemAutomation
@@ -231,6 +240,7 @@ internal sealed class FakeItems : IItemAutomation
     internal List<PluginVendorItem> Stock { get; } = [];
     internal List<string> Calls { get; } = [];
     internal PluginItemCommandStatus NextStatus { get; set; } = PluginItemCommandStatus.Started;
+    internal string? NextNotice { get; set; }
 
     public IReadOnlyList<PluginInventoryItem> CaptureOwnedItems() => Owned.ToArray();
 
@@ -267,7 +277,7 @@ internal sealed class FakeItems : IItemAutomation
     private PluginItemCommandResult Record(string call)
     {
         Calls.Add(call);
-        return new PluginItemCommandResult(NextStatus);
+        return new PluginItemCommandResult(NextStatus, NextNotice);
     }
 }
 

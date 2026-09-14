@@ -83,7 +83,7 @@ public sealed class CapabilityVerbsTests
     {
         var (host, verbs, ring) = Scene();
         host.FakeAutomation.FakeObjects.Add(new PluginWorldObject(
-            Scarab, 1u, "Lead Scarab", PluginObjectClass.Misc, 8u, Self, 0u) { IsOwned = true });
+            Scarab, 1u, "Lead Scarab", PluginObjectClass.Misc, 8u, Self, 0u) { IsOwned = true, LastIdTime = 4200 });
 
         verbs.Handle(Line($"capabilities 0x{Scarab:X8}"));
         JsonElement carried = Latest(ring, RecordKinds.Capabilities);
@@ -108,6 +108,14 @@ public sealed class CapabilityVerbsTests
         host.FakeAutomation.FakeItems.SaleCheck = new PluginItemCommandResult(PluginItemCommandStatus.Unavailable);
         verbs.Handle(Line($"capabilities 0x{Scarab:X8}"));
         Assert.Equal("unknown", Action(Latest(ring, RecordKinds.Capabilities), "sell").GetProperty("verdict").GetString());
+
+        host.FakeAutomation.FakeItems.SaleCheck = new PluginItemCommandResult(PluginItemCommandStatus.Started);
+        host.FakeAutomation.FakeObjects.Add(new PluginWorldObject(
+            Scarab, 1u, "Lead Scarab", PluginObjectClass.Misc, 8u, Self, 0u) { IsOwned = true });
+        verbs.Handle(Line($"capabilities 0x{Scarab:X8}"));
+        JsonElement unappraised = Action(Latest(ring, RecordKinds.Capabilities), "sell");
+        Assert.Equal("unknown", unappraised.GetProperty("verdict").GetString());
+        Assert.Contains("appraises it first", unappraised.GetProperty("because").GetString());
     }
 
     [Fact]
