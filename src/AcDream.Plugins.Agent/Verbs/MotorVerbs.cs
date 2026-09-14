@@ -47,7 +47,7 @@ internal sealed class MotorVerbs : IVerbFamily
     internal const float MaximumArrivalMeters = 50f;
 
     /// <summary>The farthest object a walk is planned to.</summary>
-    internal const double MaximumGoToMeters = 250d;
+    internal const double MaximumGoToMeters = 1000d;
 
     /// <summary>
     /// A walk's report is waited for as long as planning takes, plus the straight

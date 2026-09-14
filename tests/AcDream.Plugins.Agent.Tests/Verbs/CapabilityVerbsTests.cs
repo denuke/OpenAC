@@ -151,7 +151,7 @@ public sealed class CapabilityVerbsTests
     public void AWalkBeyondItsLimitIsGradedUnavailableWithTheDistance()
     {
         var (host, verbs, ring) = Scene();
-        host.FakeAutomation.FakeObjects.Add(Placed(0x70000009u, "Faraway Drudge", PluginObjectClass.Monster, 2d));
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000009u, "Faraway Drudge", PluginObjectClass.Monster, 5d));
 
         Assert.Contains("a walk is planned to at most", Because(verbs, ring, 0x70000009u, "go to"));
     }

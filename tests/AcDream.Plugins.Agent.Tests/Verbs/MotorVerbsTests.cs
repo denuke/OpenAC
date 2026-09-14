@@ -556,7 +556,7 @@ public sealed class MotorVerbsTests
     {
         var (host, verbs, _, _, ring) = Build();
         host.FakeAutomation.FakeObjects.Add(Placed(0x70000001u, "Healer", eastMeters: 24d));
-        host.FakeAutomation.FakeObjects.Add(Placed(0x70000004u, "Faraway", eastMeters: 300d));
+        host.FakeAutomation.FakeObjects.Add(Placed(0x70000004u, "Faraway", eastMeters: 1200d));
 
         Assert.Equal("refused", verbs.Handle(Line(text)).Outcome);
         Assert.Empty(host.FakeAutomation.FakeNavigation.GoTos);

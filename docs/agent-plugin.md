@@ -145,7 +145,15 @@ walk that stays blocked names what stood beside that spot in `blockedBy`, such
 as a door that would not open. `remaining` is the straight-line distance from
 the character to where the object stands, and `no-route` means nothing joins
 the character to the object. `stop`, `cancel` and the player's movement keys
-end a walk. Client
+end a walk. A walk to an object farther away than one planning grid reaches,
+about 270 m, goes in stages, each planned to the edge of a grid toward the
+object, up to 1000 m. Inside a sealed dungeon one grid covers the whole
+dungeon and serves every walk there. While a walk is under way the client
+draws its route as a magenta line. Ctrl+F4 also shows the grid, Ctrl+F5 plans
+a route to the selected object, and Ctrl+F6 walks to it or stops the walk;
+without Ctrl on the acdream keymap, where F4 to F6 are free.
+
+Client
 commands that close the client, kill the character, or change its player-killer
 status are refused, and `logout` is how a model leaves the world. Any other line is handed to the client as chat or a
 client command, so a model can make the character speak.
