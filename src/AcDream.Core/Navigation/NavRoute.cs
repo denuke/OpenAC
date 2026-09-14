@@ -35,6 +35,18 @@ public sealed record NavRoute(
 {
     /// <summary>The legs flown as standing long jumps rather than walked, in order.</summary>
     public IReadOnlyList<NavRouteLeap> Leaps { get; init; } = [];
+
+    /// <summary>
+    /// How much of the route's legs is walked nearer walls and ledges than is
+    /// comfortable, in square meters: the shortfall at each step, times the step.
+    /// </summary>
+    public float Scrape { get; init; }
+
+    /// <summary>
+    /// How much of the route's legs passes through the spots it was asked to pass
+    /// creatures and players in, in meters, each step counted by how deep in it is.
+    /// </summary>
+    public float Crowding { get; init; }
 }
 
 /// <summary>
@@ -94,6 +106,24 @@ public static class NavRouter
     /// <summary>A route toward a goal beyond the grid found with leaps is taken only when it ends this much nearer the goal.</summary>
     private const float LeapWorthMeters = 1f;
 
+    /// <summary>
+    /// A route may pass through the spots creatures and players stand in, since they
+    /// move aside when bumped, but it pays to. Stepping onto a node inside one costs up
+    /// to <see cref="CrowdCost"/> more: <see cref="CrowdEdgeShare"/> of it just inside the
+    /// edge, so grazing a creature costs as surely as walking into it, and the rest by how
+    /// deep in. Each meter through one makes a route <see cref="CrowdUntidiness"/> meters
+    /// untidier. Legs shaped from a searched path go no deeper into a spot than the path
+    /// did, less <see cref="CrowdShapeSlack"/>. A route around them is
+    /// taken only when it walks no nearer walls and ledges than the route through them,
+    /// give or take <see cref="CrowdScrapeAllowance"/> square meters, so keeping out of a
+    /// crowd never trades it for scraping along a wall.
+    /// </summary>
+    private const float CrowdCost = 2f;
+    private const float CrowdEdgeShare = 0.5f;
+    private const float CrowdShapeSlack = 0.05f;
+    private const float CrowdUntidiness = 8f;
+    private const float CrowdScrapeAllowance = 0.25f;
+
     private const string ReachedEdgeReason = "the goal lies beyond this grid, so the route ends at its edge toward the goal";
 
     /// <summary>
@@ -119,7 +149,10 @@ public static class NavRouter
     /// tidiest: a route that arrives before one that ends short of the goal, and of
     /// those alike, the one least untidy to walk. When no walked route arrives and
     /// <paramref name="leaps"/> says what the body can leap, the route is planned
-    /// again the first way with leaps, and the better of the two is returned.
+    /// again the first way with leaps, and the better of the two is returned. A route
+    /// passes the spots in <paramref name="crowd"/>, where creatures and players stand,
+    /// around them when that keeps as clear of walls as going through them, and through
+    /// them otherwise.
     /// </summary>
     public static NavRoute Find(
         NavGrid grid,
@@ -127,12 +160,48 @@ public static class NavRouter
         Vector3 to,
         float arrivalRadius,
         IReadOnlyList<NavAvoidance>? avoid = null,
-        NavLeapAbility? leaps = null)
+        NavLeapAbility? leaps = null,
+        IReadOnlyList<NavAvoidance>? crowd = null)
     {
         ArgumentNullException.ThrowIfNull(grid);
         var clock = Stopwatch.StartNew();
-        var plans = new (NavRoute Route, float Untidiness)[Profiles.Length];
-        Parallel.For(0, Profiles.Length, index => plans[index] = Find(grid, from, to, arrivalRadius, avoid, Profiles[index], leaps: null));
+        IReadOnlyList<NavAvoidance> crowded = crowd ?? [];
+        bool priced = crowded.Count > 0;
+        var plans = new (NavRoute Route, float Untidiness)[priced ? Profiles.Length * 2 : Profiles.Length];
+        Parallel.For(0, plans.Length, index => plans[index] = Find(
+            grid,
+            from,
+            to,
+            arrivalRadius,
+            avoid,
+            crowded,
+            priceCrowd: priced && index < Profiles.Length,
+            Profiles[index % Profiles.Length],
+            leaps: null));
+        (NavRoute Route, float Untidiness) tidiest = Tidiest(plans.AsSpan(0, Profiles.Length));
+        if (priced)
+        {
+            (NavRoute Route, float Untidiness) through = Tidiest(plans.AsSpan(Profiles.Length));
+            if (Rank(through.Route) < Rank(tidiest.Route)
+                || (Rank(through.Route) == Rank(tidiest.Route)
+                    && tidiest.Route.Scrape > through.Route.Scrape + CrowdScrapeAllowance))
+            {
+                tidiest = through;
+            }
+        }
+        if (Rank(tidiest.Route) > 0 && leaps is { } ability)
+        {
+            (NavRoute Route, float Untidiness) leapt =
+                Find(grid, from, to, arrivalRadius, avoid, crowded, priced, Profiles[0], new NavLeapFinder(grid, ability));
+            if (Rank(leapt.Route) < Rank(tidiest.Route))
+                tidiest = leapt;
+        }
+        return tidiest.Route with { Milliseconds = clock.Elapsed.TotalMilliseconds };
+    }
+
+    /// <summary>The plan that ranks first, and of plans alike, the least untidy.</summary>
+    private static (NavRoute Route, float Untidiness) Tidiest(ReadOnlySpan<(NavRoute Route, float Untidiness)> plans)
+    {
         (NavRoute Route, float Untidiness) tidiest = plans[0];
         foreach ((NavRoute Route, float Untidiness) plan in plans)
         {
@@ -140,14 +209,7 @@ public static class NavRouter
             if (rank < Rank(tidiest.Route) || (rank == Rank(tidiest.Route) && plan.Untidiness < tidiest.Untidiness))
                 tidiest = plan;
         }
-        if (Rank(tidiest.Route) > 0 && leaps is { } ability)
-        {
-            (NavRoute Route, float Untidiness) leapt =
-                Find(grid, from, to, arrivalRadius, avoid, Profiles[0], new NavLeapFinder(grid, ability));
-            if (Rank(leapt.Route) < Rank(tidiest.Route))
-                tidiest = leapt;
-        }
-        return tidiest.Route with { Milliseconds = clock.Elapsed.TotalMilliseconds };
+        return tidiest;
     }
 
     /// <summary>A route that arrives ranks first, then one that ends short of the goal, then one that failed.</summary>
@@ -160,6 +222,8 @@ public static class NavRouter
         Vector3 to,
         float arrivalRadius,
         IReadOnlyList<NavAvoidance>? avoid,
+        IReadOnlyList<NavAvoidance> crowd,
+        bool priceCrowd,
         SearchProfile profile,
         NavLeapFinder? leaps)
     {
@@ -172,10 +236,10 @@ public static class NavRouter
         var goal = new GoalTest(grid, to, reach, avoided);
         bool nearGoalSeen = goal.MaySucceed();
 
-        var search = new Search(grid, start, to, reach, avoided, profile, leaps);
+        var search = new Search(grid, start, to, reach, avoided, priceCrowd ? crowd : [], profile, leaps);
         int end = search.Run(node => nearGoalSeen && goal.IsReachedAt(node));
         if (end >= 0)
-            return Routed(grid, from, start, end, search, avoided, clock, "routed");
+            return Routed(grid, from, start, end, search, avoided, crowd, priceCrowd, clock, "routed");
         if (end == Search.GaveUp)
             return (SearchGaveUp(search, clock), float.PositiveInfinity);
         int nearest = goal.NearestSeeingAmong(search.Closed);
@@ -190,6 +254,8 @@ public static class NavRouter
                 nearest,
                 search,
                 avoided,
+                crowd,
+                priceCrowd,
                 clock,
                 $"nothing within {reach:0.#} m of the goal can be reached and see it, so the route ends at "
                 + $"the nearest spot that can, {away:0.0} m from it");
@@ -206,6 +272,8 @@ public static class NavRouter
                 nearestUnseeing,
                 search,
                 avoided,
+                crowd,
+                priceCrowd,
                 clock,
                 $"no reachable spot can see the goal, so the route ends at the nearest spot, {away:0.0} m from it, "
                 + "without a line of sight");
@@ -239,13 +307,27 @@ public static class NavRouter
         Vector3 goal,
         float band,
         IReadOnlyList<NavAvoidance>? avoid = null,
-        NavLeapAbility? leaps = null)
+        NavLeapAbility? leaps = null,
+        IReadOnlyList<NavAvoidance>? crowd = null)
     {
         ArgumentNullException.ThrowIfNull(grid);
-        NavRoute walked = FindTowardWith(grid, from, goal, band, avoid, null);
+        IReadOnlyList<NavAvoidance> crowded = crowd ?? [];
+        bool priced = crowded.Count > 0;
+        NavRoute walked = FindTowardWith(grid, from, goal, band, avoid, crowded, priced, null);
+        if (priced)
+        {
+            NavRoute through = FindTowardWith(grid, from, goal, band, avoid, crowded, false, null);
+            if (through.Outcome == NavRouteOutcome.Routed
+                && (walked.Outcome != NavRouteOutcome.Routed
+                    || Away(through.Legs[^1], goal) + LeapWorthMeters < Away(walked.Legs[^1], goal)
+                    || walked.Scrape > through.Scrape + CrowdScrapeAllowance))
+            {
+                walked = through;
+            }
+        }
         if (leaps is not { } ability || walked.Reason.StartsWith(ReachedEdgeReason, StringComparison.Ordinal))
             return walked;
-        NavRoute leapt = FindTowardWith(grid, from, goal, band, avoid, new NavLeapFinder(grid, ability));
+        NavRoute leapt = FindTowardWith(grid, from, goal, band, avoid, crowded, priced, new NavLeapFinder(grid, ability));
         if (leapt.Outcome != NavRouteOutcome.Routed)
             return walked;
         return walked.Outcome != NavRouteOutcome.Routed
@@ -260,6 +342,8 @@ public static class NavRouter
         Vector3 goal,
         float band,
         IReadOnlyList<NavAvoidance>? avoid,
+        IReadOnlyList<NavAvoidance> crowd,
+        bool priceCrowd,
         NavLeapFinder? leaps)
     {
         var clock = Stopwatch.StartNew();
@@ -271,7 +355,7 @@ public static class NavRouter
         float enough = DistanceBeyond(grid, goal) + MathF.Max(band, grid.CellSize);
         int nearest = start;
         float nearestAway = Away(grid.Position(start), goal);
-        var search = new Search(grid, start, goal, 0f, avoided, Profiles[0], leaps);
+        var search = new Search(grid, start, goal, 0f, avoided, priceCrowd ? crowd : [], Profiles[0], leaps);
         int end = search.Run(node =>
         {
             float away = Away(grid.Position(node), goal);
@@ -291,6 +375,8 @@ public static class NavRouter
                 end,
                 search,
                 avoided,
+                crowd,
+                priceCrowd,
                 clock,
                 $"{ReachedEdgeReason}, {nearestAway:0} m from it").Route;
         }
@@ -303,6 +389,8 @@ public static class NavRouter
                 nearest,
                 search,
                 avoided,
+                crowd,
+                priceCrowd,
                 clock,
                 $"the goal lies beyond this grid, and the route ends at the reachable spot nearest it, {nearestAway:0} m from it").Route;
         }
@@ -318,6 +406,8 @@ public static class NavRouter
         int end,
         Search search,
         IReadOnlyList<NavAvoidance> avoided,
+        IReadOnlyList<NavAvoidance> crowd,
+        bool priceCrowd,
         Stopwatch clock,
         string reason)
     {
@@ -333,6 +423,10 @@ public static class NavRouter
         var path = new List<Vector3>(nodes.Count);
         foreach (int node in nodes)
             path.Add(grid.Position(node));
+
+        // Legs are shaped no deeper into crowd spots than the search went, so a
+        // straighter leg never cuts back into a creature the route kept clear of.
+        IReadOnlyList<NavAvoidance> shaping = priceCrowd ? [.. avoided, .. KeptOut(crowd, path)] : avoided;
 
         // The walked stretches between leaps are straightened on their own, so a
         // leap's takeoff and landing stay where the search found them.
@@ -350,10 +444,10 @@ public static class NavRouter
             List<int> stretch = nodes.GetRange(stretchStart, index - stretchStart);
             List<int> stretchCorners = stretch.Count == 1
                 ? [stretch[0]]
-                : Straighten(grid, stretch, path.GetRange(stretchStart, index - stretchStart), avoided);
-            DropNeedlessCorners(grid, stretchCorners, avoided);
-            WidenCorners(grid, stretchCorners, avoided);
-            DropNeedlessCorners(grid, stretchCorners, avoided);
+                : Straighten(grid, stretch, path.GetRange(stretchStart, index - stretchStart), shaping);
+            DropNeedlessCorners(grid, stretchCorners, shaping);
+            WidenCorners(grid, stretchCorners, shaping);
+            DropNeedlessCorners(grid, stretchCorners, shaping);
             corners.AddRange(stretchCorners);
             if (leapsHere)
                 leaps.Add((corners.Count, leap));
@@ -374,6 +468,10 @@ public static class NavRouter
         float length = 0f;
         for (int index = 1; index < legs.Count; index++)
             length += Vector3.Distance(legs[index - 1], legs[index]);
+        float scrape = 0f;
+        for (int index = 1; index < corners.Count; index++)
+            scrape += Scrape(grid, corners[index - 1], corners[index]);
+        float crowding = Crowding(grid, corners, crowd);
         var route = new NavRoute(
             NavRouteOutcome.Routed,
             reason,
@@ -384,8 +482,10 @@ public static class NavRouter
             clock.Elapsed.TotalMilliseconds)
         {
             Leaps = [.. leaps.Select(pair => new NavRouteLeap(pair.Corner + inserted, pair.Leap.Power, pair.Leap.Run))],
+            Scrape = scrape,
+            Crowding = crowding,
         };
-        float untidiness = Untidiness(grid, corners);
+        float untidiness = Untidiness(grid, corners) + (priceCrowd ? CrowdUntidiness * crowding : 0f);
         foreach ((_, NavLeap leap) in leaps)
             untidiness += LeapCost + (leap.Power * LeapPowerCost);
         return (route, untidiness);
@@ -574,6 +674,71 @@ public static class NavRouter
         return scrape;
     }
 
+    /// <summary>How much of a route's legs passes through crowd spots, in meters, each step counted by how deep in it is.</summary>
+    private static float Crowding(NavGrid grid, List<int> corners, IReadOnlyList<NavAvoidance> crowd)
+    {
+        if (crowd.Count == 0)
+            return 0f;
+        float crowding = 0f;
+        for (int index = 1; index < corners.Count; index++)
+        {
+            foreach (int node in grid.NodesAlong(corners[index - 1], corners[index]))
+                crowding += CrowdDepth(grid.Position(node), crowd) * grid.CellSize;
+        }
+        return crowding;
+    }
+
+    /// <summary>How deep a point stands in crowd spots, summed over them: one at a spot's middle, falling to nothing at its edge.</summary>
+    private static float CrowdDepth(Vector3 point, IReadOnlyList<NavAvoidance> crowd)
+    {
+        float depth = 0f;
+        foreach (NavAvoidance spot in crowd)
+        {
+            if (spot.Radius <= 0f || MathF.Abs(point.Z - spot.Centre.Z) > AvoidanceHeight)
+                continue;
+            float distance = MathF.Sqrt(FlatDistanceSquared(point, spot.Centre));
+            if (distance < spot.Radius)
+                depth += 1f - (distance / spot.Radius);
+        }
+        return depth;
+    }
+
+    /// <summary>What stepping onto a point costs in crowd spots, summed over the spots it is inside.</summary>
+    private static float CrowdPrice(Vector3 point, IReadOnlyList<NavAvoidance> crowd)
+    {
+        float price = 0f;
+        foreach (NavAvoidance spot in crowd)
+        {
+            if (spot.Radius <= 0f || MathF.Abs(point.Z - spot.Centre.Z) > AvoidanceHeight)
+                continue;
+            float distance = MathF.Sqrt(FlatDistanceSquared(point, spot.Centre));
+            if (distance < spot.Radius)
+                price += CrowdEdgeShare + ((1f - CrowdEdgeShare) * (1f - (distance / spot.Radius)));
+        }
+        return price;
+    }
+
+    /// <summary>
+    /// The part of each crowd spot that legs shaped from a searched path keep out of:
+    /// all of a spot the path kept out of, and of one it went into, what lies deeper
+    /// than the path went.
+    /// </summary>
+    private static IEnumerable<NavAvoidance> KeptOut(IReadOnlyList<NavAvoidance> crowd, List<Vector3> path)
+    {
+        foreach (NavAvoidance spot in crowd)
+        {
+            float nearest = spot.Radius;
+            foreach (Vector3 point in path)
+            {
+                if (MathF.Abs(point.Z - spot.Centre.Z) <= AvoidanceHeight)
+                    nearest = MathF.Min(nearest, MathF.Sqrt(FlatDistanceSquared(point, spot.Centre)));
+            }
+            float kept = nearest - CrowdShapeSlack;
+            if (kept > 0f)
+                yield return spot with { Radius = kept };
+        }
+    }
+
     /// <summary>How many steps from a ledge a body keeps when it keeps <paramref name="clearance"/> from it.</summary>
     private static int BorderStepsFor(NavGrid grid, float clearance) =>
         Math.Max(1, (int)MathF.Floor(clearance / grid.CellSize));
@@ -686,6 +851,7 @@ public static class NavRouter
         private readonly Vector3 _toward;
         private readonly float _reach;
         private readonly IReadOnlyList<NavAvoidance> _avoided;
+        private readonly IReadOnlyList<NavAvoidance> _crowd;
         private readonly SearchProfile _profile;
         private readonly NavLeapFinder? _leaps;
         private readonly float[] _cost;
@@ -697,6 +863,7 @@ public static class NavRouter
             Vector3 toward,
             float reach,
             IReadOnlyList<NavAvoidance> avoided,
+            IReadOnlyList<NavAvoidance> crowd,
             SearchProfile profile,
             NavLeapFinder? leaps)
         {
@@ -704,6 +871,7 @@ public static class NavRouter
             _toward = toward;
             _reach = reach;
             _avoided = avoided;
+            _crowd = crowd;
             _profile = profile;
             _leaps = leaps;
             _cost = new float[grid.NodeCount];
@@ -750,7 +918,8 @@ public static class NavRouter
                         continue;
                     float step = (_grid.CellSize * (direction < 4 ? 1f : DiagonalStep))
                         + MathF.Abs(there.Z - here.Z)
-                        + WallCost(_grid, next, _profile);
+                        + WallCost(_grid, next, _profile)
+                        + CrowdCostAt(there);
                     float total = _cost[node] + step;
                     if (total >= _cost[next])
                         continue;
@@ -764,6 +933,9 @@ public static class NavRouter
             }
             return Exhausted;
         }
+
+        private float CrowdCostAt(Vector3 point) =>
+            _crowd.Count == 0 ? 0f : CrowdCost * CrowdPrice(point, _crowd);
 
         private void RelaxLeaps(int node, Vector3 here)
         {
@@ -779,7 +951,8 @@ public static class NavRouter
                     + Vector2.Distance(new Vector2(here.X, here.Y), new Vector2(there.X, there.Y))
                     + MathF.Abs(there.Z - here.Z)
                     + LeapCost
-                    + (leap.Power * LeapPowerCost);
+                    + (leap.Power * LeapPowerCost)
+                    + CrowdCostAt(there);
                 if (total >= _cost[next])
                     continue;
                 _cost[next] = total;

@@ -167,7 +167,12 @@ seconds to plan the first time. Each route is planned three ways at once, from
 the shortest to one keeping well clear of walls, and the tidiest is walked, its
 corners taken wide where there is room so the character does not brush them. A
 route keeps out of objects the server placed, such as ore deposits, whenever
-another way arrives. A door the client has not appraised is appraised before a
+another way arrives. A route passes creatures and players around them where
+there is room, and through them where going around would bring the character
+nearer walls than going through. A walk plans a way around one that steps onto
+its route without stopping, and a walk stopped by one waits for it to move
+aside, up to twice, before planning around it; it never keeps out of the spot a
+creature stood in for good. A door the client has not appraised is appraised before a
 walk uses it; a locked door, or one that will not open, is walked around, and
 with no other way the walk ends `blocked` naming it. Where no walk reaches, a
 route leaps: it hops off ledges of up to 12 m, the deepest fall measured to do
@@ -200,7 +205,9 @@ within its limits shows the value it kept.
 Objects in `nearby` and `inspect` carry `sight`: a verdict for an arc spell, a war
 bolt and an arrow, each `visible`, `blocked`, or `cannot-say` with `because`. The
 three fly different paths, so an arc can clear a ledge that stops a bolt, and
-`blockedBy` names what stopped a blocked shot, such as a closed door. The client
+`blockedBy` names what stopped a blocked shot: an object, such as a closed door,
+or `geometry` for the landscape and the walls, floors and ceilings of buildings
+and dungeons. The client
 traces each path through its own collision world, as a prediction: the server
 still decides at launch. One `nearby` answer traces its nearest twelve objects
 within 80 m, and `inspect` traces any one.

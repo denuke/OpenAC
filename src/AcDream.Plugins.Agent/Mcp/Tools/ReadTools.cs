@@ -88,7 +88,8 @@ internal static class ReadTools
             + "compass bearing, how far to turn to face each, and what kind of thing it is. Counts every "
             + "kind in range and anything unclassified, so a short list never reads as an empty world. "
             + "The nearest objects carry a sight verdict for an arc spell, a war bolt and an arrow: visible, "
-            + "blocked with what blocked it, such as a closed door, or cannot-say with the reason."
+            + "blocked with what blocked it, such as a closed door, or geometry for the landscape and the walls, "
+            + "floors and ceilings of buildings and dungeons, or cannot-say with the reason."
             + Nothing,
             () => new JsonObject
             {

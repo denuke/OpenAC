@@ -20,6 +20,12 @@ internal static class Sight
     internal const string Blocked = "blocked";
     internal const string CannotSay = "cannot-say";
 
+    /// <summary>
+    /// What <c>blockedBy</c> names for a shot stopped by no object: the landscape,
+    /// or the walls, floors and ceilings of a building or dungeon.
+    /// </summary>
+    internal const string Geometry = "geometry";
+
     /// <summary>The sphere a projectile sweeps, the step its path is sampled at, and the most steps one trace takes.</summary>
     internal const float ProjectileRadius = 0.4f;
     internal const float StepDistance = 0.7f;
@@ -60,8 +66,9 @@ internal static class Sight
                     break;
                 case PluginProjectilePathStatus.Blocked:
                     sight[word] = Blocked;
-                    if (result.BlockingObjectId != 0u)
-                        blockedBy[word] = Facts.Hex(result.BlockingObjectId);
+                    blockedBy[word] = result.BlockingObjectId != 0u
+                        ? Facts.Hex(result.BlockingObjectId)
+                        : Geometry;
                     break;
                 default:
                     sight[word] = CannotSay;

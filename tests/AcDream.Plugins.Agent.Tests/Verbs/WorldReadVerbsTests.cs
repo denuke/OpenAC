@@ -150,7 +150,8 @@ public sealed class WorldReadVerbsTests
         Assert.Equal("blocked", sight.GetProperty("bolt").GetString());
         Assert.Equal("blocked", sight.GetProperty("arrow").GetString());
         Assert.Equal("0x7A000001", sight.GetProperty("blockedBy").GetProperty("bolt").GetString());
-        Assert.False(sight.GetProperty("blockedBy").TryGetProperty("arrow", out _));
+        Assert.Equal(Sight.Geometry, sight.GetProperty("blockedBy").GetProperty("arrow").GetString());
+        Assert.False(sight.GetProperty("blockedBy").TryGetProperty("arc", out _));
         Assert.Equal(JsonValueKind.Null, sight.GetProperty("because").ValueKind);
         Assert.Equal(
             [
