@@ -71,7 +71,8 @@ internal readonly record struct NavigationWalkBodySample(
     bool InPortalSpace,
     uint CellId = 0u,
     NavLeapAbility? Leaps = null,
-    bool Airborne = false);
+    bool Airborne = false,
+    RuntimeRouteTurning? Turning = null);
 
 /// <summary>
 /// A server object standing where a walk stopped making progress, the point it
@@ -863,7 +864,8 @@ internal sealed class NavigationWalkController
             sample.HeadingDegrees,
             sample.Moves,
             sample.InPortalSpace,
-            sample.Airborne));
+            sample.Airborne,
+            sample.Turning));
         if (!Apply(step))
         {
             Apply(driver.Cancel());
@@ -1311,6 +1313,13 @@ internal sealed class NavigationWalkController
             : float.NaN;
         Publish(request, state, reason, remaining);
         _say?.Invoke($"{(request.Walk ? "Walk" : "Route")} to {Label(request)}: {reason}");
+        if (request.Drives.Count > 0)
+        {
+            _say?.Invoke(
+                $"Walk to {Label(request)}: ran around {request.Drives.Sum(drive => drive.CornersRunAround)} corners, "
+                + $"walked around {request.Drives.Sum(drive => drive.CornersWalkedAround)} "
+                + $"and turned in place at {request.Drives.Sum(drive => drive.CornersTurnedInPlace)}");
+        }
     }
 
     private void Publish(Request request, NavigationWalkState state, string reason, float remainingMeters)
@@ -1630,7 +1639,7 @@ internal sealed class NavigationWalkController
             RuntimeRouteLeap[] leaps = [.. detour.Leaps
                 .Where(leap => leap.LegIndex - skipped >= 1)
                 .Select(leap => new RuntimeRouteLeap(leap.LegIndex - skipped, leap.Power, leap.Run))];
-            _driver = new RuntimeRouteDriver(onward, leaps, takeOverMoves: true);
+            _driver = Drive(requester, new RuntimeRouteDriver(onward, leaps, takeOverMoves: true, canCutAlong: CornerCuts()));
             _say?.Invoke($"Walk to {Label(requester)}: planned a way around a creature or player on the route");
             return;
         }
@@ -1699,7 +1708,7 @@ internal sealed class NavigationWalkController
                     $"a route was found for the first {route.Length:0} m; the rest is planned on the way");
                 return;
             }
-            _driver = new RuntimeRouteDriver(route.Legs, LeapsOf(route));
+            _driver = Drive(requester, new RuntimeRouteDriver(route.Legs, LeapsOf(route), canCutAlong: CornerCuts()));
             Publish(requester, NavigationWalkState.Walking, "walking", route.Length + left);
             return;
         }
@@ -1716,7 +1725,7 @@ internal sealed class NavigationWalkController
             return;
         }
         requester.ArrivalReason = route.Reason == "routed" ? null : route.Reason;
-        _driver = new RuntimeRouteDriver(route.Legs, LeapsOf(route));
+        _driver = Drive(requester, new RuntimeRouteDriver(route.Legs, LeapsOf(route), canCutAlong: CornerCuts()));
         Publish(requester, NavigationWalkState.Walking, "walking", route.Length);
     }
 
@@ -1802,6 +1811,15 @@ internal sealed class NavigationWalkController
 
     private static RuntimeRouteLeap[] LeapsOf(NavRoute route) =>
         [.. route.Leaps.Select(leap => new RuntimeRouteLeap(leap.LegIndex, leap.Power, leap.Run))];
+
+    private static RuntimeRouteDriver Drive(Request request, RuntimeRouteDriver driver)
+    {
+        request.Drives.Add(driver);
+        return driver;
+    }
+
+    /// <summary>What a drive cuts corners along: arcs the grid lets a body brush along, or none before there is a grid.</summary>
+    private Func<IReadOnlyList<Vector3>, bool>? CornerCuts() => _grid is { } grid ? grid.CanBrushAlong : null;
 
     private static float HorizontalDistance(Vector3 from, Vector3 to) =>
         Vector2.Distance(new Vector2(from.X, from.Y), new Vector2(to.X, to.Y));
@@ -1896,6 +1914,9 @@ internal sealed class NavigationWalkController
 
         /// <summary>When the walk last planned a way around creatures, in the controller's seconds.</summary>
         public double DetouredAt { get; set; } = double.NegativeInfinity;
+
+        /// <summary>The drives the walk has made, which count the corners they took.</summary>
+        public List<RuntimeRouteDriver> Drives { get; } = [];
 
         /// <summary>How often the walk has waited for a creature or player to move aside since it last walked on.</summary>
         public int Shuffles { get; set; }

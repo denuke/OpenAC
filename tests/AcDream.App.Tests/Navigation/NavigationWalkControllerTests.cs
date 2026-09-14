@@ -279,6 +279,36 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
+    public void AWalkRunsThroughADoorwayWithoutStoppingWhereItsArcsKeepToTheFloor()
+    {
+        var turning = new RuntimeRouteTurning(RunSpeed: 4f, RunTurnDegreesPerSecond: 180f, WalkSpeed: 1.5f, WalkTurnDegreesPerSecond: 180f);
+        var standing = new SimulatedBody(new Vector3(4f, 4f, -30f));
+        var cutting = new SimulatedBody(new Vector3(4f, 4f, -30f)) { Turning = turning };
+        var said = new List<string>();
+
+        foreach (SimulatedBody body in new[] { standing, cutting })
+        {
+            said.Clear();
+            var walk = new NavigationWalkController(RoomWithDoorways(10f), body, new Goals { [Target] = new Vector3(4f, 16f, -30f) }, said.Add);
+            walk.WalkTo(Target);
+            Assert.Equal(NavigationWalkState.Arrived, RunUntilSettled(walk, body).State);
+        }
+
+        Assert.True(standing.TravelStops > 1, $"turning in place, the walk stopped {standing.TravelStops} times");
+        Assert.Equal(1, cutting.TravelStops);
+        Assert.Contains(said, line => line.Contains("turned in place at 0", StringComparison.Ordinal) && !line.Contains("ran around 0 corners", StringComparison.Ordinal));
+        for (int step = 1; step < cutting.Path.Count; step++)
+        {
+            Vector2 from = cutting.Path[step - 1];
+            Vector2 to = cutting.Path[step];
+            if ((from.Y < 10f) == (to.Y < 10f))
+                continue;
+            float crossing = from.X + ((to.X - from.X) * ((10f - from.Y) / (to.Y - from.Y)));
+            Assert.InRange(crossing, 9f + NavGrid.BrushMargin, 11f - NavGrid.BrushMargin);
+        }
+    }
+
+    [Fact]
     public void AWalkPlansAroundTheSpotWhereItWasBlocked()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 0f)) { Obstacle = (new Vector2(40f, 60f), 0.3f) };
@@ -1106,6 +1136,14 @@ public sealed class NavigationWalkControllerTests
 
         public (Vector2 Centre, float Radius)? Obstacle { get; init; }
 
+        public RuntimeRouteTurning? Turning { get; init; }
+
+        /// <summary>How many times a travel under way was stopped.</summary>
+        public int TravelStops { get; private set; }
+
+        /// <summary>Where the body stood after each frame it travelled.</summary>
+        public List<Vector2> Path { get; } = [];
+
         /// <summary>Whether the obstacle is there, for one that can go away, such as a door that opens.</summary>
         public Func<bool>? ObstacleActive { get; init; }
 
@@ -1126,7 +1164,8 @@ public sealed class NavigationWalkControllerTests
                 NavBody.Player(0.6f, 1.5f),
                 new RuntimeScriptedMoveSnapshot(_travel, default, _turn, 0, false),
                 InPortalSpace: false,
-                CellId: CellId);
+                CellId: CellId,
+                Turning: Turning);
             return true;
         }
 
@@ -1157,6 +1196,7 @@ public sealed class NavigationWalkControllerTests
             if (channel == RuntimeMoveChannel.Travel && _travel.State == RuntimeScriptedMoveState.Moving)
             {
                 _travel = _travel with { State = RuntimeScriptedMoveState.Stopped };
+                TravelStops++;
                 return true;
             }
             return false;
@@ -1204,6 +1244,7 @@ public sealed class NavigationWalkControllerTests
             Vector3 next = Stuck ? Position : SlideOffObstacle(intended);
             float moved = Vector2.Distance(new Vector2(next.X, next.Y), Flat);
             Position = next;
+            Path.Add(Flat);
             _stalledSeconds = moved < speed * seconds * 0.25f ? _stalledSeconds + seconds : 0f;
             _travel = _travel with { ElapsedSeconds = _travel.ElapsedSeconds + seconds };
             if (_stalledSeconds > StallSeconds)
