@@ -20,9 +20,14 @@ public sealed class DebugLineRenderer : IDisposable
     private readonly IGpuPipeline _pipeline;
     private readonly IWorldPassScope? _worldPass;
     private readonly IGpuPipeline? _worldPipeline;
+    private readonly IGpuPipeline? _hiddenWorldPipeline;
 
     private readonly List<float> _buffer = new(4096);
     private int _vertexCount;
+
+    /// <summary>Lines the world's walls, floors and ceilings hide, drawn with a depth test in the world pass.</summary>
+    private readonly List<float> _hiddenBuffer = new(4096);
+    private int _hiddenVertexCount;
 
     /// <summary>
     /// Lines draw in a pass of their own, or, given <paramref name="worldPass"/>,
@@ -38,28 +43,44 @@ public sealed class DebugLineRenderer : IDisposable
         _frameSource = frameSource ?? throw new ArgumentNullException(nameof(frameSource));
         ArgumentException.ThrowIfNullOrWhiteSpace(shaderDir);
 
-        _pipeline = device.CreatePipeline(PipelineFor("debug-line", sampleCount: 1));
+        _pipeline = device.CreatePipeline(PipelineFor("debug-line", sampleCount: 1, GpuDepthState.Disabled));
         _worldPass = worldPass;
         if (worldPass is not null)
-            _worldPipeline = device.CreatePipeline(PipelineFor("debug-line-world", worldPass.SampleCount));
+        {
+            _worldPipeline = device.CreatePipeline(PipelineFor("debug-line-world", worldPass.SampleCount, GpuDepthState.Disabled));
+            _hiddenWorldPipeline = device.CreatePipeline(PipelineFor(
+                "debug-line-world-hidden",
+                worldPass.SampleCount,
+                new GpuDepthState(Test: true, Write: false, WorldDepthContract.WorldCompare)));
+        }
     }
 
     public void Begin()
     {
         _buffer.Clear();
         _vertexCount = 0;
+        _hiddenBuffer.Clear();
+        _hiddenVertexCount = 0;
     }
 
-    public void AddLine(Vector3 a, Vector3 b, Vector3 color)
+    /// <summary>
+    /// Adds a line. A line <paramref name="hiddenByScene"/> is hidden behind the world's walls,
+    /// floors and ceilings, as the world itself is; any other is drawn over everything.
+    /// </summary>
+    public void AddLine(Vector3 a, Vector3 b, Vector3 color, bool hiddenByScene = false)
     {
-        _buffer.Add(a.X); _buffer.Add(a.Y); _buffer.Add(a.Z);
-        _buffer.Add(color.X); _buffer.Add(color.Y); _buffer.Add(color.Z);
-        _buffer.Add(b.X); _buffer.Add(b.Y); _buffer.Add(b.Z);
-        _buffer.Add(color.X); _buffer.Add(color.Y); _buffer.Add(color.Z);
-        _vertexCount += 2;
+        List<float> buffer = hiddenByScene ? _hiddenBuffer : _buffer;
+        buffer.Add(a.X); buffer.Add(a.Y); buffer.Add(a.Z);
+        buffer.Add(color.X); buffer.Add(color.Y); buffer.Add(color.Z);
+        buffer.Add(b.X); buffer.Add(b.Y); buffer.Add(b.Z);
+        buffer.Add(color.X); buffer.Add(color.Y); buffer.Add(color.Z);
+        if (hiddenByScene)
+            _hiddenVertexCount += 2;
+        else
+            _vertexCount += 2;
     }
 
-    public void AddCylinder(Vector3 basePos, float radius, float height, Vector3 color)
+    public void AddCylinder(Vector3 basePos, float radius, float height, Vector3 color, bool hiddenByScene = false)
     {
         const int segments = 16;
         Vector3 top = basePos + new Vector3(0, 0, height);
@@ -78,14 +99,14 @@ public sealed class DebugLineRenderer : IDisposable
 
         // Base ring
         for (int i = 0; i < segments; i++)
-            AddLine(baseRing[i], baseRing[(i + 1) % segments], color);
+            AddLine(baseRing[i], baseRing[(i + 1) % segments], color, hiddenByScene);
         // Top ring
         for (int i = 0; i < segments; i++)
-            AddLine(topRing[i], topRing[(i + 1) % segments], color);
+            AddLine(topRing[i], topRing[(i + 1) % segments], color, hiddenByScene);
         for (int i = 0; i < 4; i++)
         {
             int idx = i * (segments / 4);
-            AddLine(baseRing[idx], topRing[idx], color);
+            AddLine(baseRing[idx], topRing[idx], color, hiddenByScene);
         }
     }
 
@@ -119,7 +140,7 @@ public sealed class DebugLineRenderer : IDisposable
     /// <summary>Upload and draw all accumulated lines, into the world pass when one is open.</summary>
     public void Flush(Matrix4x4 view, Matrix4x4 projection)
     {
-        if (_vertexCount == 0) return;
+        if (_vertexCount == 0 && _hiddenVertexCount == 0) return;
 
         IGpuFrame frame = _frameSource.CurrentFrame
             ?? throw new InvalidOperationException(
@@ -128,7 +149,8 @@ public sealed class DebugLineRenderer : IDisposable
 
         if (_worldPass?.CurrentEncoder is { } world)
         {
-            Draw(frame, world, _worldPipeline!, view, projection);
+            Draw(frame, world, _hiddenWorldPipeline!, view, projection, _hiddenBuffer, _hiddenVertexCount);
+            Draw(frame, world, _worldPipeline!, view, projection, _buffer, _vertexCount);
             return;
         }
 
@@ -143,13 +165,16 @@ public sealed class DebugLineRenderer : IDisposable
             Depth = null,
             SampleCount = 1,
         });
-        Draw(frame, encoder, _pipeline, view, projection);
+        // With no world pass open there is no depth to hide lines behind, so every line is drawn over everything.
+        Draw(frame, encoder, _pipeline, view, projection, _hiddenBuffer, _hiddenVertexCount);
+        Draw(frame, encoder, _pipeline, view, projection, _buffer, _vertexCount);
     }
 
     public void Dispose()
     {
         _pipeline.Dispose();
         _worldPipeline?.Dispose();
+        _hiddenWorldPipeline?.Dispose();
     }
 
     private void Draw(
@@ -157,29 +182,33 @@ public sealed class DebugLineRenderer : IDisposable
         IGpuPassEncoder encoder,
         IGpuPipeline pipeline,
         Matrix4x4 view,
-        Matrix4x4 projection)
+        Matrix4x4 projection,
+        List<float> buffer,
+        int vertexCount)
     {
+        if (vertexCount == 0)
+            return;
         encoder.BindPipeline(pipeline);
 
         GpuPushConstants constants = GpuPushConstants.Default;
         constants.ViewProjection = view * projection;
         encoder.SetPushConstants(constants);
 
-        int byteCount = _buffer.Count * sizeof(float);
+        int byteCount = buffer.Count * sizeof(float);
         GpuRingAllocation allocation = frame.AllocateRing(byteCount, GpuRingUsage.Vertex);
-        System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_buffer).CopyTo(allocation.AsSpan<float>());
+        System.Runtime.InteropServices.CollectionsMarshal.AsSpan(buffer).CopyTo(allocation.AsSpan<float>());
         encoder.BindVertexBuffer(0, allocation.Buffer, allocation.OffsetBytes);
-        encoder.Draw((uint)_vertexCount, 1, 0, 0);
+        encoder.Draw((uint)vertexCount, 1, 0, 0);
     }
 
-    private static GpuPipelineDescription PipelineFor(string name, int sampleCount) => new()
+    private static GpuPipelineDescription PipelineFor(string name, int sampleCount, GpuDepthState depth) => new()
     {
         Name = name,
         Shaders = new GpuShaderSet("debug_line"),
         VertexLayout = VertexLayout,
         Topology = GpuPrimitiveTopology.LineList,
         Blend = GpuBlendMode.None,
-        Depth = GpuDepthState.Disabled,
+        Depth = depth,
         Cull = GpuCullMode.None,
         AlphaToCoverage = false,
         ColorWrite = true,
