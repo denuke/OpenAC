@@ -152,10 +152,17 @@ end a walk. A walk to an object farther away than one planning grid reaches,
 about 270 m, goes in stages, each planned to the edge of a grid toward the
 object, up to 1000 m. Inside a sealed dungeon one grid covers the whole
 dungeon, however large, and serves every walk there; the largest take a few
-seconds to plan the first time. A route follows floors, ramps and stairs, and
-does not yet drop from a ledge deeper than a step, jump, or pass through a
-portal, so an object reached only that way ends the walk short or is
-`no-route`. While a walk is under way the client
+seconds to plan the first time. Each route is planned three ways at once, from
+the shortest to one keeping well clear of walls, and the tidiest is walked, its
+corners taken wide where there is room so the character does not brush them. A
+route keeps out of objects the server placed, such as ore deposits, whenever
+another way arrives. A door the client has not appraised is appraised before a
+walk uses it; a locked door, or one that will not open, is walked around, and
+with no other way the walk ends `blocked` naming it. Where no walk reaches, a
+route leaps: it hops off ledges of up to 12 m, the deepest fall measured to do
+no damage, and takes standing long jumps across gaps and up onto ledges as far
+and as high as the character's jump skill, run skill and burden allow. A route
+does not pass through portals. While a walk is under way the client
 draws its route as a magenta line. Ctrl+F4 also shows the grid, Ctrl+F5 plans
 a route to the selected object, and Ctrl+F6 walks to it or stops the walk;
 without Ctrl on the acdream keymap, where F4 to F6 are free.

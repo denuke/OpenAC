@@ -328,6 +328,36 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
+    public void AWalkPlansAroundAnObjectTheServerPlacedWhenAnotherWayArrives()
+    {
+        var body = new SimulatedBody(new Vector3(5f, 5f, -30f));
+        var goals = new Goals { [Target] = new Vector3(5f, 15f, -30f) };
+        goals.Obstacles.Add(new NavAvoidance(new Vector3(5f, 10f, -30f), 0.8f));
+        var walk = new NavigationWalkController(RoomWithDoorways(5f, 15f), body, goals);
+
+        walk.RouteTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Planned, report.State);
+        Assert.Contains(walk.Route!.Path, point => point.X > 13f && MathF.Abs(point.Y - 10f) < 0.5f);
+    }
+
+    [Fact]
+    public void AWalkPlansThroughAnObjectTheServerPlacedWhenNoOtherWayArrives()
+    {
+        var body = new SimulatedBody(new Vector3(5f, 5f, -30f));
+        var goals = new Goals { [Target] = new Vector3(5f, 15f, -30f) };
+        goals.Obstacles.Add(new NavAvoidance(new Vector3(5f, 10f, -30f), 0.8f));
+        var walk = new NavigationWalkController(RoomWithDoorways(5f), body, goals);
+
+        walk.RouteTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Planned, report.State);
+        Assert.Contains(walk.Route!.Path, point => MathF.Abs(point.X - 5f) < 1f && MathF.Abs(point.Y - 10f) < 0.5f);
+    }
+
+    [Fact]
     public void APlanningRegionHoldsBothEndsWithRoomAroundThem()
     {
         var from = new Vector3(10f, 10f, 0f);
@@ -392,6 +422,72 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
+    public void ALockedDoorIsWalkedAroundWithoutBeingTriedWhenAnotherWayArrives()
+    {
+        var doors = new FakeDoors(new NavigationDoor(Door, "Door", new Vector3(5f, 10f, -30f), 0.5f), new Vector2(5f, 10f), opens: false)
+        {
+            LockedWhenAppraised = true,
+        };
+        var body = new SimulatedBody(new Vector3(5f, 5f, -30f)) { Obstacle = (new Vector2(5f, 10f), 0.5f) };
+        var walk = new NavigationWalkController(
+            RoomWithDoorways(5f, 15f),
+            body,
+            new Goals { [Target] = new Vector3(5f, 15f, -30f) },
+            doors: doors);
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.Equal(1, doors.Appraisals);
+        Assert.Equal(0, doors.Uses);
+        Assert.True(body.Position.Y > 12f);
+    }
+
+    [Fact]
+    public void ALockedDoorOnTheOnlyWayEndsTheWalkBlockedNamingItWithoutTryingIt()
+    {
+        var doors = new FakeDoors(new NavigationDoor(Door, "Door", new Vector3(5f, 10f, -30f), 0.5f), new Vector2(5f, 10f), opens: false)
+        {
+            LockedWhenAppraised = true,
+        };
+        var body = new SimulatedBody(new Vector3(5f, 5f, -30f)) { Obstacle = (new Vector2(5f, 10f), 0.5f) };
+        var walk = new NavigationWalkController(
+            RoomWithDoorways(5f),
+            body,
+            new Goals { [Target] = new Vector3(5f, 15f, -30f) },
+            doors: doors);
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Blocked, report.State);
+        Assert.Equal(Door, report.BlockedByObjectId);
+        Assert.Contains("a locked door: Door (0x7A000001), and no other way around it was found", report.Reason);
+        Assert.Equal(0, doors.Uses);
+    }
+
+    [Fact]
+    public void ADoorThatWillNotOpenIsWalkedAroundWhenAnotherWayArrives()
+    {
+        var doors = new FakeDoors(new NavigationDoor(Door, "Door", new Vector3(5f, 10f, -30f), 0.5f), new Vector2(5f, 10f), opens: false);
+        var body = new SimulatedBody(new Vector3(5f, 5f, -30f)) { Obstacle = (new Vector2(5f, 10f), 0.5f) };
+        var walk = new NavigationWalkController(
+            RoomWithDoorways(5f, 15f),
+            body,
+            new Goals { [Target] = new Vector3(5f, 15f, -30f) },
+            doors: doors);
+        doors.AcceptsUse = () => body.StillFrames >= 1;
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.Equal(1, doors.Uses);
+        Assert.True(body.Position.Y > 12f);
+    }
+
+    [Fact]
     public void AWalkThatStopsBesideAClosedDoorItDidNotSeeAheadOpensIt()
     {
         var doors = new FakeDoors(new NavigationDoor(Door, "Door"), new Vector2(40f, 60f), opens: true) { SeenAhead = false };
@@ -430,6 +526,48 @@ public sealed class NavigationWalkControllerTests
                 0f,
                 index * 192f);
         }
+        return physics;
+    }
+
+    /// <summary>
+    /// A room 20 m square, 30 m below its landblock's terrain, split along y = 10 by
+    /// a wall 3 m high with a doorway 2 m wide centred at each x in <paramref name="doorways"/>.
+    /// </summary>
+    private static PhysicsEngine RoomWithDoorways(params float[] doorways)
+    {
+        const float floor = -30f;
+        const float top = -27f;
+        var vertices = new Dictionary<ushort, Vector3>
+        {
+            [0] = new(0f, 0f, floor),
+            [1] = new(20f, 0f, floor),
+            [2] = new(20f, 20f, floor),
+            [3] = new(0f, 20f, floor),
+        };
+        var polygons = new List<List<short>> { new() { 0, 1, 2, 3 } };
+        float start = 0f;
+        foreach (float end in doorways.Order().Select(centre => centre - 1f).Append(20f))
+        {
+            if (end > start)
+            {
+                short first = (short)vertices.Count;
+                vertices[(ushort)first] = new Vector3(start, 10f, floor);
+                vertices[(ushort)(first + 1)] = new Vector3(end, 10f, floor);
+                vertices[(ushort)(first + 2)] = new Vector3(end, 10f, top);
+                vertices[(ushort)(first + 3)] = new Vector3(start, 10f, top);
+                polygons.Add([first, (short)(first + 1), (short)(first + 2), (short)(first + 3)]);
+            }
+            start = end + 2f;
+        }
+
+        var physics = new PhysicsEngine();
+        physics.AddLandblock(
+            0xA9B4FFFFu,
+            new TerrainSurface(new byte[81], new float[256]),
+            [new CellSurface(0xA9B40100u, vertices, polygons)],
+            [],
+            0f,
+            0f);
         return physics;
     }
 
@@ -510,7 +648,12 @@ public sealed class NavigationWalkControllerTests
     {
         public NavigationBlocker? Blocker { get; init; }
 
+        /// <summary>The objects the server placed, as a walk asks for them.</summary>
+        public List<NavAvoidance> Obstacles { get; } = [];
+
         public bool TryLocate(uint objectId, out Vector3 position) => TryGetValue(objectId, out position);
+
+        public IReadOnlyList<NavAvoidance> FindObstacles(Vector3 around, float radius, uint goalObjectId) => Obstacles;
 
         public bool TryFindBlocker(Vector3 position, float radius, out NavigationBlocker blocker)
         {
@@ -570,6 +713,22 @@ public sealed class NavigationWalkControllerTests
         public Func<bool>? AcceptsUse { get; set; }
 
         public int DroppedUses { get; private set; }
+
+        /// <summary>Whether an appraisal finds the door locked; null for a door the client cannot appraise.</summary>
+        public bool? LockedWhenAppraised { get; init; }
+
+        public int Appraisals { get; private set; }
+
+        private bool? _locked;
+
+        public bool? IsLocked(uint doorId) => _locked;
+
+        public bool Appraise(uint doorId)
+        {
+            Appraisals++;
+            _locked = LockedWhenAppraised;
+            return LockedWhenAppraised is not null;
+        }
 
         public void Use(uint doorId)
         {
