@@ -144,6 +144,53 @@ public sealed class RuntimeRouteDriverTests
         Assert.True(driver.Advance(body.Sample()).IsEmpty);
     }
 
+    [Fact]
+    public void ALeapIsFacedChargedAndFlownFromItsTakeoffToItsLanding()
+    {
+        var body = new SimulatedBody { Floor = at => at.Y < 5.5f ? 3f : 0f };
+        var driver = new RuntimeRouteDriver(
+            [new Vector3(0f, 0f, 3f), new Vector3(0f, 5f, 3f), new Vector3(0f, 6.7f, 0f), new Vector3(0f, 10f, 0f)],
+            [new RuntimeRouteLeap(2, 0.1f, Run: false)]);
+
+        List<RuntimeRouteDriveStep> steps = Drive(driver, body, seconds: 30f);
+
+        Assert.Equal(RuntimeRouteDriveState.Arrived, driver.State);
+        Assert.Equal(1, body.Jumps);
+        RuntimeRouteDriveStep jump = Assert.Single(steps, step => step.Jump is not null);
+        Assert.Equal(0.1f, jump.Jump!.Value, 3);
+        Assert.Null(jump.Travel);
+        Assert.InRange(Vector2.Distance(body.Position, new Vector2(0f, 10f)), 0f, 0.6f);
+        Assert.Equal(0f, body.Height, 3);
+    }
+
+    [Fact]
+    public void ALeapThatLandsFarFromItsLandingEndsTheDriveBlocked()
+    {
+        var body = new SimulatedBody { Floor = at => at.Y < 5.5f ? 3f : 0f };
+        var driver = new RuntimeRouteDriver(
+            [new Vector3(0f, 0f, 3f), new Vector3(0f, 5f, 3f), new Vector3(0f, 12f, 0f), new Vector3(0f, 15f, 0f)],
+            [new RuntimeRouteLeap(2, 0.1f, Run: false)]);
+
+        Drive(driver, body, seconds: 30f);
+
+        Assert.Equal(RuntimeRouteDriveState.Blocked, driver.State);
+        Assert.Equal(1, body.Jumps);
+    }
+
+    [Fact]
+    public void ALeapThatNeverLeavesTheGroundEndsTheDriveBlocked()
+    {
+        var body = new SimulatedBody { Floor = at => at.Y < 5.5f ? 3f : 0f, CannotJump = true };
+        var driver = new RuntimeRouteDriver(
+            [new Vector3(0f, 0f, 3f), new Vector3(0f, 5f, 3f), new Vector3(0f, 6.7f, 0f), new Vector3(0f, 10f, 0f)],
+            [new RuntimeRouteLeap(2, 0.1f, Run: false)]);
+
+        Drive(driver, body, seconds: 30f);
+
+        Assert.Equal(RuntimeRouteDriveState.Blocked, driver.State);
+        Assert.False(driver.IsLeaping);
+    }
+
     private static List<RuntimeRouteDriveStep> Drive(RuntimeRouteDriver driver, SimulatedBody body, float seconds)
     {
         var steps = new List<RuntimeRouteDriveStep>();
@@ -157,19 +204,40 @@ public sealed class RuntimeRouteDriverTests
         return steps;
     }
 
-    /// <summary>A body that carries out scripted moves the way the client does, at fixed speeds.</summary>
+    /// <summary>
+    /// A body that carries out scripted moves the way the client does, at fixed
+    /// speeds. It stands on <see cref="Floor"/>, and a jump it charges while standing
+    /// still leaves the ground at the pace of the move pressed during the charge.
+    /// </summary>
     private sealed class SimulatedBody
     {
         private const float RunSpeed = 4f;
         private const float WalkSpeed = 1.5f;
         private const float TurnSpeed = 90f;
+        private const float Gravity = 9.8f;
+        private const float FullJumpHeight = 4.2f;
 
         private long _sequence;
         private RuntimeMoveChannelSnapshot _travel;
         private RuntimeMoveChannelSnapshot _turn;
         private float _turnRemaining;
+        private float _chargeLeft = -1f;
+        private float _chargePower;
+        private Vector3 _velocity;
+        private float _airHeight;
 
         public Vector2 Position { get; private set; }
+
+        /// <summary>The height of the ground under a point; level ground at zero when unset.</summary>
+        public Func<Vector2, float>? Floor { get; init; }
+
+        public bool CannotJump { get; init; }
+
+        public bool Airborne { get; private set; }
+
+        public int Jumps { get; private set; }
+
+        public float Height => Airborne ? _airHeight : Floor?.Invoke(Position) ?? 0f;
 
         public float Heading { get; set; }
 
@@ -182,7 +250,12 @@ public sealed class RuntimeRouteDriverTests
         public bool Travelling => _travel.State == RuntimeScriptedMoveState.Moving;
 
         public RuntimeRouteDriveSample Sample() =>
-            new(new Vector3(Position, 0f), Heading, new RuntimeScriptedMoveSnapshot(_travel, default, _turn, 0, false), InPortalSpace);
+            new(
+                new Vector3(Position, Height),
+                Heading,
+                new RuntimeScriptedMoveSnapshot(_travel, default, _turn, 0, false),
+                InPortalSpace,
+                Airborne);
 
         public void EndTravelBeforeDrive(RuntimeScriptedMoveState state) =>
             _travel = new RuntimeMoveChannelSnapshot(
@@ -213,6 +286,12 @@ public sealed class RuntimeRouteDriverTests
                 _turn = new RuntimeMoveChannelSnapshot(++_sequence, RuntimeScriptedMoveState.Moving, turn, 0f, 0f);
                 _turnRemaining = turn.Amount;
             }
+            if (step.Jump is { } power && !CannotJump && !Airborne)
+            {
+                _chargeLeft = power;
+                _chargePower = power;
+                Jumps++;
+            }
         }
 
         public void Integrate(float seconds)
@@ -225,6 +304,36 @@ public sealed class RuntimeRouteDriverTests
                 Heading = (((Heading + signed) % 360f) + 360f) % 360f;
                 if (_turnRemaining <= 0f)
                     _turn = _turn with { State = RuntimeScriptedMoveState.Completed, Covered = _turn.Request.Amount };
+            }
+            if (Airborne)
+            {
+                Position += new Vector2(_velocity.X, _velocity.Y) * seconds;
+                _velocity.Z -= Gravity * seconds;
+                _airHeight += _velocity.Z * seconds;
+                float ground = Floor?.Invoke(Position) ?? 0f;
+                if (_velocity.Z < 0f && _airHeight <= ground)
+                    Airborne = false;
+                if (_travel.State == RuntimeScriptedMoveState.Moving)
+                    _travel = _travel with { ElapsedSeconds = _travel.ElapsedSeconds + seconds };
+                return;
+            }
+            if (_chargeLeft >= 0f)
+            {
+                if (_travel.State == RuntimeScriptedMoveState.Moving)
+                    _travel = _travel with { ElapsedSeconds = _travel.ElapsedSeconds + seconds };
+                _chargeLeft -= seconds;
+                if (_chargeLeft > 0f)
+                    return;
+                _chargeLeft = -1f;
+                float pace = _travel.State != RuntimeScriptedMoveState.Moving ? 0f
+                    : _travel.Request.Pace == RuntimeMovePace.Run ? RunSpeed
+                    : WalkSpeed;
+                float facing = Heading * MathF.PI / 180f;
+                float rise = MathF.Sqrt(2f * Gravity * MathF.Max(0.35f, FullJumpHeight * _chargePower));
+                _velocity = new Vector3(MathF.Sin(facing) * pace, MathF.Cos(facing) * pace, rise);
+                _airHeight = Height;
+                Airborne = true;
+                return;
             }
             if (_travel.State != RuntimeScriptedMoveState.Moving)
                 return;
