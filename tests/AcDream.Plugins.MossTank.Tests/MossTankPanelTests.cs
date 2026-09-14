@@ -290,6 +290,7 @@ public sealed class MossTankPanelTests
     [InlineData("0xA9B40019 [84.000000 7.100000 94.005005] 0.998351 0.000000 0.000000 -0.057340", "0xA9B40019 [84 7.1 94.005]", true)]
     [InlineData("0x00190105 [10 -20.5 -6]", "0x00190105 [10 -20.5 -6]", false)]
     [InlineData(" 7f7f0001 [0.5, 191.25, 12] ", "0x7F7F0001 [0.5 191.25 12]", true)]
+    [InlineData("0x00000000 [202 30296 0.005]", "0x00000000 [202 30296 0.005]", false)]
     public void APlaceWrittenTheWayLocWritesItIsReadAndWrittenBackTheSame(string text, string written, bool outdoor)
     {
         Assert.True(MossTankPanel.TryParseSharedPlace(text, out PluginNavigationPosition position));
@@ -300,7 +301,6 @@ public sealed class MossTankPanelTests
 
     [Theory]
     [InlineData("")]
-    [InlineData("0x00000000 [1 2 3]")]
     [InlineData("0xZZ [1 2 3]")]
     [InlineData("0x7F7F0001 [1 2]")]
     [InlineData("0x7F7F0001 1 2 3")]

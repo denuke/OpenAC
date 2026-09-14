@@ -46,7 +46,9 @@ internal sealed partial class MossTankPanel
         + "\"removeBlacklistedFamilies\": [...]}. "
         + "\"route\": {\"enabled\": true or false, \"mode\": \"Circular\", \"Linear\" or \"Once\", \"walkLegs\": true or false, "
         + "\"waypoints\": [{\"point\": \"0x<cell> [x y z]\"}, {\"pause\": <seconds>}, {\"chat\": \"<text>\"}]} replaces the "
-        + "route, with points as the client's /loc writes them. With walkLegs the client's own route planning walks each leg "
+        + "route, with points as the client's /loc writes them. A route loaded from a VTank file keeps no cells, so its points "
+        + "read as 0x00000000 with the point measured from the corner of the map, and walk and write back as they read. "
+        + "With walkLegs the client's own route planning walks each leg "
         + "to a point, around walls, creatures and doors, and back from wherever a fight left the character, and points "
         + "along a straight stretch are walked in one walk.";
 
@@ -595,7 +597,7 @@ internal sealed partial class MossTankPanel
         string cellText = trimmed[..open].Trim();
         if (cellText.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
             cellText = cellText[2..];
-        if (!uint.TryParse(cellText, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint cell) || cell == 0u)
+        if (!uint.TryParse(cellText, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint cell))
             return false;
         string[] parts = trimmed[(open + 1)..close].Split([' ', ','], StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 3
