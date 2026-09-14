@@ -1504,11 +1504,20 @@ internal sealed class NavigationWalkController
         return located ? position : request.Goal;
     }
 
-    /// <summary>How a request's goal is named in what a walk says: its object's id, or its place's cell and point.</summary>
-    private static string Label(Request request) =>
-        request.Place is { } place
-            ? $"0x{place.CellId:X8} [{place.Local.X:0.0} {place.Local.Y:0.0} {place.Local.Z:0.0}]"
-            : $"0x{request.ObjectId:X8}";
+    /// <summary>
+    /// How a request's goal is named in what a walk says: its object's id, a place with a cell
+    /// by its cell and point, and a place with no cell by its map coordinates.
+    /// </summary>
+    private static string Label(Request request)
+    {
+        if (request.Place is not { } place)
+            return $"0x{request.ObjectId:X8}";
+        if (place.CellId != 0u)
+            return $"0x{place.CellId:X8} [{place.Local.X:0.0} {place.Local.Y:0.0} {place.Local.Z:0.0}]";
+        float northSouth = (place.Local.Y - (127f * NavGeometry.LandblockSize) - 84f) / 240f;
+        float eastWest = (place.Local.X - (127f * NavGeometry.LandblockSize) - 84f) / 240f;
+        return $"{MathF.Abs(northSouth):0.000}{(northSouth < 0f ? 'S' : 'N')}, {MathF.Abs(eastWest):0.000}{(eastWest < 0f ? 'W' : 'E')}";
+    }
 
     /// <summary>The route left to walk, and for one stage of a longer walk the straight line on from its end to the goal.</summary>
     private static float Remaining(Request request, RuntimeRouteDriver driver, Vector3 position)
