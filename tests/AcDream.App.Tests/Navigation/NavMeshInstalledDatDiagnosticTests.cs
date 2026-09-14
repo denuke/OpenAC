@@ -161,6 +161,130 @@ public sealed class NavMeshInstalledDatDiagnosticTests
     }
 
     [Fact]
+    public void HoltburgRoutesPastACreatureKeepAsClearOfWallsAsWithoutIt()
+    {
+        uint[] cells = [.. Enumerable.Range(0x100, 0x100).Select(offset => (Holtburg & 0xFFFF0000u) | (uint)offset)];
+        PublishedLandblock world = PublishedLandblock.Load(RequireDatDirectory(), Holtburg, cells);
+        NavGrid grid = BuildAndReport("holtburg-creatures", world);
+
+        RoutePastCreatures("holtburg-creatures", world, grid);
+    }
+
+    [Fact]
+    public void DungeonRoutesPastACreatureKeepAsClearOfWallsAsWithoutIt()
+    {
+        const uint dungeon = 0x0019FFFFu;
+        uint[] cells = [.. Enumerable.Range(0x100, 0x300).Select(offset => (dungeon & 0xFFFF0000u) | (uint)offset)];
+        PublishedLandblock world = PublishedLandblock.Load(RequireDatDirectory(), dungeon, cells);
+        Assert.True(NavGeometry.TryMeasureCells(world.Engine, dungeon, out Vector2 minimum, out Vector2 maximum));
+        float size = MathF.Ceiling((MathF.Max(maximum.X - minimum.X, maximum.Y - minimum.Y) + 48f) / 16f) * 16f;
+        float originX = MathF.Floor((((minimum.X + maximum.X) * 0.5f) - (size * 0.5f)) / NavGrid.DefaultCellSize) * NavGrid.DefaultCellSize;
+        float originY = MathF.Floor((((minimum.Y + maximum.Y) * 0.5f) - (size * 0.5f)) / NavGrid.DefaultCellSize) * NavGrid.DefaultCellSize;
+        NavGrid grid = NavGrid.Build(NavGeometry.CaptureDungeon(world.Engine, dungeon, originX, originY, size)!, world.Body);
+
+        RoutePastCreatures("dungeon-0x0019-creatures", world, grid);
+    }
+
+    /// <summary>
+    /// Routes pairs of cells 15 to 60 m apart, then routes each again with a creature
+    /// standing at the middle of its longest leg. A route past the creature never walks
+    /// nearer walls than the route without it, beyond the planner's allowance, and no
+    /// leg of it passes through a wall.
+    /// </summary>
+    private void RoutePastCreatures(string label, PublishedLandblock world, NavGrid grid)
+    {
+        var standing = new List<(uint Cell, Vector3 At)>();
+        foreach ((uint cell, Vector3 origin) in world.CellOrigins.OrderBy(pair => pair.Key))
+        {
+            int node = grid.FindWalkableNode(origin, 1f, 1.5f);
+            if (node >= 0)
+                standing.Add((cell, grid.Position(node)));
+        }
+
+        const int wanted = 40;
+        float reach = 0.8f + grid.Body.Radius;
+        int routes = 0;
+        int around = 0;
+        int through = 0;
+        int endedDifferently = 0;
+        int scrapier = 0;
+        int throughWalls = 0;
+        int nearWalls = 0;
+        int plainNearWalls = 0;
+        float plainScrape = 0f;
+        float passingScrape = 0f;
+        float longer = 0f;
+        var clock = Stopwatch.StartNew();
+        for (int first = 0; first < standing.Count && routes < wanted; first++)
+        {
+            for (int second = first + 1; second < standing.Count && routes < wanted; second++)
+            {
+                (uint fromCell, Vector3 from) = standing[first];
+                (uint toCell, Vector3 to) = standing[second];
+                float apart = Vector2.Distance(new Vector2(from.X, from.Y), new Vector2(to.X, to.Y));
+                if (apart < 15f || apart > 60f)
+                    continue;
+                NavRoute plain = NavRouter.Find(grid, from, to, arrivalRadius: 1f);
+                if (plain.Outcome != NavRouteOutcome.Routed || plain.Legs.Count < 2)
+                    continue;
+                routes++;
+                int longest = 1;
+                for (int leg = 2; leg < plain.Legs.Count; leg++)
+                {
+                    if (Vector3.Distance(plain.Legs[leg - 1], plain.Legs[leg])
+                        > Vector3.Distance(plain.Legs[longest - 1], plain.Legs[longest]))
+                    {
+                        longest = leg;
+                    }
+                }
+                Vector3 middle = Vector3.Lerp(plain.Legs[longest - 1], plain.Legs[longest], 0.5f);
+                NavRoute passing = NavRouter.Find(grid, from, to, arrivalRadius: 1f, crowd: [new NavAvoidance(middle, reach)]);
+                if (passing.Outcome != plain.Outcome || (passing.Reason == "routed") != (plain.Reason == "routed"))
+                {
+                    endedDifferently++;
+                    _output.WriteLine($"  0x{fromCell:X8} to 0x{toCell:X8}: '{plain.Reason}' without the creature, {passing.Outcome} '{passing.Reason}' with it");
+                }
+                if (passing.Outcome != NavRouteOutcome.Routed)
+                    continue;
+                if (passing.Crowding < 0.05f)
+                    around++;
+                else
+                    through++;
+                if (passing.Scrape > plain.Scrape + 0.25f)
+                {
+                    scrapier++;
+                    _output.WriteLine($"  0x{fromCell:X8} to 0x{toCell:X8}: scrapes {passing.Scrape:0.00} m² past the creature, {plain.Scrape:0.00} m² without it");
+                }
+                plainScrape += plain.Scrape;
+                passingScrape += passing.Scrape;
+                longer += passing.Length - plain.Length;
+                for (int leg = 1; leg < passing.Legs.Count; leg++)
+                {
+                    if (!grid.IsOpenLine(passing.Legs[leg - 1], passing.Legs[leg]))
+                        throughWalls++;
+                    else if (!grid.CanSweep(passing.Legs[leg - 1], passing.Legs[leg]))
+                        nearWalls++;
+                }
+                for (int leg = 1; leg < plain.Legs.Count; leg++)
+                {
+                    if (grid.IsOpenLine(plain.Legs[leg - 1], plain.Legs[leg]) && !grid.CanSweep(plain.Legs[leg - 1], plain.Legs[leg]))
+                        plainNearWalls++;
+                }
+            }
+        }
+
+        _output.WriteLine(
+            $"{label}: {routes} routes, each again with a creature at the middle of its longest leg, in {clock.Elapsed.TotalMilliseconds:0} ms: "
+            + $"{around} go around it and {through} through it, {longer / Math.Max(1, around + through):0.0} m longer on average; "
+            + $"{scrapier} walk nearer walls than without it; {endedDifferently} end differently; "
+            + $"scrape {plainScrape:0.0} m² without creatures and {passingScrape:0.0} m² with them; "
+            + $"{throughWalls} legs pass through a wall; {nearWalls} legs pass nearer one than the body fits, {plainNearWalls} without creatures");
+        Assert.True(routes > 0);
+        Assert.Equal(0, throughWalls);
+        Assert.Equal(0, scrapier);
+    }
+
+    [Fact]
     public void HoltburgReplaysTheLiveWalkFromBesideTheContractBrokerToRenaldTheElder()
     {
         const uint startCell = 0xA9B40162u;
