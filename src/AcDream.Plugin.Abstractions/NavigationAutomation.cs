@@ -184,6 +184,13 @@ public enum PluginGoToState
 
     /// <summary>The character entered portal space or left the world.</summary>
     Lost,
+
+    /// <summary>
+    /// The walk stopped where the character stands while something else needs the
+    /// character, such as a plugin fighting a monster, and plans on from there once
+    /// nothing has needed it for a moment.
+    /// </summary>
+    Waiting,
 }
 
 /// <summary>
@@ -287,8 +294,12 @@ public interface INavigationAutomation
     /// between the character and the object, facing it. When the character
     /// stops making progress the client plans again from where it stands,
     /// keeping out of the spot where it stuck, a few times. A later walk, <see cref="StopGoTo"/>, the player
-    /// moving the character, or portal space ends it. The walk steers with
-    /// client-driven moves, so a plugin's own moves fight it while it lasts.
+    /// moving the character, or portal space ends it. While the character attacks,
+    /// a plugin holds a movement intent, or a plugin that asked with
+    /// <see cref="PauseGoToWhile"/> needs the character, the walk stops where the
+    /// character stands and waits, then plans again from there and goes on. The
+    /// walk steers with client-driven moves, so a plugin's own moves fight it while
+    /// it lasts.
     /// </summary>
     PluginNavigationCommandStatus GoTo(uint objectId, float arrivalMeters) =>
         PluginNavigationCommandStatus.Unavailable;
@@ -299,4 +310,24 @@ public interface INavigationAutomation
 
     /// <summary>The most recent walk the client planned to an object.</summary>
     PluginGoToReport GoToReport => default;
+
+    /// <summary>
+    /// Has walks to objects wait for a plugin that sometimes needs the character,
+    /// such as a combat macro. While <paramref name="need"/> returns what the plugin
+    /// is doing, such as "MossTank is running Attack", a walk under way stops where
+    /// the character stands and reports that it waits on that. Once nothing has
+    /// needed the character for a moment, the walk plans again from where the
+    /// character stands and goes on. The client asks on the update thread, every
+    /// frame a walk is under way, until the result is disposed.
+    /// </summary>
+    IDisposable PauseGoToWhile(Func<string?> need) => NoGoToPause.Instance;
+}
+
+file sealed class NoGoToPause : IDisposable
+{
+    public static NoGoToPause Instance { get; } = new();
+
+    public void Dispose()
+    {
+    }
 }

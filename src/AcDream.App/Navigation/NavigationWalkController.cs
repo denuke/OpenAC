@@ -14,6 +14,12 @@ internal enum NavigationWalkState
 
     Walking,
 
+    /// <summary>
+    /// Stopped where the character stands while something else needs the character,
+    /// such as a plugin fighting a monster; the walk plans on once nothing has for a moment.
+    /// </summary>
+    Waiting,
+
     /// <summary>A route was asked for without walking it, and found.</summary>
     Planned,
 
@@ -155,7 +161,9 @@ internal interface INavigationGoalSource
 /// arrives turns the character to face its goal. A route keeps out of the objects
 /// the server placed, such as ore deposits, whenever another way arrives. A walk
 /// that stops making progress beside an object keeps out of all of it after, and
-/// with no other way ends blocked naming it.
+/// with no other way ends blocked naming it. A walk waits where the character
+/// stands while something else needs the character, such as a plugin fighting a
+/// monster, and plans again from there once nothing has for a moment.
 /// </summary>
 internal sealed class NavigationWalkController
 {
@@ -243,6 +251,13 @@ internal sealed class NavigationWalkController
     /// </summary>
     internal const float DoorAppraisalWaitSeconds = 2f;
 
+    /// <summary>
+    /// A walk that waited while something else needed the character plans on only
+    /// once nothing has needed it for this long, so a fight that pauses between
+    /// blows does not set the walk going between them.
+    /// </summary>
+    internal const double PauseSettleSeconds = 1.5d;
+
     private readonly PhysicsEngine _physics;
     private readonly INavigationWalkBody _body;
     private readonly INavigationGoalSource _goals;
@@ -299,6 +314,13 @@ internal sealed class NavigationWalkController
 
     /// <summary>Whether to keep a grid built around the character while nothing is planned.</summary>
     public bool ShowGrid { get; set; }
+
+    /// <summary>
+    /// What needs the character now, such as a plugin fighting a monster, or null
+    /// when nothing does. A walk waits while it names something. It is asked on
+    /// every frame a walk is under way.
+    /// </summary>
+    public Func<string?>? PausedBy { get; set; }
 
     /// <summary>The grid most recently built.</summary>
     public NavGrid? Grid => _grid;
@@ -505,6 +527,8 @@ internal sealed class NavigationWalkController
 
     private void Advance(Request active, in NavigationWalkBodySample sample)
     {
+        if (Paused(active, sample))
+            return;
         if (active.WaitingOn is { } wait)
         {
             WaitForDoor(active, wait, sample);
@@ -697,6 +721,59 @@ internal sealed class NavigationWalkController
         string again = $"{BlockedReason(active)}; planning again ({active.Replans} of {MaximumReplans})";
         Publish(active, NavigationWalkState.Planning, again, float.NaN);
         _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {again}");
+    }
+
+    /// <summary>
+    /// Stops a walk where the character stands while something else needs the
+    /// character, and plans again from there once nothing has needed it for
+    /// <see cref="PauseSettleSeconds"/>. A leap already in the air lands first. A
+    /// route planned from where the character stood before is not walked, and a
+    /// door the walk was opening is judged again on the new plan.
+    /// </summary>
+    private bool Paused(Request active, in NavigationWalkBodySample sample)
+    {
+        if (!active.Walk || _driver is { IsLeaping: true })
+            return false;
+        string? need = PausedBy?.Invoke();
+        if (need is null && active.PausedFor is null)
+            return false;
+        if (sample.InPortalSpace)
+        {
+            End(active, NavigationWalkState.Lost, "the character entered portal space");
+            return true;
+        }
+        if (need is not null)
+        {
+            active.FreeSince = null;
+            if (_driver is { } driver)
+            {
+                Apply(driver.Cancel());
+                _driver = null;
+            }
+            if (ReferenceEquals(_routingFor, active))
+                _routingFor = null;
+            if (active.WaitingOn is { Appraising: false } opening)
+                active.DoorUses[opening.Door.ObjectId]--;
+            active.WaitingOn = null;
+            if (need != active.PausedFor)
+            {
+                active.PausedFor = need;
+                string waiting = $"waiting: {need}";
+                Publish(active, NavigationWalkState.Waiting, waiting, float.NaN);
+                _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {waiting}");
+            }
+            return true;
+        }
+        active.FreeSince ??= _seconds;
+        if (_seconds - active.FreeSince.Value < PauseSettleSeconds)
+            return true;
+        active.PausedFor = null;
+        active.FreeSince = null;
+        active.Builds = 0;
+        const string again = "nothing needs the character any more; planning on from where it stands";
+        Publish(active, NavigationWalkState.Planning, again, float.NaN);
+        _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {again}");
+        return true;
     }
 
     /// <summary>A closed door within the look-ahead along the leg the character is walking, if there is one.</summary>
@@ -1328,5 +1405,11 @@ internal sealed class NavigationWalkController
 
         /// <summary>The door the walk last planned a way around, and why, named if no way around it is found.</summary>
         public (NavigationDoor Door, string Why)? AvoidedDoor { get; set; }
+
+        /// <summary>What the walk waits on while something else needs the character.</summary>
+        public string? PausedFor { get; set; }
+
+        /// <summary>Since when nothing has needed the character while the walk waits, in the controller's seconds.</summary>
+        public double? FreeSince { get; set; }
     }
 }
