@@ -170,6 +170,17 @@ internal interface INavigationGoalSource
         position = default;
         return false;
     }
+
+    /// <summary>
+    /// Where a point in the physics world stands measured from the corner of the first
+    /// landblock, the way a place with no cell is given. False when the client cannot tell
+    /// relative to the character.
+    /// </summary>
+    bool TryGlobalOf(Vector3 world, out Vector3 global)
+    {
+        global = default;
+        return false;
+    }
 }
 
 /// <summary>
@@ -327,6 +338,24 @@ internal sealed class NavigationWalkController
     private NavigationWalkReport _report;
 
     private NavGrid? _grid;
+
+    /// <summary>How far the character may move, and how long places stand, before they are found again.</summary>
+    private const float PlacesMovedMeters = 8f;
+    private const double PlacesFreshSeconds = 15d;
+
+    /// <summary>How near the character a node must be to count as where it stands, as a route finds its start.</summary>
+    private const float PlacesStartRadius = 1.5f;
+    private const float PlacesStartHeight = 1f;
+
+    private NavigationPlacesReport _places = NavigationPlacesReport.None;
+    private bool _placesWanted;
+    private Task<IReadOnlyList<NavPlace>>? _placing;
+    private NavGrid? _placingGrid;
+    private Vector3 _placingFrom;
+    private bool _placingInDungeon;
+    private NavGrid? _placesGrid;
+    private Vector3 _placesFrom;
+    private double _placesAt = double.NegativeInfinity;
     private Task<NavGrid>? _building;
 
     /// <summary>
@@ -369,6 +398,27 @@ internal sealed class NavigationWalkController
 
     /// <summary>Whether to keep a grid built around the character while nothing is planned.</summary>
     public bool ShowGrid { get; set; }
+
+    /// <summary>The spots the character can walk to, as last found.</summary>
+    public NavigationPlacesReport Places
+    {
+        get
+        {
+            lock (_gate)
+                return _places;
+        }
+    }
+
+    /// <summary>Asks for the spots the character can walk to, mapping the ground around it first when no grid covers it.</summary>
+    public void WantPlaces()
+    {
+        lock (_gate)
+        {
+            _placesWanted = true;
+            if (ReferenceEquals(_places, NavigationPlacesReport.None))
+                _places = _places with { State = NavigationPlacesState.Mapping, Reason = "mapping the ground around the character" };
+        }
+    }
 
     /// <summary>
     /// What needs the character now, such as a plugin fighting a monster, or null
@@ -463,6 +513,7 @@ internal sealed class NavigationWalkController
             _seconds += elapsedSeconds;
         CollectBuild();
         CollectRoute();
+        CollectPlaces();
 
         Request? incoming;
         bool stop;
@@ -480,6 +531,12 @@ internal sealed class NavigationWalkController
         if (incoming is not null)
             Begin(incoming, inWorld);
 
+        bool wantPlaces;
+        lock (_gate)
+            wantPlaces = _placesWanted;
+        if (wantPlaces)
+            KeepPlaces(inWorld, sample);
+
         if (_active is { } active)
         {
             if (inWorld)
@@ -488,7 +545,7 @@ internal sealed class NavigationWalkController
                 End(active, NavigationWalkState.Lost, "the character left the world");
             return;
         }
-        if (inWorld && ShowGrid)
+        if (inWorld && (ShowGrid || wantPlaces))
             KeepViewGrid(sample);
     }
 
@@ -1341,6 +1398,124 @@ internal sealed class NavigationWalkController
         float half = ViewRegion * 0.5f;
         if (!StartBuild(Snap(sample.Position.X - half), Snap(sample.Position.Y - half), ViewRegion, sample.Body, dungeon: 0u))
             _viewRetryTick = _tick + ViewRetryTicks;
+    }
+
+    /// <summary>
+    /// Finds the spots the character can walk to over the grid that covers where it stands,
+    /// off the game's thread, once there is such a grid, and again once the character has
+    /// moved on or the places have grown old.
+    /// </summary>
+    private void KeepPlaces(bool inWorld, in NavigationWalkBodySample sample)
+    {
+        if (!inWorld || sample.InPortalSpace)
+        {
+            PublishPlaces(
+                new NavigationPlacesReport(
+                    NavigationPlacesState.Unavailable,
+                    [],
+                    false,
+                    inWorld ? "the character is in portal space" : "the character is not in the world"),
+                wanted: false);
+            return;
+        }
+        if (_placing is not null)
+            return;
+        bool inDungeon = TryMeasureDungeon(sample.CellId, out uint dungeon, out _, out _);
+        uint gridDungeon = inDungeon ? dungeon : 0u;
+        if (_grid is not { } grid
+            || grid.Body != sample.Body
+            || _gridDungeon != gridDungeon
+            || !grid.Contains(sample.Position, CoverMargin)
+            || IsStale(grid, gridDungeon))
+        {
+            PublishPlaces(Places with { State = NavigationPlacesState.Mapping, Reason = "mapping the ground around the character" }, wanted: true);
+            return;
+        }
+        if (ReferenceEquals(grid, _placesGrid)
+            && Vector3.Distance(sample.Position, _placesFrom) <= PlacesMovedMeters
+            && _seconds - _placesAt <= PlacesFreshSeconds)
+        {
+            lock (_gate)
+                _placesWanted = false;
+            return;
+        }
+        int start = grid.FindWalkableNode(sample.Position, PlacesStartRadius, PlacesStartHeight);
+        if (start < 0)
+        {
+            _placesGrid = grid;
+            _placesFrom = sample.Position;
+            _placesAt = _seconds;
+            _goals.TryGlobalOf(sample.Position, out Vector3 standing);
+            PublishPlaces(
+                new NavigationPlacesReport(NavigationPlacesState.Ready, [], inDungeon, "the character does not stand on floor the grid holds")
+                {
+                    FromGlobal = standing,
+                },
+                wanted: false);
+            return;
+        }
+        _placingGrid = grid;
+        _placingFrom = sample.Position;
+        _placingInDungeon = inDungeon;
+        _placing = Task.Run(() => NavPlaces.Find(grid, start));
+    }
+
+    private void CollectPlaces()
+    {
+        if (_placing is not { IsCompleted: true } placing)
+            return;
+        _placing = null;
+        NavGrid? grid = _placingGrid;
+        _placingGrid = null;
+        if (!placing.IsCompletedSuccessfully)
+        {
+            PublishPlaces(
+                new NavigationPlacesReport(
+                    NavigationPlacesState.Unavailable,
+                    [],
+                    _placingInDungeon,
+                    $"finding places failed: {placing.Exception?.GetBaseException().Message ?? "it was cancelled"}"),
+                wanted: false);
+            return;
+        }
+        var places = new List<NavigationPlace>(placing.Result.Count);
+        foreach (NavPlace place in placing.Result)
+        {
+            if (_goals.TryGlobalOf(place.Position, out Vector3 global))
+            {
+                places.Add(new NavigationPlace(
+                    global,
+                    place.WalkMeters,
+                    place.Kind,
+                    place.AreaSquareMeters,
+                    place.WidthMeters,
+                    place.RiseMeters,
+                    place.Exits));
+            }
+        }
+        _placesGrid = grid;
+        _placesFrom = _placingFrom;
+        _placesAt = _seconds;
+        _goals.TryGlobalOf(_placingFrom, out Vector3 from);
+        PublishPlaces(
+            new NavigationPlacesReport(
+                NavigationPlacesState.Ready,
+                places,
+                _placingInDungeon,
+                places.Count == 0 ? "no floor a walk reaches was found" : "found")
+            {
+                FromGlobal = from,
+            },
+            wanted: false);
+    }
+
+    private void PublishPlaces(NavigationPlacesReport report, bool wanted)
+    {
+        lock (_gate)
+        {
+            _places = report;
+            _placesWanted = wanted;
+        }
     }
 
     private void CollectBuild()

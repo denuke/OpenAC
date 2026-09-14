@@ -199,6 +199,19 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
         return true;
     }
 
+    /// <summary>A point in the physics world measured from the corner of the first landblock, set relative to where the character stands.</summary>
+    public bool TryGlobalOf(Vector3 world, out Vector3 global)
+    {
+        if (_movement.Controller is not { } controller)
+        {
+            global = default;
+            return false;
+        }
+        AcDream.Core.Physics.Position here = controller.CellPosition;
+        global = world - controller.Position - PlaceOffset(0u, Vector3.Zero, here.ObjCellId, here.Frame.Origin);
+        return true;
+    }
+
     /// <summary>
     /// How far a place lies from where the character stands, each given as a cell and a
     /// point in that cell's landblock frame. A cell of zero measures its point from the

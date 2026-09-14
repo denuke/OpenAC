@@ -1928,6 +1928,50 @@ internal sealed class AppAutomationSurface
             (float)(position.Elevation * 240d));
     }
 
+    public PluginPlacesReport CapturePlaces()
+    {
+        AcDream.App.Navigation.NavigationWalkController? walk;
+        lock (_gate)
+            walk = _navigationWalk;
+        if (walk is null || !IsAvailable)
+            return new PluginPlacesReport(PluginPlacesState.Unavailable, [], false, "the client cannot find places now");
+        walk.WantPlaces();
+        return ProjectPlacesReport(walk.Places);
+    }
+
+    /// <summary>The walk controller's places as plugins see them: map coordinates with no cell.</summary>
+    internal static PluginPlacesReport ProjectPlacesReport(AcDream.App.Navigation.NavigationPlacesReport report)
+    {
+        var places = new PluginNavigationPlace[report.Places.Count];
+        for (int index = 0; index < places.Length; index++)
+        {
+            AcDream.App.Navigation.NavigationPlace place = report.Places[index];
+            places[index] = new PluginNavigationPlace(
+                ProjectNavigationPosition(new Position(0u, place.Global, System.Numerics.Quaternion.Identity)),
+                place.WalkMeters,
+                place.Kind switch
+                {
+                    AcDream.Core.Navigation.NavPlaceKind.Passage => PluginPlaceKind.Passage,
+                    AcDream.Core.Navigation.NavPlaceKind.Open => PluginPlaceKind.Open,
+                    _ => PluginPlaceKind.Room,
+                },
+                place.AreaSquareMeters,
+                place.WidthMeters,
+                place.RiseMeters,
+                place.Exits);
+        }
+        PluginPlacesState state = report.State switch
+        {
+            AcDream.App.Navigation.NavigationPlacesState.Ready => PluginPlacesState.Ready,
+            AcDream.App.Navigation.NavigationPlacesState.Mapping => PluginPlacesState.Mapping,
+            _ => PluginPlacesState.Unavailable,
+        };
+        return new PluginPlacesReport(state, places, report.InDungeon, report.Reason)
+        {
+            From = ProjectNavigationPosition(new Position(0u, report.FromGlobal, System.Numerics.Quaternion.Identity)),
+        };
+    }
+
     public PluginNavigationCommandStatus StopGoTo()
     {
         AcDream.App.Navigation.NavigationWalkController? walk;

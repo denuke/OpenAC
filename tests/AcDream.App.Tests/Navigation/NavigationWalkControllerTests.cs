@@ -159,6 +159,32 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
+    public void PlacesAreFoundOnceTheGroundAroundTheCharacterIsMapped()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
+        var walk = new NavigationWalkController(FlatWorld(), body, new Goals());
+
+        walk.WantPlaces();
+        Assert.Equal(NavigationPlacesState.Mapping, walk.Places.State);
+        NavigationPlacesReport report = walk.Places;
+        var wall = Stopwatch.StartNew();
+        while (report.State != NavigationPlacesState.Ready && wall.Elapsed < TimeSpan.FromSeconds(60))
+        {
+            walk.WantPlaces();
+            walk.Tick(Frame);
+            report = walk.Places;
+            Thread.Sleep(1);
+        }
+
+        Assert.Equal(NavigationPlacesState.Ready, report.State);
+        Assert.False(report.InDungeon);
+        Assert.Contains(report.Places, place => place.Kind == NavPlaceKind.Open);
+        Assert.Equal(report.Places.OrderBy(place => place.WalkMeters), report.Places);
+        Assert.Equal(new Vector3(40f, 40f, 0f), report.FromGlobal);
+        Assert.Equal(0, body.MovesBegun);
+    }
+
+    [Fact]
     public void ARouteAskedForAloneIsFoundWithoutMovingTheCharacter()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
@@ -913,6 +939,12 @@ public sealed class NavigationWalkControllerTests
 
     private sealed class Goals : Dictionary<uint, Vector3>, INavigationGoalSource
     {
+        public bool TryGlobalOf(Vector3 world, out Vector3 global)
+        {
+            global = world;
+            return true;
+        }
+
         public NavigationBlocker? Blocker { get; init; }
 
         /// <summary>The objects the server placed, as a walk asks for them.</summary>

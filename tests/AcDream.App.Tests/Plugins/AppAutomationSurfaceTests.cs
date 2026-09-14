@@ -52,6 +52,31 @@ public sealed class AppAutomationSurfaceTests
     }
 
     [Fact]
+    public void PlacesReachPluginsInMapCoordinatesWithNoCell()
+    {
+        PluginPlacesReport report = AppAutomationSurface.ProjectPlacesReport(new AcDream.App.Navigation.NavigationPlacesReport(
+            AcDream.App.Navigation.NavigationPlacesState.Ready,
+            [new AcDream.App.Navigation.NavigationPlace(
+                new Vector3(202f, 30296f, 0.005f), 12.5f, AcDream.Core.Navigation.NavPlaceKind.Passage, 30f, 2f, 2.5f, 3)],
+            InDungeon: true,
+            "found")
+        {
+            FromGlobal = new Vector3(210f, 30296f, 0f),
+        });
+
+        Assert.Equal(PluginPlacesState.Ready, report.State);
+        Assert.True(report.InDungeon);
+        PluginNavigationPlace place = Assert.Single(report.Places);
+        Assert.Equal(0u, place.Position.CellId);
+        Assert.Equal(-101.10833d, place.Position.EastWest, 4);
+        Assert.Equal(24.28333d, place.Position.NorthSouth, 4);
+        Assert.Equal(12.5f, place.WalkMeters);
+        Assert.Equal(PluginPlaceKind.Passage, place.Kind);
+        Assert.Equal(3, place.Exits);
+        Assert.Equal(-101.075d, report.From.EastWest, 4);
+    }
+
+    [Fact]
     public void WalksWaitOnWhatAPluginSaysItNeedsUntilThePluginLetsGo()
     {
         using var surface = new AppAutomationSurface();
