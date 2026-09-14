@@ -209,6 +209,13 @@ public interface IItemAutomation
     PluginItemCommandResult Sell(uint objectId, uint amount = 0u) =>
         new(PluginItemCommandStatus.Unavailable);
 
+    /// <summary>
+    /// The answer <see cref="Sell"/> would give now, without offering anything:
+    /// Started when the client would offer the item to the open vendor.
+    /// </summary>
+    PluginItemCommandResult CheckSell(uint objectId, uint amount = 0u) =>
+        new(PluginItemCommandStatus.Unavailable);
+
     /// <summary>Listings of the vendor that is currently open, or empty.</summary>
     IReadOnlyList<PluginVendorItem> CaptureVendorStock() =>
         Array.Empty<PluginVendorItem>();

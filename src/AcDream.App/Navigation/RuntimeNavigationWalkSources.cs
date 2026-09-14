@@ -3,6 +3,7 @@ using AcDream.Core.Items;
 using AcDream.Core.Navigation;
 using AcDream.Core.Physics;
 using AcDream.Core.Physics.Motion;
+using AcDream.Core.Properties;
 using AcDream.Runtime;
 using AcDream.Runtime.Entities;
 using AcDream.Runtime.Gameplay;
@@ -30,18 +31,26 @@ internal sealed class RuntimeNavigationWalkBody : INavigationWalkBody
         }
 
         RuntimePortalSnapshot portal = _portal.Snapshot;
+        float jumpHeight = controller.FullJumpHeight;
         sample = new NavigationWalkBodySample(
             controller.Position,
             MoveToMath.HeadingFromYaw(controller.Yaw),
             NavBody.Player(controller.StepUpHeight, controller.StepDownHeight),
             _movement.ScriptedMove,
-            portal.Kind != RuntimePortalKind.None && !portal.Completed && !portal.Cancelled);
+            portal.Kind != RuntimePortalKind.None && !portal.Completed && !portal.Cancelled,
+            controller.CellId,
+            jumpHeight > 0f
+                ? new NavLeapAbility(MotionInterpreter.WalkAnimSpeed, controller.RunSpeed, jumpHeight, NavigationWalkController.SafeDropMeters)
+                : null,
+            controller.IsAirborne);
         return true;
     }
 
     public bool BeginMove(in RuntimeMoveRequest request) => _movement.BeginMove(request);
 
     public bool StopMove(RuntimeMoveChannel channel) => _movement.StopMove(channel);
+
+    public bool BeginJump(float power) => _movement.BeginJump(power);
 }
 
 /// <summary>
@@ -107,6 +116,7 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
     {
         uint player = _runtime.PlayerIdentity.ServerGuid;
         RuntimeEntityRecord? nearestRecord = null;
+        NavAvoidance nearestFootprint = default;
         float nearest = radius;
         foreach (ShadowEntry entry in _physics.ShadowObjects.AllEntriesForDebug())
         {
@@ -115,13 +125,15 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
             {
                 continue;
             }
-            float dx = entry.Position.X - position.X;
-            float dy = entry.Position.Y - position.Y;
-            float edge = MathF.Sqrt((dx * dx) + (dy * dy)) - entry.Radius;
+            NavAvoidance footprint = NavGeometry.FootprintOf(entry, _physics.DataCache);
+            float dx = footprint.Centre.X - position.X;
+            float dy = footprint.Centre.Y - position.Y;
+            float edge = MathF.Sqrt((dx * dx) + (dy * dy)) - footprint.Radius;
             if (edge < nearest)
             {
                 nearest = edge;
                 nearestRecord = record;
+                nearestFootprint = footprint;
             }
         }
         if (nearestRecord is null)
@@ -135,8 +147,42 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
         bool door = item is not null
             && ((PublicWeenieFlags)(item.PublicWeenieBitfield ?? 0u) & PublicWeenieFlags.Door) != 0;
         bool closed = door && !nearestRecord.FinalPhysicsState.HasFlag(PhysicsStateFlags.Ethereal);
-        blocker = new NavigationBlocker(objectId, item?.Name ?? nearestRecord.Snapshot.Name ?? $"0x{objectId:X8}", closed);
+        blocker = new NavigationBlocker(
+            objectId,
+            item?.Name ?? nearestRecord.Snapshot.Name ?? $"0x{objectId:X8}",
+            closed,
+            nearestFootprint.Centre,
+            nearestFootprint.Radius);
         return true;
+    }
+
+    /// <summary>
+    /// The server objects near a point whose collision stands still: not doors,
+    /// which walks open, nor creatures or players, which move. Each part of an
+    /// object's collision is a footprint of its own.
+    /// </summary>
+    public IReadOnlyList<NavAvoidance> FindObstacles(Vector3 around, float radius, uint goalObjectId)
+    {
+        uint player = _runtime.PlayerIdentity.ServerGuid;
+        var flatAround = new Vector2(around.X, around.Y);
+        var obstacles = new List<NavAvoidance>();
+        foreach (ShadowEntry entry in _physics.ShadowObjects.AllEntriesForDebug())
+        {
+            if (Vector2.Distance(new Vector2(entry.Position.X, entry.Position.Y), flatAround) > radius + entry.Radius
+                || ((PhysicsStateFlags)entry.State).HasFlag(PhysicsStateFlags.Ethereal)
+                || !_runtime.EntityObjects.Entities.TryGetByLocalId(entry.EntityId, out RuntimeEntityRecord record)
+                || record.ServerGuid == player
+                || record.ServerGuid == goalObjectId
+                || record.FinalPhysicsState.HasFlag(PhysicsStateFlags.Ethereal)
+                || _runtime.InventoryOwner.Objects.Get(record.ServerGuid) is not { } item
+                || (item.Type & ItemType.Creature) != 0
+                || ((PublicWeenieFlags)(item.PublicWeenieBitfield ?? 0u) & (PublicWeenieFlags.Door | PublicWeenieFlags.Player)) != 0)
+            {
+                continue;
+            }
+            obstacles.Add(NavGeometry.FootprintOf(entry, _physics.DataCache));
+        }
+        return obstacles;
     }
 }
 
@@ -153,12 +199,14 @@ internal sealed class RuntimeNavigationDoors : INavigationDoors
     private readonly PhysicsEngine _physics;
     private readonly GameRuntime _runtime;
     private readonly Action<uint> _use;
+    private readonly Func<uint, bool>? _appraise;
 
-    public RuntimeNavigationDoors(PhysicsEngine physics, GameRuntime runtime, Action<uint> use)
+    public RuntimeNavigationDoors(PhysicsEngine physics, GameRuntime runtime, Action<uint> use, Func<uint, bool>? appraise = null)
     {
         _physics = physics ?? throw new ArgumentNullException(nameof(physics));
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
         _use = use ?? throw new ArgumentNullException(nameof(use));
+        _appraise = appraise;
     }
 
     public bool TryFindClosedDoor(Vector3 from, Vector3 to, float corridor, out NavigationDoor door)
@@ -167,6 +215,7 @@ internal sealed class RuntimeNavigationDoors : INavigationDoors
         Vector2 along = new Vector2(to.X, to.Y) - start;
         float lengthSquared = along.LengthSquared();
         uint nearestId = 0u;
+        NavAvoidance nearestFootprint = default;
         float nearestAhead = float.PositiveInfinity;
         foreach (ShadowEntry entry in _physics.ShadowObjects.AllEntriesForDebug())
         {
@@ -177,7 +226,8 @@ internal sealed class RuntimeNavigationDoors : INavigationDoors
             {
                 continue;
             }
-            var at = new Vector2(entry.Position.X, entry.Position.Y);
+            NavAvoidance footprint = NavGeometry.FootprintOf(entry, _physics.DataCache);
+            var at = new Vector2(footprint.Centre.X, footprint.Centre.Y);
             float t = lengthSquared > 1e-6f ? Vector2.Dot(at - start, along) / lengthSquared : 0f;
             if (t < 0f)
                 continue;
@@ -189,6 +239,7 @@ internal sealed class RuntimeNavigationDoors : INavigationDoors
             {
                 nearestAhead = ahead;
                 nearestId = record.ServerGuid;
+                nearestFootprint = footprint;
             }
         }
         if (nearestId == 0u)
@@ -196,7 +247,11 @@ internal sealed class RuntimeNavigationDoors : INavigationDoors
             door = default;
             return false;
         }
-        door = new NavigationDoor(nearestId, _runtime.InventoryOwner.Objects.Get(nearestId)?.Name ?? $"0x{nearestId:X8}");
+        door = new NavigationDoor(
+            nearestId,
+            _runtime.InventoryOwner.Objects.Get(nearestId)?.Name ?? $"0x{nearestId:X8}",
+            nearestFootprint.Centre,
+            nearestFootprint.Radius);
         return true;
     }
 
@@ -205,6 +260,14 @@ internal sealed class RuntimeNavigationDoors : INavigationDoors
         && record.FinalPhysicsState.HasFlag(PhysicsStateFlags.Ethereal);
 
     public void Use(uint doorId) => _use(doorId);
+
+    /// <summary>What the client's last appraisal of a door said of its lock, or null before one arrives.</summary>
+    public bool? IsLocked(uint doorId) =>
+        _runtime.InventoryOwner.Objects.Get(doorId) is { LastAppraisalTimeMs: not 0 } item
+            ? item.Properties.Bools.TryGetValue((uint)PropertyBool.Locked, out bool locked) && locked
+            : null;
+
+    public bool Appraise(uint doorId) => _appraise?.Invoke(doorId) == true;
 
     private bool IsDoor(uint objectId) =>
         _runtime.InventoryOwner.Objects.Get(objectId) is { } item

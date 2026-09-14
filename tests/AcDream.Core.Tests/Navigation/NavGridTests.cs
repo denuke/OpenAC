@@ -321,6 +321,26 @@ public sealed class NavGridTests
     }
 
     [Fact]
+    public void LegsAroundACornerKeepTheRoomTheRouteKept()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 20f, 0f),
+            .. Wall(10f, 0f, 10f, 10f, 0f, 3f),
+            .. Wall(10f, 10f, 20f, 10f, 0f, 3f)]);
+
+        NavRoute route = NavRouter.Find(grid, new Vector3(16f, 15f, 0f), new Vector3(4f, 4f, 0f), arrivalRadius: 1f);
+
+        Assert.Equal(NavRouteOutcome.Routed, route.Outcome);
+        Assert.True(route.Legs.Count <= 3, $"the route turns the corner in {route.Legs.Count - 1} legs");
+        var corner = new Vector2(10f, 10f);
+        for (int leg = 1; leg < route.Legs.Count; leg++)
+        {
+            float distance = DistanceToSegment(corner, route.Legs[leg - 1], route.Legs[leg]);
+            Assert.True(distance >= 0.85f, $"leg {leg} passes within {distance:0.00} m of the corner");
+        }
+    }
+
+    [Fact]
     public void ARouteKeepsOutOfAvoidedSpots()
     {
         NavGrid grid = Build([
@@ -345,6 +365,221 @@ public sealed class NavGridTests
             Assert.True(Vector2.Distance(new Vector2(point.X, point.Y), new Vector2(5f, 10f)) > 1.2f));
         Assert.Equal(NavRouteOutcome.NoPath, nowhere.Outcome);
     }
+
+    [Fact]
+    public void ARouteStartingInsideAnAvoidedSpotLeavesItWithoutGoingDeeper()
+    {
+        NavGrid grid = Build(Floor(0f, 0f, 20f, 20f, 0f));
+        var spot = new NavAvoidance(new Vector3(10f, 10f, 0f), 2f);
+
+        NavRoute away = NavRouter.Find(grid, new Vector3(10f, 11f, 0f), new Vector3(10f, 18f, 0f), 1f, [spot]);
+        NavRoute past = NavRouter.Find(grid, new Vector3(10f, 11f, 0f), new Vector3(10f, 2f, 0f), 1f, [spot]);
+
+        Assert.Equal("routed", away.Reason);
+        Assert.Equal("routed", past.Reason);
+        Assert.All(past.Path, point =>
+            Assert.True(Vector2.Distance(new Vector2(point.X, point.Y), new Vector2(10f, 10f)) >= 0.85f));
+    }
+
+    [Fact]
+    public void AGoalBeyondTheGridIsRoutedToTheGridsEdgeTowardIt()
+    {
+        NavGrid grid = Build(Floor(0f, 0f, 32f, 32f, 0f));
+
+        NavRoute route = NavRouter.FindToward(grid, new Vector3(4f, 16f, 0f), new Vector3(200f, 16f, 0f), band: 4f);
+
+        Assert.Equal(NavRouteOutcome.Routed, route.Outcome);
+        Assert.InRange(route.Legs[^1].X, 27.5f, 32f);
+        Assert.Contains("its edge toward the goal", route.Reason);
+    }
+
+    [Fact]
+    public void AGoalBeyondAWallAcrossTheGridIsRoutedToTheReachableSpotNearestIt()
+    {
+        NavGrid grid = Build([.. Floor(0f, 0f, 32f, 32f, 0f), .. Wall(20f, 0f, 20f, 32f, 0f, 3f)]);
+
+        NavRoute route = NavRouter.FindToward(grid, new Vector3(4f, 16f, 0f), new Vector3(200f, 16f, 0f), band: 4f);
+
+        Assert.Equal(NavRouteOutcome.Routed, route.Outcome);
+        Assert.InRange(route.Legs[^1].X, 17f, 20f);
+        Assert.Contains("the reachable spot nearest it", route.Reason);
+    }
+
+    [Fact]
+    public void ALandblocksCellsAreMeasuredAcrossEveryPolygon()
+    {
+        var engine = new PhysicsEngine();
+        var room = new CellSurface(
+            0xA9B40100u,
+            new Dictionary<ushort, Vector3>
+            {
+                [0] = new(10f, 20f, -30f),
+                [1] = new(40f, 20f, -30f),
+                [2] = new(40f, 50f, -30f),
+                [3] = new(10f, 50f, -30f),
+            },
+            [[0, 1, 2, 3]]);
+        var corridor = new CellSurface(
+            0xA9B40101u,
+            new Dictionary<ushort, Vector3>
+            {
+                [0] = new(40f, 30f, -30f),
+                [1] = new(250f, 30f, -30f),
+                [2] = new(250f, 34f, -30f),
+                [3] = new(40f, 34f, -30f),
+            },
+            [[0, 1, 2, 3]]);
+        engine.AddLandblock(0xA9B4FFFFu, new TerrainSurface(new byte[81], new float[256]), [room, corridor], [], 0f, 0f);
+        engine.AddLandblock(0xAAB4FFFFu, new TerrainSurface(new byte[81], new float[256]), [], [], 192f, 0f);
+
+        Assert.True(NavGeometry.TryMeasureCells(engine, 0xA9B4FFFFu, out Vector2 minimum, out Vector2 maximum));
+        Assert.Equal(new Vector2(10f, 20f), minimum);
+        Assert.Equal(new Vector2(250f, 50f), maximum);
+        Assert.False(NavGeometry.TryMeasureCells(engine, 0xAAB4FFFFu, out _, out _));
+        Assert.False(NavGeometry.TryMeasureCells(engine, 0x1234FFFFu, out _, out _));
+    }
+
+    [Fact]
+    public void ARegionOverDungeonCellsOutsideTheirLandblocksSquareIsCaptured()
+    {
+        var engine = new PhysicsEngine();
+        var hall = new CellSurface(
+            0x00190100u,
+            new Dictionary<ushort, Vector3>
+            {
+                [0] = new(70f, -330f, 6f),
+                [1] = new(110f, -330f, 6f),
+                [2] = new(110f, -290f, 6f),
+                [3] = new(70f, -290f, 6f),
+            },
+            [[0, 1, 2, 3]]);
+        engine.AddLandblock(0x0019FFFFu, new TerrainSurface(new byte[81], new float[256]), [hall], [], 0f, 0f);
+
+        NavGeometry? geometry = NavGeometry.Capture(engine, 60f, -340f, 64f);
+
+        Assert.NotNull(geometry);
+        Assert.Equal([0x0019FFFFu], geometry.LandblockIds);
+        Assert.Equal(2, geometry.CellTriangles.Count);
+        Assert.Null(NavGeometry.Capture(engine, 400f, -340f, 64f));
+    }
+
+    [Fact]
+    public void ADungeonIsCapturedFromItsOwnLandblockWithoutTerrain()
+    {
+        var engine = new PhysicsEngine();
+        var hall = new CellSurface(
+            0x00190100u,
+            new Dictionary<ushort, Vector3>
+            {
+                [0] = new(70f, -330f, 6f),
+                [1] = new(110f, -330f, 6f),
+                [2] = new(110f, -290f, 6f),
+                [3] = new(70f, -290f, 6f),
+            },
+            [[0, 1, 2, 3]]);
+        engine.AddLandblock(0x0019FFFFu, new TerrainSurface(new byte[81], new float[256]), [hall], [], 0f, 0f);
+        engine.AddLandblock(0x0018FFFFu, new TerrainSurface(new byte[81], new float[256]), [], [], 0f, -384f);
+
+        NavGeometry? around = NavGeometry.Capture(engine, 60f, -340f, 64f);
+        NavGeometry? dungeon = NavGeometry.CaptureDungeon(engine, 0x00190100u, 60f, -340f, 64f);
+
+        Assert.Equal([0x0018FFFFu, 0x0019FFFFu], around!.LandblockIds.Order());
+        Assert.NotEmpty(around.Terrains);
+        Assert.Equal([0x0019FFFFu], dungeon!.LandblockIds);
+        Assert.Empty(dungeon.Terrains);
+        Assert.Equal(2, dungeon.CellTriangles.Count);
+        Assert.Null(NavGeometry.CaptureDungeon(engine, 0x12340100u, 60f, -340f, 64f));
+    }
+
+    [Fact]
+    public void AnObjectsFootprintIsItsCylinderOrSphereOrElseWhereItWasRegistered()
+    {
+        var cylinder = new ShadowEntry(1u, 0u, new Vector3(10f, 20f, 1f), Quaternion.Identity, 0.6f, ShadowCollisionType.Cylinder, 2f);
+        var sphere = new ShadowEntry(2u, 0u, new Vector3(5f, 6f, 7f), Quaternion.Identity, 0.4f, ShadowCollisionType.Sphere);
+        var unloadedModel = new ShadowEntry(3u, 0x01001234u, new Vector3(1f, 2f, 3f), Quaternion.Identity, 2.5f);
+
+        Assert.Equal(new NavAvoidance(new Vector3(10f, 20f, 1f), 0.6f), NavGeometry.FootprintOf(cylinder, null));
+        Assert.Equal(new NavAvoidance(new Vector3(5f, 6f, 7f), 0.4f), NavGeometry.FootprintOf(sphere, null));
+        Assert.Equal(new NavAvoidance(new Vector3(1f, 2f, 3f), 2.5f), NavGeometry.FootprintOf(unloadedModel, null));
+    }
+
+    [Fact]
+    public void AHopTakesARouteOffADeckDownToTheGroundBelow()
+    {
+        NavGrid grid = Build([
+            .. Floor(2f, 2f, 12f, 12f, 3f),
+            .. Wall(12f, 2f, 12f, 12f, 0f, 3f),
+            .. Floor(12f, 2f, 24f, 12f, 0f)]);
+        var from = new Vector3(6f, 7f, 3f);
+        var to = new Vector3(18f, 7f, 0f);
+
+        NavRoute walked = NavRouter.Find(grid, from, to, 1f);
+        NavRoute leapt = NavRouter.Find(grid, from, to, 1f, leaps: Leaper);
+
+        Assert.NotEqual("routed", walked.Reason);
+        Assert.Equal("routed", leapt.Reason);
+        NavRouteLeap leap = Assert.Single(leapt.Leaps);
+        Assert.False(leap.Run);
+        Assert.True(leap.Power <= 0.3f, $"the hop took {leap.Power:0.0} of full power");
+        Assert.Equal(3f, leapt.Legs[leap.LegIndex - 1].Z, 1);
+        Assert.Equal(0f, leapt.Legs[leap.LegIndex].Z, 1);
+    }
+
+    [Fact]
+    public void ARunningJumpTakesARouteAcrossAGap()
+    {
+        NavGrid grid = Build([
+            .. Floor(2f, 2f, 10f, 12f, 0f),
+            .. Floor(13f, 2f, 24f, 12f, 0f)]);
+        var from = new Vector3(6f, 7f, 0f);
+        var to = new Vector3(18f, 7f, 0f);
+
+        NavRoute walked = NavRouter.Find(grid, from, to, 1f);
+        NavRoute leapt = NavRouter.Find(grid, from, to, 1f, leaps: Leaper);
+
+        Assert.NotEqual("routed", walked.Reason);
+        Assert.Equal("routed", leapt.Reason);
+        NavRouteLeap leap = Assert.Single(leapt.Leaps);
+        Assert.True(leap.Run);
+        Assert.True(leapt.Legs[leap.LegIndex - 1].X < 10f && leapt.Legs[leap.LegIndex].X > 13f);
+    }
+
+    [Fact]
+    public void AStandingJumpTakesARouteUpOntoALedge()
+    {
+        NavGrid grid = Build([
+            .. Floor(2f, 2f, 12f, 12f, 0f),
+            .. Wall(12f, 2f, 12f, 12f, 0f, 1.5f),
+            .. Floor(12f, 2f, 24f, 12f, 1.5f)]);
+        var from = new Vector3(6f, 7f, 0f);
+        var to = new Vector3(18f, 7f, 1.5f);
+
+        NavRoute walked = NavRouter.Find(grid, from, to, 1f);
+        NavRoute leapt = NavRouter.Find(grid, from, to, 1f, leaps: Leaper);
+
+        Assert.NotEqual("routed", walked.Reason);
+        Assert.Equal("routed", leapt.Reason);
+        NavRouteLeap leap = Assert.Single(leapt.Leaps);
+        Assert.Equal(0f, leapt.Legs[leap.LegIndex - 1].Z, 1);
+        Assert.Equal(1.5f, leapt.Legs[leap.LegIndex].Z, 1);
+    }
+
+    [Fact]
+    public void ADropDeeperThanTheBodyMayFallIsNotTaken()
+    {
+        NavGrid grid = Build([
+            .. Floor(2f, 2f, 12f, 12f, 8f),
+            .. Wall(12f, 2f, 12f, 12f, 0f, 8f),
+            .. Floor(12f, 2f, 24f, 12f, 0f)]);
+
+        NavRoute leapt = NavRouter.Find(grid, new Vector3(6f, 7f, 8f), new Vector3(18f, 7f, 0f), 1f, leaps: Leaper);
+
+        Assert.NotEqual("routed", leapt.Reason);
+        Assert.Empty(leapt.Leaps);
+    }
+
+    /// <summary>A body that walks at 3.12 m/s, runs at 7.3 m/s, jumps 4.2 m high at full power and may drop 5 m.</summary>
+    private static readonly NavLeapAbility Leaper = new(WalkSpeed: 3.12f, RunSpeed: 7.3f, FullJumpHeight: 4.2f, MaximumDrop: 5f);
 
     private static float DistanceToSegment(Vector2 point, Vector3 from, Vector3 to)
     {

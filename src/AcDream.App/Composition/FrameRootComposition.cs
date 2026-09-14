@@ -338,7 +338,9 @@ internal sealed class FrameRootCompositionPhase
             new RuntimeNavigationDoors(
                 d.PhysicsEngine,
                 d.Runtime,
-                guid => interaction.LateBindings.Selection.SendUse(guid)));
+                guid => interaction.LateBindings.Selection.SendUse(guid),
+                interaction.ItemInteraction.TryAppraiseForAutomation),
+            cellId => session.SealedDungeonCells?.IsSealedDungeon(cellId) == true);
         IWorldSceneFramePhase? worldSceneRenderer = null;
         CurrentRenderSceneOracle? currentRenderSceneOracle = null;
         RenderSceneShadowComparisonController? renderSceneShadowComparison = null;

@@ -14,6 +14,9 @@ namespace AcDream.Plugins.Agent.Verbs;
 /// </summary>
 internal sealed class InventoryVerbs : IVerbFamily
 {
+    /// <summary>Carried items shown unless a read asks for more.</summary>
+    internal const int DefaultItemRows = 100;
+
     private readonly IPluginHost _host;
     private readonly Publisher _publisher;
     private readonly OutcomeCorrelator _outcomes;
@@ -50,12 +53,15 @@ internal sealed class InventoryVerbs : IVerbFamily
     /// <summary>What is carried, narrowed to names containing the search text when one is given.</summary>
     private VerbResult Inventory(CommandLine line)
     {
-        string search = line.Arguments.Equals("list", StringComparison.OrdinalIgnoreCase)
-            ? string.Empty
-            : line.Arguments;
+        if (!RowLimits.TrySplit(line.Arguments, DefaultItemRows, out string rest, out int limit))
+            return Refuse(line, RowLimits.Problem);
+        string search = rest.Equals("list", StringComparison.OrdinalIgnoreCase) ? string.Empty : rest;
         IAutomationSurface automation = _host.Automation;
         IReadOnlyList<PluginInventoryItem> carried = automation.Items.CaptureOwnedItems();
-        _publisher.Publish(RecordKinds.Inventory, new JsonObject
+        PluginInventoryItem[] matching = carried
+            .Where(item => search.Length == 0 || item.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var fields = new JsonObject
         {
             ["id"] = line.Id,
             ["search"] = search.Length == 0 ? null : search,
@@ -63,10 +69,11 @@ internal sealed class InventoryVerbs : IVerbFamily
                 ? Facts.Observed(automation.Character.MainPackFreeSlots)
                 : Facts.Unknown("no character is in the world"),
             ["carriedCount"] = carried.Count,
-            ["items"] = ItemRows.Rows(search.Length == 0
-                ? carried
-                : carried.Where(item => item.Name.Contains(search, StringComparison.OrdinalIgnoreCase))),
-        });
+        };
+        JsonArray items = ItemRows.Rows(matching.Take(limit));
+        RowLimits.Count(fields, matching.Length, items.Count);
+        fields["items"] = items;
+        _publisher.Publish(RecordKinds.Inventory, fields);
         return VerbResult.Handled;
     }
 

@@ -57,6 +57,9 @@ public sealed class NavGrid
     /// <summary>How near a line of sight may pass a wall's footprint before the wall hides what is behind it.</summary>
     private const float SightMargin = 0.02f;
 
+    /// <summary>How far a surface may reach into a body in the air, or a landing lie past its feet, and still count as clear.</summary>
+    private const float AirTolerance = 0.05f;
+
     private const byte UnboundedDistance = byte.MaxValue;
     private const int ClipCapacity = 32;
 
@@ -64,8 +67,7 @@ public sealed class NavGrid
     private static readonly int[] StepX = [1, 0, -1, 0, 1, -1, -1, 1];
     private static readonly int[] StepY = [0, 1, 0, -1, 1, 1, -1, -1];
 
-    private readonly int[] _columnFirstNode;
-    private readonly int[] _columnNodeCount;
+    private readonly NavColumnTiles<ColumnNodes> _columnNodes;
     private readonly int[] _nodeColumn;
     private readonly float[] _nodeZ;
     private readonly float[] _nodeCeiling;
@@ -80,8 +82,7 @@ public sealed class NavGrid
         float cellSize,
         int side,
         NavBody body,
-        int[] columnFirstNode,
-        int[] columnNodeCount,
+        NavColumnTiles<ColumnNodes> columnNodes,
         int[] nodeColumn,
         float[] nodeZ,
         float[] nodeCeiling,
@@ -99,8 +100,7 @@ public sealed class NavGrid
         Side = side;
         Body = body;
         NearestWall = NearestWallFor(body, cellSize);
-        _columnFirstNode = columnFirstNode;
-        _columnNodeCount = columnNodeCount;
+        _columnNodes = columnNodes;
         _nodeColumn = nodeColumn;
         _nodeZ = nodeZ;
         _nodeCeiling = nodeCeiling;
@@ -141,6 +141,9 @@ public sealed class NavGrid
 
     public int NodeCount => _nodeZ.Length;
 
+    /// <summary>The columns east and north one step in a direction moves.</summary>
+    public static (int X, int Y) StepOf(int direction) => (StepX[direction], StepY[direction]);
+
     public static int DirectionOf(int stepX, int stepY)
     {
         for (int direction = 0; direction < DirectionCount; direction++)
@@ -169,6 +172,73 @@ public sealed class NavGrid
     /// <summary>Horizontal distance from the node's centre to the nearest wall the body would touch, or infinity.</summary>
     public float WallDistance(int node) => _wallDistance[node];
 
+    /// <summary>The height of the underside of whatever stands above a node, or infinity.</summary>
+    public float Ceiling(int node) => _nodeCeiling[node];
+
+    /// <summary>
+    /// Whether a body in the air with its feet at <paramref name="feet"/> touches
+    /// nothing: no wall nearer its centre than <see cref="NearestWall"/> overlaps its
+    /// height, and no floor or ceiling in the columns under it cuts into it.
+    /// </summary>
+    public bool IsOpenAir(Vector3 feet)
+    {
+        float localX = feet.X - OriginX;
+        float localY = feet.Y - OriginY;
+        float top = feet.Z + Body.Height;
+        int centreX = (int)MathF.Floor(localX / CellSize);
+        int centreY = (int)MathF.Floor(localY / CellSize);
+        int reach = (int)MathF.Ceiling(Body.Radius / CellSize);
+        float underSquared = NearestWall * NearestWall;
+        for (int y = Math.Max(0, centreY - reach); y <= Math.Min(Side - 1, centreY + reach); y++)
+        {
+            for (int x = Math.Max(0, centreX - reach); x <= Math.Min(Side - 1, centreX + reach); x++)
+            {
+                for (int piece = _walls.First(x, y); piece != -1; piece = _walls.Next[piece])
+                {
+                    if (_walls.High[piece] > feet.Z + AirTolerance
+                        && _walls.Low[piece] < top
+                        && _walls.Distance(piece, localX, localY) < NearestWall)
+                    {
+                        return false;
+                    }
+                }
+                float dx = ((x + 0.5f) * CellSize) - localX;
+                float dy = ((y + 0.5f) * CellSize) - localY;
+                if ((dx * dx) + (dy * dy) > underSquared)
+                    continue;
+                (int first, int count) = NodesInColumn(x, y);
+                int below = -1;
+                for (int node = first; node < first + count; node++)
+                {
+                    if (_nodeZ[node] <= feet.Z + AirTolerance)
+                        below = node;
+                    else if (_nodeZ[node] < top)
+                        return false;
+                }
+                if (below >= 0 && _nodeCeiling[below] < top)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// The node in the column under a falling body whose top its feet crossed on the
+    /// way down from <paramref name="fromHeight"/> to <paramref name="feet"/>, or -1.
+    /// </summary>
+    public int LandingUnder(Vector3 feet, float fromHeight)
+    {
+        int x = (int)MathF.Floor((feet.X - OriginX) / CellSize);
+        int y = (int)MathF.Floor((feet.Y - OriginY) / CellSize);
+        (int first, int count) = NodesInColumn(x, y);
+        for (int node = first + count - 1; node >= first; node--)
+        {
+            if (_nodeZ[node] <= fromHeight + AirTolerance && _nodeZ[node] >= feet.Z - AirTolerance)
+                return node;
+        }
+        return -1;
+    }
+
     public Vector3 Position(int node)
     {
         int column = _nodeColumn[node];
@@ -186,8 +256,8 @@ public sealed class NavGrid
     {
         if ((uint)x >= (uint)Side || (uint)y >= (uint)Side)
             return (0, 0);
-        int column = (y * Side) + x;
-        return (_columnFirstNode[column], _columnNodeCount[column]);
+        ColumnNodes nodes = _columnNodes.Get(x, y);
+        return (nodes.First, nodes.Count);
     }
 
     /// <summary>
@@ -262,7 +332,7 @@ public sealed class NavGrid
         {
             for (int x = x0; x <= x1; x++)
             {
-                for (int piece = _walls.Head[(y * Side) + x]; piece != -1; piece = _walls.Next[piece])
+                for (int piece = _walls.First(x, y); piece != -1; piece = _walls.Next[piece])
                 {
                     (float distance, float along) = _walls.DistanceToSegment(piece, start, end);
                     if (distance >= SightMargin)
@@ -281,7 +351,58 @@ public sealed class NavGrid
     /// along the line between them holds a clear node linked to the last, and no
     /// wall comes nearer the line than <see cref="NearestWall"/>.
     /// </summary>
-    public bool CanWalkStraight(int from, int to)
+    public bool CanWalkStraight(int from, int to) => CanWalkStraight(from, to, NearestWall, EdgeMargin);
+
+    /// <summary>
+    /// Whether a body can walk straight from one node to another and keep at least
+    /// <paramref name="clearance"/> from walls and <paramref name="borderSteps"/>
+    /// steps from ledges: every column along the line between them holds a clear
+    /// node, linked to the last, that is at least that far from both, and no wall
+    /// comes nearer the line than <paramref name="clearance"/> or
+    /// <see cref="NearestWall"/>, whichever is farther.
+    /// </summary>
+    /// <summary>
+    /// The nodes a straight walk from one node to another steps onto, one for each
+    /// column along the line after the first, following links; empty when a column
+    /// along the line holds no node linked to the last.
+    /// </summary>
+    public IReadOnlyList<int> NodesAlong(int from, int to)
+    {
+        (int x, int y) = ColumnOf(from);
+        (int targetX, int targetY) = ColumnOf(to);
+        int distanceX = Math.Abs(targetX - x);
+        int distanceY = Math.Abs(targetY - y);
+        int signX = Math.Sign(targetX - x);
+        int signY = Math.Sign(targetY - y);
+        int error = distanceX - distanceY;
+        int node = from;
+        var nodes = new List<int>(Math.Max(distanceX, distanceY));
+        while (x != targetX || y != targetY)
+        {
+            int moveX = 0;
+            int moveY = 0;
+            int doubled = error * 2;
+            if (doubled > -distanceY)
+            {
+                error -= distanceY;
+                x += signX;
+                moveX = signX;
+            }
+            if (doubled < distanceX)
+            {
+                error += distanceX;
+                y += signY;
+                moveY = signY;
+            }
+            node = Link(node, DirectionOf(moveX, moveY));
+            if (node < 0)
+                return [];
+            nodes.Add(node);
+        }
+        return nodes;
+    }
+
+    public bool CanWalkStraight(int from, int to, float clearance, int borderSteps)
     {
         (int x, int y) = ColumnOf(from);
         (int targetX, int targetY) = ColumnOf(to);
@@ -309,10 +430,10 @@ public sealed class NavGrid
                 moveY = signY;
             }
             node = Link(node, DirectionOf(moveX, moveY));
-            if (node < 0 || !IsClear(node))
+            if (node < 0 || !IsClear(node) || WallDistance(node) < clearance || BorderDistance(node) < borderSteps)
                 return false;
         }
-        return node == to && CanSweep(Position(from), Position(to));
+        return node == to && !WallNear(Position(from), Position(to), MathF.Max(NearestWall, clearance), sight: false);
     }
 
     public static NavGrid Build(NavGeometry geometry, NavBody body, float cellSize = DefaultCellSize)
@@ -323,10 +444,9 @@ public sealed class NavGrid
 
         var clock = Stopwatch.StartNew();
         int side = (int)MathF.Ceiling((geometry.Size / cellSize) - 0.001f);
-        int columns = side * side;
-        var spans = new SpanColumns(columns);
-        var walls = new WallPieces(columns);
-        var coveredByCells = new bool[columns];
+        var spans = new SpanColumns(side);
+        var walls = new WallPieces(side);
+        var coveredByCells = new NavColumnTiles<bool>(side, false);
         var origin = new Vector3(geometry.OriginX, geometry.OriginY, 0f);
 
         foreach (NavTriangle triangle in geometry.CellTriangles)
@@ -338,27 +458,42 @@ public sealed class NavGrid
         foreach (NavTerrain terrain in geometry.Terrains)
             RasterizeTerrain(spans, terrain, origin, cellSize, side, coveredByCells);
 
-        var columnFirstNode = new int[columns];
-        var columnNodeCount = new int[columns];
+        var columnNodes = new NavColumnTiles<ColumnNodes>(side, default);
         var nodeColumns = new List<int>();
         var nodeHeights = new List<float>();
         var nodeCeilings = new List<float>();
-        for (int column = 0; column < columns; column++)
+        int tiles = spans.Head.TilesPerSide;
+        int tileColumns = NavColumnTiles<int>.TileColumns;
+        for (int tileY = 0; tileY < tiles; tileY++)
         {
-            columnFirstNode[column] = nodeHeights.Count;
-            for (int span = spans.Head[column]; span != -1; span = spans.Next[span])
+            for (int tileX = 0; tileX < tiles; tileX++)
             {
-                if (!spans.Walkable[span])
+                if (!spans.Head.HasTile(tileX, tileY))
                     continue;
-                int above = spans.Next[span];
-                float ceiling = above == -1 ? float.PositiveInfinity : spans.Min[above];
-                if (ceiling - spans.Max[span] < body.Height)
-                    continue;
-                nodeColumns.Add(column);
-                nodeHeights.Add(spans.Max[span]);
-                nodeCeilings.Add(ceiling);
+                int lastY = Math.Min((tileY + 1) * tileColumns, side);
+                int lastX = Math.Min((tileX + 1) * tileColumns, side);
+                for (int y = tileY * tileColumns; y < lastY; y++)
+                {
+                    for (int x = tileX * tileColumns; x < lastX; x++)
+                    {
+                        int first = nodeHeights.Count;
+                        for (int span = spans.Head.Get(x, y); span != -1; span = spans.Next[span])
+                        {
+                            if (!spans.Walkable[span])
+                                continue;
+                            int above = spans.Next[span];
+                            float ceiling = above == -1 ? float.PositiveInfinity : spans.Min[above];
+                            if (ceiling - spans.Max[span] < body.Height)
+                                continue;
+                            nodeColumns.Add((y * side) + x);
+                            nodeHeights.Add(spans.Max[span]);
+                            nodeCeilings.Add(ceiling);
+                        }
+                        if (nodeHeights.Count > first)
+                            columnNodes.Slot(x, y) = new ColumnNodes(first, nodeHeights.Count - first);
+                    }
+                }
             }
-            columnNodeCount[column] = nodeHeights.Count - columnFirstNode[column];
         }
 
         int[] nodeColumn = nodeColumns.ToArray();
@@ -366,7 +501,7 @@ public sealed class NavGrid
         float[] ceilings = nodeCeilings.ToArray();
         int[] links = new int[heights.Length * DirectionCount];
         Array.Fill(links, -1);
-        LinkOrthogonalNeighbours(side, body, columnFirstNode, columnNodeCount, nodeColumn, heights, ceilings, links);
+        LinkOrthogonalNeighbours(side, body, columnNodes, nodeColumn, heights, ceilings, links);
         LinkDiagonalNeighbours(heights.Length, links);
         byte[] borderDistance = MeasureBorderDistance(links, heights.Length);
         float[] wallDistance = MeasureWallDistance(side, cellSize, body, nodeColumn, heights, walls);
@@ -394,8 +529,7 @@ public sealed class NavGrid
             cellSize,
             side,
             body,
-            columnFirstNode,
-            columnNodeCount,
+            columnNodes,
             nodeColumn,
             heights,
             ceilings,
@@ -483,7 +617,7 @@ public sealed class NavGrid
             int lastColumn = Math.Min(Side - 1, (int)MathF.Floor(highX + reach));
             for (int column = firstColumn; column <= lastColumn; column++)
             {
-                for (int piece = _walls.Head[(row * Side) + column]; piece != -1; piece = _walls.Next[piece])
+                for (int piece = _walls.First(column, row); piece != -1; piece = _walls.Next[piece])
                 {
                     (float distance, float along) = _walls.DistanceToSegment(piece, start, end);
                     if (distance >= margin)
@@ -503,8 +637,7 @@ public sealed class NavGrid
     private static void LinkOrthogonalNeighbours(
         int side,
         NavBody body,
-        int[] columnFirstNode,
-        int[] columnNodeCount,
+        NavColumnTiles<ColumnNodes> columnNodes,
         int[] nodeColumn,
         float[] heights,
         float[] ceilings,
@@ -520,11 +653,11 @@ public sealed class NavGrid
                 int neighbourY = y + StepY[direction];
                 if ((uint)neighbourX >= (uint)side || (uint)neighbourY >= (uint)side)
                     continue;
-                int neighbourColumn = (neighbourY * side) + neighbourX;
+                ColumnNodes neighbour = columnNodes.Get(neighbourX, neighbourY);
                 int best = -1;
                 float bestRise = float.PositiveInfinity;
-                int end = columnFirstNode[neighbourColumn] + columnNodeCount[neighbourColumn];
-                for (int other = columnFirstNode[neighbourColumn]; other < end; other++)
+                int end = neighbour.First + neighbour.Count;
+                for (int other = neighbour.First; other < end; other++)
                 {
                     float rise = heights[other] - heights[node];
                     if (rise > body.StepUpHeight || rise < -body.StepDownHeight)
@@ -613,18 +746,6 @@ public sealed class NavGrid
         WallPieces walls)
     {
         int reach = (int)MathF.Ceiling((body.Radius + cellSize) / cellSize);
-        int stride = side + 1;
-        var piecesBefore = new int[stride * stride];
-        for (int y = 0; y < side; y++)
-        {
-            int row = 0;
-            for (int x = 0; x < side; x++)
-            {
-                row += walls.ColumnCount[(y * side) + x];
-                piecesBefore[((y + 1) * stride) + x + 1] = piecesBefore[(y * stride) + x + 1] + row;
-            }
-        }
-
         var distance = new float[heights.Length];
         for (int node = 0; node < heights.Length; node++)
         {
@@ -634,11 +755,7 @@ public sealed class NavGrid
             int x1 = Math.Min(side - 1, x + reach);
             int y0 = Math.Max(0, y - reach);
             int y1 = Math.Min(side - 1, y + reach);
-            int piecesNearby = piecesBefore[((y1 + 1) * stride) + x1 + 1]
-                - piecesBefore[(y0 * stride) + x1 + 1]
-                - piecesBefore[((y1 + 1) * stride) + x0]
-                + piecesBefore[(y0 * stride) + x0];
-            if (piecesNearby == 0)
+            if (!walls.AnyIn(x0, y0, x1, y1))
             {
                 distance[node] = float.PositiveInfinity;
                 continue;
@@ -653,7 +770,7 @@ public sealed class NavGrid
             {
                 for (int neighbourX = x0; neighbourX <= x1; neighbourX++)
                 {
-                    for (int piece = walls.Head[(neighbourY * side) + neighbourX]; piece != -1; piece = walls.Next[piece])
+                    for (int piece = walls.First(neighbourX, neighbourY); piece != -1; piece = walls.Next[piece])
                     {
                         if (walls.High[piece] <= low || walls.Low[piece] >= high)
                             continue;
@@ -679,7 +796,7 @@ public sealed class NavGrid
         Vector3 origin,
         float cellSize,
         int side,
-        bool[]? covered)
+        NavColumnTiles<bool>? covered)
     {
         Vector3 a = triangle.A - origin;
         Vector3 b = triangle.B - origin;
@@ -726,12 +843,11 @@ public sealed class NavGrid
                     low = MathF.Min(low, polygon[index].Z);
                     high = MathF.Max(high, polygon[index].Z);
                 }
-                int column = (y * side) + x;
-                spans.Add(column, low, high, walkable);
+                spans.Add(x, y, low, high, walkable);
                 if (!walkable)
-                    walls.Add(column, polygon[..count], low, high);
+                    walls.Add(x, y, polygon[..count], low, high);
                 if (covered is not null)
-                    covered[column] = true;
+                    covered.Slot(x, y) = true;
             }
         }
     }
@@ -761,9 +877,8 @@ public sealed class NavGrid
                 float dy = ((y + 0.5f) * cellSize) - centre.Y;
                 if ((dx * dx) + (dy * dy) > reach * reach)
                     continue;
-                int column = (y * side) + x;
                 float top = centre.Z + cylinder.Height;
-                spans.Add(column, centre.Z, top, walkable: false);
+                spans.Add(x, y, centre.Z, top, walkable: false);
 
                 float left = MathF.Max(x * cellSize, centre.X - cylinder.Radius);
                 float right = MathF.Min((x + 1) * cellSize, centre.X + cylinder.Radius);
@@ -775,7 +890,7 @@ public sealed class NavGrid
                 square[1] = new Vector3(right, bottom, centre.Z);
                 square[2] = new Vector3(right, upper, centre.Z);
                 square[3] = new Vector3(left, upper, centre.Z);
-                walls.Add(column, square, centre.Z, top);
+                walls.Add(x, y, square, centre.Z, top);
             }
         }
     }
@@ -787,7 +902,7 @@ public sealed class NavGrid
         Vector3 origin,
         float cellSize,
         int side,
-        bool[] coveredByCells)
+        NavColumnTiles<bool> coveredByCells)
     {
         float cornerX = terrain.OriginX - origin.X;
         float cornerY = terrain.OriginY - origin.Y;
@@ -800,13 +915,13 @@ public sealed class NavGrid
             float localY = ((y + 0.5f) * cellSize) - cornerY;
             for (int x = x0; x < x1; x++)
             {
-                int column = (y * side) + x;
-                if (coveredByCells[column])
+                if (coveredByCells.Get(x, y))
                     continue;
                 TerrainSurfacePolygon surface =
                     terrain.Surface.SampleSurfacePolygon(((x + 0.5f) * cellSize) - cornerX, localY);
                 spans.Add(
-                    column,
+                    x,
+                    y,
                     surface.Z - TerrainThickness,
                     surface.Z,
                     surface.Normal.Z >= PhysicsGlobals.FloorZ);
@@ -855,23 +970,25 @@ public sealed class NavGrid
     }
 
     /// <summary>Each column's solid spans as a list sorted by height, merged where they overlap.</summary>
+    /// <summary>The nodes standing in one column: the index of the lowest and how many there are.</summary>
+    private readonly record struct ColumnNodes(int First, int Count);
+
     private sealed class SpanColumns
     {
         private int _allocated;
         private int _free = -1;
 
-        public SpanColumns(int columns)
+        public SpanColumns(int side)
         {
             const int initialCapacity = 1 << 16;
-            Head = new int[columns];
-            Array.Fill(Head, -1);
+            Head = new NavColumnTiles<int>(side, -1);
             Min = new float[initialCapacity];
             Max = new float[initialCapacity];
             Walkable = new bool[initialCapacity];
             Next = new int[initialCapacity];
         }
 
-        public int[] Head { get; }
+        public NavColumnTiles<int> Head { get; }
 
         public float[] Min;
 
@@ -883,10 +1000,11 @@ public sealed class NavGrid
 
         public int Live { get; private set; }
 
-        public void Add(int column, float min, float max, bool walkable)
+        public void Add(int x, int y, float min, float max, bool walkable)
         {
+            ref int head = ref Head.Slot(x, y);
             int previous = -1;
-            int current = Head[column];
+            int current = head;
             while (current != -1 && Max[current] < min)
             {
                 previous = current;
@@ -911,7 +1029,7 @@ public sealed class NavGrid
             Walkable[span] = walkable;
             Next[span] = current;
             if (previous == -1)
-                Head[column] = span;
+                head = span;
             else
                 Next[previous] = span;
         }
@@ -949,17 +1067,16 @@ public sealed class NavGrid
     {
         private readonly List<float> _points = new(1 << 16);
 
-        public WallPieces(int columns)
+        private readonly NavColumnTiles<int> _head;
+
+        /// <summary>How many wall pieces each tile of columns holds.</summary>
+        private readonly int[] _tileCount;
+
+        public WallPieces(int side)
         {
-            Head = new int[columns];
-            Array.Fill(Head, -1);
-            ColumnCount = new int[columns];
+            _head = new NavColumnTiles<int>(side, -1);
+            _tileCount = new int[_head.TilesPerSide * _head.TilesPerSide];
         }
-
-        public int[] Head { get; }
-
-        /// <summary>How many wall pieces each column holds.</summary>
-        public int[] ColumnCount { get; }
 
         public List<int> Next { get; } = new(1 << 14);
 
@@ -973,10 +1090,29 @@ public sealed class NavGrid
 
         public int Count => Next.Count;
 
-        public void Add(int column, ReadOnlySpan<Vector3> polygon, float low, float high)
+        /// <summary>The first wall piece in a column, or -1.</summary>
+        public int First(int x, int y) => _head.Get(x, y);
+
+        /// <summary>Whether any column of a rectangle of columns may hold a wall piece.</summary>
+        public bool AnyIn(int x0, int y0, int x1, int y1)
         {
+            int columns = NavColumnTiles<int>.TileColumns;
+            for (int tileY = y0 / columns; tileY <= y1 / columns; tileY++)
+            {
+                for (int tileX = x0 / columns; tileX <= x1 / columns; tileX++)
+                {
+                    if (_tileCount[(tileY * _head.TilesPerSide) + tileX] > 0)
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        public void Add(int x, int y, ReadOnlySpan<Vector3> polygon, float low, float high)
+        {
+            ref int head = ref _head.Slot(x, y);
             int piece = Next.Count;
-            Next.Add(Head[column]);
+            Next.Add(head);
             Low.Add(low);
             High.Add(high);
             PointStart.Add(_points.Count / 2);
@@ -986,8 +1122,9 @@ public sealed class NavGrid
                 _points.Add(point.X);
                 _points.Add(point.Y);
             }
-            Head[column] = piece;
-            ColumnCount[column]++;
+            head = piece;
+            int columns = NavColumnTiles<int>.TileColumns;
+            _tileCount[((y / columns) * _head.TilesPerSide) + (x / columns)]++;
         }
 
         /// <summary>The horizontal distance from a point to a wall piece's footprint; zero inside it.</summary>

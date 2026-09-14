@@ -64,6 +64,7 @@ public readonly record struct PluginWorldObject(
     public bool HasAppraisalData { get; init; }
     public int LastIdTime { get; init; }
     public bool IsDoorOpen { get; init; }
+    public bool IsOpenable { get; init; }
     public int StackSize { get; init; } = 1;
     public int ItemsCapacity { get; init; }
     public int ContainersCapacity { get; init; }
@@ -94,6 +95,7 @@ public interface IWorldObjectAutomation
         return false;
     }
 
+    /// <summary>Asks the server to appraise an object the client knows, carried or in the world.</summary>
     PluginItemCommandResult Identify(uint objectId) =>
         new(PluginItemCommandStatus.Unavailable);
 

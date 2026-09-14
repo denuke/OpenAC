@@ -270,6 +270,17 @@ public sealed class PlayerMovementController
 
     public bool IsAirborne => !_body.OnWalkable;
 
+    /// <summary>How fast the character runs, in meters a second, at its run skill and burden.</summary>
+    public float RunSpeed =>
+        AcDream.Core.Physics.MotionInterpreter.RunAnimSpeed * (_weenie.InqRunRate(out float rate) ? rate : 1f);
+
+    /// <summary>
+    /// How high a jump at full power lifts the character, at its jump skill, burden
+    /// and stamina, or zero when it is too loaded down to jump.
+    /// </summary>
+    public float FullJumpHeight =>
+        _weenie.CanJump(1f) && _weenie.InqJumpVelocity(1f, out float rise) ? rise * rise / 19.6f : 0f;
+
     public float VerticalVelocity => _body.Velocity.Z;
 
     /// <summary>Full 3D world-space velocity of the physics body. Exposed for diagnostic logging.</summary>

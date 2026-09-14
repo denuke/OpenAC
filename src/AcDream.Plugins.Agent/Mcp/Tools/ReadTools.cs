@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using AcDream.Plugins.Agent.Contract;
+using AcDream.Plugins.Agent.Verbs;
 
 namespace AcDream.Plugins.Agent.Mcp.Tools;
 
@@ -63,8 +64,25 @@ internal static class ReadTools
 
     private const string Nothing = " Sends nothing.";
 
+    private const string Limits =
+        " The answer says how many rows matched and how many are shown; pass limit for more or fewer.";
+
     internal static IEnumerable<IMcpTool> Create(AgentContext context) =>
     [
+        new ReadTool(context, "capabilities", "What can I do?",
+            "Everything around the character in one answer, nearest first: each object with the command lines this "
+            + "client would take for it now, graded available, unavailable with the reason, or unknown with what is "
+            + "missing, and with its sight. Lines graded alike for every object are said once in legend, with <guid> "
+            + "in place of the id. The character's own lines, such as buy at the open vendor, stance combat or "
+            + "logout, come under character. Pass guid to ask about one object, including one the character carries. "
+            + "Send a line through act as written, filling any <placeholder>."
+            + Nothing,
+            () => new JsonObject
+            {
+                ["guid"] = Property("string", "An object id such as 0x70000001; leave it out to ask about everything around the character."),
+            },
+            [],
+            Capabilities),
         new ReadTool(context, "nearby", "What is around me?",
             "Objects in the world around the character, nearest first, with distance in meters, "
             + "compass bearing, how far to turn to face each, and what kind of thing it is. Counts every "
@@ -93,8 +111,13 @@ internal static class ReadTools
             + "each is cast on self, on a target or on nothing, whether it helps or harms, and whether the "
             + "character carries its components. A trained caster knows hundreds, so pass search to "
             + "narrow by name. Cast one through act, for example 'cast Strength Self VI'."
+            + Limits
             + Nothing,
-            () => new JsonObject { ["search"] = Property("string", "Part of a spell name, such as strength or bolt.") },
+            () => new JsonObject
+            {
+                ["search"] = Property("string", "Part of a spell name, such as strength or bolt."),
+                ["limit"] = LimitProperty(),
+            },
             [],
             arguments => Searched("spells", arguments)),
         new ReadTool(context, "skills", "What are my skills?",
@@ -114,8 +137,13 @@ internal static class ReadTools
             "Everything the character carries: id, name, kind, stack size, value, burden, which pack "
             + "holds it and whether it is equipped, with the free main-pack slots. Pass search to narrow "
             + "by name. Use the ids through act, for example 'use 0x50000A01' or 'sell 0x50000A01 5'."
+            + Limits
             + Nothing,
-            () => new JsonObject { ["search"] = Property("string", "Part of an item name, such as scarab or healing kit.") },
+            () => new JsonObject
+            {
+                ["search"] = Property("string", "Part of an item name, such as scarab or healing kit."),
+                ["limit"] = LimitProperty(),
+            },
             [],
             arguments => Searched("inventory", arguments)),
         new ReadTool(context, "equipment", "What am I wearing?",
@@ -129,17 +157,19 @@ internal static class ReadTools
             "The open vendor's listings: id, name, unit price and stock. When no vendor is open the "
             + "listings are unknown, not an empty shop; 'use <vendor id>' through act opens one. Buy "
             + "through act, for example 'buy prismatic taper 10'."
+            + Limits
             + Nothing,
-            () => new JsonObject(),
+            () => new JsonObject { ["limit"] = LimitProperty() },
             [],
-            _ => ReadLine.Of("vendor")),
+            arguments => Limited("vendor", arguments)),
         new ReadTool(context, "container", "What is in the open container?",
             "The items in the open corpse or container, with ids to take through act as "
             + "'loot <item id>'. 'open <corpse id>' through act opens one."
+            + Limits
             + Nothing,
-            () => new JsonObject(),
+            () => new JsonObject { ["limit"] = LimitProperty() },
             [],
-            _ => ReadLine.Of("loot list")),
+            arguments => Limited("loot list", arguments)),
         new ReadTool(context, "corpses", "Which corpses are near?",
             "Corpses within range, nearest first, with whether each has been opened already."
             + Nothing,
@@ -191,6 +221,18 @@ internal static class ReadTools
             : ReadLine.Refuse("guid must be an object id such as 0x70000001");
     }
 
+    private static ReadLine Capabilities(JsonObject arguments)
+    {
+        string? guid = ToolArguments.Text(arguments, "guid")?.Trim()
+            ?? ToolArguments.Whole(arguments, "guid")?.ToString(CultureInfo.InvariantCulture);
+        if (string.IsNullOrEmpty(guid))
+            return ReadLine.Of("capabilities");
+        return Guids.TryParse(guid, out _)
+            ? ReadLine.Of("capabilities " + guid)
+            : ReadLine.Refuse(
+                "guid must be an object id such as 0x70000001; leave it out to ask about everything around the character");
+    }
+
     private static ReadLine Corpses(JsonObject arguments) =>
         !Range(arguments, out double? range)
             ? ReadLine.Refuse("range must be a positive number of meters")
@@ -200,16 +242,34 @@ internal static class ReadTools
 
     private static ReadLine Searched(string verb, JsonObject arguments)
     {
-        if (arguments["search"] is not { } node)
-            return ReadLine.Of(verb);
-        string? search = JsonRpc.Text(node)?.Trim();
-        if (search is null || search.Length > MaximumSearchLength || search.Any(char.IsControl))
+        string line = verb;
+        if (arguments["search"] is { } node)
         {
-            return ReadLine.Refuse(
-                $"search must be part of a name, at most {MaximumSearchLength} characters on one line");
+            string? search = JsonRpc.Text(node)?.Trim();
+            if (search is null || search.Length > MaximumSearchLength || search.Any(char.IsControl))
+            {
+                return ReadLine.Refuse(
+                    $"search must be part of a name, at most {MaximumSearchLength} characters on one line");
+            }
+            if (search.Length > 0)
+                line += " " + search;
         }
-        return ReadLine.Of(search.Length == 0 ? verb : verb + " " + search);
+        return Limited(line, arguments);
     }
+
+    private static ReadLine Limited(string line, JsonObject arguments)
+    {
+        if (!ToolArguments.TryNumber(arguments, "limit", out double? limit))
+            return ReadLine.Refuse(RowLimits.Problem);
+        if (limit is not { } rows)
+            return ReadLine.Of(line);
+        return rows >= 1d && rows <= RowLimits.MaximumRows && rows == Math.Floor(rows)
+            ? ReadLine.Of(line + " limit " + ((int)rows).ToString(CultureInfo.InvariantCulture))
+            : ReadLine.Refuse(RowLimits.Problem);
+    }
+
+    private static JsonObject LimitProperty() =>
+        Property("integer", $"The most rows to return, from 1 to {RowLimits.MaximumRows}.");
 
     private static bool Range(JsonObject arguments, out double? range) =>
         ToolArguments.TryNumber(arguments, "range", out range) && (range is null || range > 0d);

@@ -21,7 +21,7 @@ claude mcp add --transport http openac http://127.0.0.1:31337/mcp
 At the character list, ask for a character by name: the model reads the list
 with `characters` and enters the world by acting `login <name>`. Then ask for
 something, such as "open the nearest vendor and buy ten prismatic
-tapers". The model finds the vendor with `nearby`, opens it by acting
+tapers". The model finds the vendor, and the lines that work on it, with `capabilities`, opens it by acting
 `use <vendor id>`, reads the listings with `vendor`, buys by acting
 `buy prismatic taper 10`, and checks the purchase with `outcome`. Any MCP client
 that speaks Streamable HTTP connects the same way.
@@ -47,6 +47,7 @@ Only `act` can make the character do anything. Every other tool only reads.
 | Tool | Answers with |
 |---|---|
 | `observe` | The latest session, body, vitals, stats, target and combat-mode records, the actions still pending, and the most recent outcomes. |
+| `capabilities` | Everything around the character in one answer, each object with the lines this client would take for it now and whether each would be taken; with `guid`, one object. |
 | `act` | Runs one command line and returns a handle with a status: `pending`, `done`, `refused` or `sent-as-chat`. |
 | `outcome` | How the line with a handle ended: its outcome word, its shared class, and every record it produced. |
 | `events` | Records after a cursor. With `waitSeconds` it waits for the next one, and `until` wakes it on a condition. |
@@ -61,6 +62,23 @@ Only `act` can make the character do anything. Every other tool only reads.
 | `container` | The items in the open corpse or container. |
 | `corpses` | Corpses in range, and whether each has been opened. |
 | `characters` | The account's characters at the character list, and where the client stands in logging in. |
+
+`capabilities` answers what the character can do in one call. It lists everything around the
+character, nearest first, each object with the lines this client would take for it now, such as
+`use 0x70000002` or `attack 0x70000001`, graded `available`, `unavailable` with the reason, or
+`unknown` with what is missing, by the same checks the verbs make before they send. Lines graded
+alike for every object are said once in `legend`, with `<guid>` in place of the id. The lines that
+act on the character itself, such as `buy` at the open vendor, `stance combat` or `logout`, come
+under `character`. With `guid` it answers for one object, including one the character carries. A
+line graded `available` can still be refused by the server, and that answer arrives on the line's
+own outcome. The client learns that an item cannot be sold only by appraising it, and the server
+does not answer an offer of such an item, so a sale of an item the client has never appraised is
+graded `unknown`, and `sell` appraises the item before offering it; an item that cannot be sold is
+then refused with the game's reason.
+
+`spells` shows at most 50 rows, and `inventory`, `vendor` and `container` at most 100, unless
+`limit` asks for another number up to 500. Each answer says how many rows matched, how many are
+shown and how many the limit held back, so a short list never reads as a short inventory.
 
 `act` and `outcome` take `waitSeconds`, up to 30, to answer once the action
 settles instead of at once. An accepted action is not a finished one: the server
@@ -85,10 +103,10 @@ the read tools print, such as `0x70000001`.
 | Family | Lines |
 |---|---|
 | Session | `characters`, `login <name or id>`, `logout` |
-| Read | `vitals`, `stats`, `location`, `snapshot`, `skills`, `buffs`, `spells [search]`, `nearby [kind] [range]`, `inspect <id>`, `inventory [search]`, `equipment`, `vendor`, `loot list`, `loot corpses [range]` |
+| Read | `vitals`, `stats`, `location`, `snapshot`, `capabilities [id]`, `skills`, `buffs`, `spells [search] [limit <n>]`, `nearby [kind] [range]`, `inspect <id>`, `inventory [search] [limit <n>]`, `equipment`, `vendor [limit <n>]`, `loot list [limit <n>]`, `loot corpses [range]` |
 | Chat | `say <text>`, `tell <name>, <message>`, `emote <text>` |
 | Target | `target <id>`, `target nearest [kind]`, `untarget` |
-| Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `go to <id, name or target> [within <meters>]`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance peace\|melee\|missile\|magic`, `cancel` |
+| Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `go to <id, name or target> [within <meters>]`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance combat\|peace`, `cancel` |
 | Magic | `cast <spell name or id> [on <id>]` |
 | Objects | `use <id>`, `use <item id> on <id>`, `open <id>` |
 | Items | `loot <item id>`, `drop <item id> [amount]`, `give <item id> to <id> [amount]`, `move <item id> to <container id> [amount]`, `equip <item id>`, `unequip <item id>` |
@@ -130,7 +148,26 @@ walk that stays blocked names what stood beside that spot in `blockedBy`, such
 as a door that would not open. `remaining` is the straight-line distance from
 the character to where the object stands, and `no-route` means nothing joins
 the character to the object. `stop`, `cancel` and the player's movement keys
-end a walk. Client
+end a walk. A walk to an object farther away than one planning grid reaches,
+about 270 m, goes in stages, each planned to the edge of a grid toward the
+object, up to 1000 m. Inside a sealed dungeon one grid covers the whole
+dungeon, however large, and serves every walk there; the largest take a few
+seconds to plan the first time. Each route is planned three ways at once, from
+the shortest to one keeping well clear of walls, and the tidiest is walked, its
+corners taken wide where there is room so the character does not brush them. A
+route keeps out of objects the server placed, such as ore deposits, whenever
+another way arrives. A door the client has not appraised is appraised before a
+walk uses it; a locked door, or one that will not open, is walked around, and
+with no other way the walk ends `blocked` naming it. Where no walk reaches, a
+route leaps: it hops off ledges of up to 12 m, the deepest fall measured to do
+no damage, and takes standing long jumps across gaps and up onto ledges as far
+and as high as the character's jump skill, run skill and burden allow. A route
+does not pass through portals. While a walk is under way the client
+draws its route as a magenta line. Ctrl+F4 also shows the grid, Ctrl+F5 plans
+a route to the selected object, and Ctrl+F6 walks to it or stops the walk;
+without Ctrl on the acdream keymap, where F4 to F6 are free.
+
+Client
 commands that close the client, kill the character, or change its player-killer
 status are refused, and `logout` is how a model leaves the world. Any other line is handed to the client as chat or a
 client command, so a model can make the character speak.

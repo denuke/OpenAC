@@ -17,7 +17,7 @@ public sealed class McpToolsTests
 
         Assert.Equal(
             [
-                "act", "buffs", "characters", "container", "corpses", "equipment", "events", "inspect",
+                "act", "buffs", "capabilities", "characters", "container", "corpses", "equipment", "events", "inspect",
                 "inventory", "nearby", "observe", "outcome", "skills", "spells", "vendor",
             ],
             definitions.Select(tool => tool["name"]!.GetValue<string>()).Order(StringComparer.Ordinal));

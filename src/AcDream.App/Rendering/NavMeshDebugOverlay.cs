@@ -6,9 +6,12 @@ using AcDream.Runtime.Gameplay;
 namespace AcDream.App.Rendering;
 
 /// <summary>
-/// A development view of navigation: the grid around the player, and the route
-/// and goal of the most recent walk or route request, drawn as debug lines. The
-/// leg the character is walking is drawn in its own colour.
+/// The navigation view. The route of a walk under way, or of a route asked for
+/// alone, is drawn as a magenta line from the character along the legs still to
+/// walk, a leap drawn as an arc, with a dimmer line on to a goal beyond a stage.
+/// While the grid is shown it adds the grid around the player, the path the
+/// route was straightened from, a post at the end of every leg, and an orange
+/// cylinder around each object the server placed that routes keep out of.
 /// </summary>
 internal sealed class NavMeshDebugOverlay
 {
@@ -16,17 +19,20 @@ internal sealed class NavMeshDebugOverlay
     internal const int DrawStride = 2;
 
     private const float MarkerHalfSize = 0.08f;
+    private const float ObstacleHeight = 2f;
+    private const int LeapArcSegments = 8;
+    private const float LeapArcHeight = 1f;
 
     private static readonly Vector3 NodeLift = new(0f, 0f, 0.04f);
     private static readonly Vector3 PathLift = new(0f, 0f, 0.15f);
-    private static readonly Vector3 LegLift = new(0f, 0f, 0.3f);
+    private static readonly Vector3 RouteLift = new(0f, 0f, 0.1f);
     private static readonly Vector3 LegPost = new(0f, 0f, 1f);
     private static readonly Vector3 ClearColour = new(0.2f, 0.95f, 0.35f);
     private static readonly Vector3 TightColour = new(0.9f, 0.25f, 0.15f);
     private static readonly Vector3 PathColour = new(0.85f, 0.85f, 0.85f);
-    private static readonly Vector3 LegColour = new(1f, 0.85f, 0.1f);
-    private static readonly Vector3 WalkingLegColour = new(0.1f, 0.9f, 1f);
-    private static readonly Vector3 GoalColour = new(1f, 0.2f, 0.9f);
+    private static readonly Vector3 RouteColour = new(1f, 0f, 1f);
+    private static readonly Vector3 BeyondColour = new(0.5f, 0f, 0.5f);
+    private static readonly Vector3 ObstacleColour = new(1f, 0.55f, 0.1f);
 
     private readonly NavigationWalkController _walk;
 
@@ -35,12 +41,20 @@ internal sealed class NavMeshDebugOverlay
         _walk = walk ?? throw new ArgumentNullException(nameof(walk));
     }
 
-    public void Draw(DebugLineRenderer lines, PlayerMovementController? player)
+    /// <summary>Whether there is a route to draw while the grid is hidden: a request under way, or a route found alone.</summary>
+    public bool HasRouteToShow => _walk.IsBusy || _walk.Report.State == NavigationWalkState.Planned;
+
+    public void Draw(DebugLineRenderer lines, PlayerMovementController? player, bool showGrid)
     {
         ArgumentNullException.ThrowIfNull(lines);
-        if (player is not null && _walk.Grid is { } grid)
+        if (showGrid && player is not null && _walk.Grid is { } grid)
             DrawGrid(lines, grid, player.Position);
-        DrawRoute(lines);
+        if (showGrid && player is not null)
+        {
+            foreach (NavAvoidance obstacle in _walk.ObstaclesNear(player.Position, DrawRadius))
+                lines.AddCylinder(obstacle.Centre, obstacle.Radius, ObstacleHeight, ObstacleColour);
+        }
+        DrawRoute(lines, player?.Position, showGrid);
     }
 
     private static void DrawGrid(DebugLineRenderer lines, NavGrid grid, Vector3 centre)
@@ -76,26 +90,50 @@ internal sealed class NavMeshDebugOverlay
         }
     }
 
-    private void DrawRoute(DebugLineRenderer lines)
+    private void DrawRoute(DebugLineRenderer lines, Vector3? character, bool showGrid)
     {
         if (_walk.Goal is { } goal)
-            lines.AddCylinder(goal.Position, goal.ArrivalMeters, 0.1f, GoalColour);
-        if (_walk.Route is not { Outcome: NavRouteOutcome.Routed } route)
+            lines.AddCylinder(goal.Position, goal.ArrivalMeters, 0.1f, RouteColour);
+        if (_walk.Route is not { Outcome: NavRouteOutcome.Routed } route || route.Legs.Count == 0)
             return;
 
-        for (int index = 1; index < route.Path.Count; index++)
-            lines.AddLine(route.Path[index - 1] + PathLift, route.Path[index] + PathLift, PathColour);
-        int? walking = _walk.LegIndex;
-        for (int index = 0; index < route.Legs.Count; index++)
+        if (showGrid)
         {
-            lines.AddLine(route.Legs[index], route.Legs[index] + LegPost, LegColour);
-            if (index > 0)
-            {
-                lines.AddLine(
-                    route.Legs[index - 1] + LegLift,
-                    route.Legs[index] + LegLift,
-                    index == walking ? WalkingLegColour : LegColour);
-            }
+            for (int index = 1; index < route.Path.Count; index++)
+                lines.AddLine(route.Path[index - 1] + PathLift, route.Path[index] + PathLift, PathColour);
+            foreach (Vector3 end in route.Legs)
+                lines.AddLine(end, end + LegPost, RouteColour);
+        }
+
+        int next = 1;
+        if (_walk.LegIndex is { } walking && character is { } at && walking < route.Legs.Count)
+        {
+            lines.AddLine(at + RouteLift, route.Legs[walking] + RouteLift, RouteColour);
+            next = walking + 1;
+        }
+        for (int index = Math.Max(next, 1); index < route.Legs.Count; index++)
+            DrawLeg(lines, route, index);
+        if (_walk.IsStaged && _walk.Goal is { } beyond)
+            lines.AddLine(route.Legs[^1] + RouteLift, beyond.Position + RouteLift, BeyondColour);
+    }
+
+    /// <summary>Draws one leg of a route: a straight line, or an arc for a leap.</summary>
+    private static void DrawLeg(DebugLineRenderer lines, NavRoute route, int index)
+    {
+        Vector3 from = route.Legs[index - 1] + RouteLift;
+        Vector3 to = route.Legs[index] + RouteLift;
+        if (!route.Leaps.Any(leap => leap.LegIndex == index))
+        {
+            lines.AddLine(from, to, RouteColour);
+            return;
+        }
+        Vector3 previous = from;
+        for (int segment = 1; segment <= LeapArcSegments; segment++)
+        {
+            float along = segment / (float)LeapArcSegments;
+            Vector3 point = Vector3.Lerp(from, to, along) + new Vector3(0f, 0f, LeapArcHeight * 4f * along * (1f - along));
+            lines.AddLine(previous, point, RouteColour);
+            previous = point;
         }
     }
 }

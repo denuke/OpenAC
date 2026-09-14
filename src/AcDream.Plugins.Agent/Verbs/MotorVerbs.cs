@@ -13,7 +13,7 @@ namespace AcDream.Plugins.Agent.Verbs;
 /// backward, <c>strafe left|right</c> and <c>turn left|right</c>, each for a
 /// distance, an angle, a time, or until <c>stop</c>; <c>turn to &lt;heading&gt;</c>,
 /// <c>face &lt;guid&gt;</c>, <c>go to &lt;object&gt;</c>, <c>jump</c>,
-/// <c>stance &lt;mode&gt;</c> and <c>cancel</c>. Walking or running, strafing and
+/// <c>stance combat|peace</c> and <c>cancel</c>. Walking or running, strafing and
 /// turning combine the way held movement keys do, and a new move replaces only
 /// a move of its own kind. <c>go to</c> walks to an object along a route the
 /// client plans. The client carries out each move and ends it; these verbs ask
@@ -47,7 +47,7 @@ internal sealed class MotorVerbs : IVerbFamily
     internal const float MaximumArrivalMeters = 50f;
 
     /// <summary>The farthest object a walk is planned to.</summary>
-    internal const double MaximumGoToMeters = 250d;
+    internal const double MaximumGoToMeters = 1000d;
 
     /// <summary>
     /// A walk's report is waited for as long as planning takes, plus the straight
@@ -61,16 +61,11 @@ internal sealed class MotorVerbs : IVerbFamily
     internal const string Blocked = "blocked";
     internal const string NoRoute = "no-route";
 
-    internal static readonly IReadOnlyList<string> OutcomeWords = [Completed, Cancelled, Blocked, NoRoute];
+    internal const string NoOwnPosition = "the client has no position for its own body";
+    internal const string NoObjectPosition = "the client holds no position for that object";
+    internal const string InPortalSpace = "the character is in portal space";
 
-    private static readonly Dictionary<string, PluginCombatMode> Stances =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            ["peace"] = PluginCombatMode.Peace,
-            ["melee"] = PluginCombatMode.Melee,
-            ["missile"] = PluginCombatMode.Missile,
-            ["magic"] = PluginCombatMode.Magic,
-        };
+    internal static readonly IReadOnlyList<string> OutcomeWords = [Completed, Cancelled, Blocked, NoRoute];
 
     private readonly IPluginHost _host;
     private readonly Publisher _publisher;
@@ -173,11 +168,11 @@ internal sealed class MotorVerbs : IVerbFamily
         if (!Guids.TryParse(line.Arguments, out uint id))
             return Refuse(line, "face needs an object id such as 0x70000001");
         IAutomationSurface automation = _host.Automation;
-        if (!automation.Objects.TryGet(id, out PluginWorldObject value) || !value.HasPosition)
-            return Refuse(line, "the client holds no position for that object");
+        if (!automation.Objects.TryGet(id, out PluginWorldObject value))
+            return Refuse(line, NoObjectPosition);
         PluginNavigationSnapshot self = automation.Navigation.Snapshot;
-        if (!self.IsAvailable)
-            return Refuse(line, "the client has no position for its own body");
+        if (FaceProblem(self, value) is { } problem)
+            return Refuse(line, problem);
         return TurnToward(line, Geometry.BearingDegrees(self.Position, value.Position), Facts.Hex(id));
     }
 
@@ -186,7 +181,7 @@ internal sealed class MotorVerbs : IVerbFamily
     {
         PluginNavigationSnapshot self = _host.Automation.Navigation.Snapshot;
         if (!self.IsAvailable)
-            return Refuse(line, "the client has no position for its own body");
+            return Refuse(line, NoOwnPosition);
         var aim = new JsonObject
         {
             ["heading"] = Math.Round(heading, 1),
@@ -248,14 +243,14 @@ internal sealed class MotorVerbs : IVerbFamily
         IAutomationSurface automation = _host.Automation;
         PluginNavigationSnapshot self = automation.Navigation.Snapshot;
         if (!self.IsAvailable)
-            return Refuse(line, "the client has no position for its own body");
+            return Refuse(line, NoOwnPosition);
         if (self.IsPortalSpace)
-            return Refuse(line, "the character is in portal space");
+            return Refuse(line, InPortalSpace);
         if (!TryFindGoal(automation, self, named, out PluginWorldObject goal, out string problem))
             return Refuse(line, problem);
+        if (GoToProblem(self, goal) is { } refusal)
+            return Refuse(line, refusal);
         double distance = Geometry.DistanceMeters(self.Position, goal.Position);
-        if (distance > MaximumGoToMeters)
-            return Refuse(line, $"{goal.Name} is {distance:0} m away, and a walk is planned to at most {MaximumGoToMeters:0} m");
 
         INavigationAutomation navigation = automation.Navigation;
         PluginNavigationCommandStatus status = navigation.GoTo(goal.ObjectId, arrival);
@@ -314,6 +309,25 @@ internal sealed class MotorVerbs : IVerbFamily
     private static string? ArrivalNote(string? reason) =>
         string.IsNullOrEmpty(reason) || reason.Equals("arrived", StringComparison.Ordinal) ? null : reason;
 
+    /// <summary>Why facing an object would be refused, or null when it would be taken.</summary>
+    internal static string? FaceProblem(in PluginNavigationSnapshot self, in PluginWorldObject value) =>
+        !value.HasPosition ? NoObjectPosition : !self.IsAvailable ? NoOwnPosition : null;
+
+    /// <summary>Why a walk to an object would be refused, or null when it would be taken.</summary>
+    internal static string? GoToProblem(in PluginNavigationSnapshot self, in PluginWorldObject goal)
+    {
+        if (!self.IsAvailable)
+            return NoOwnPosition;
+        if (self.IsPortalSpace)
+            return InPortalSpace;
+        if (!goal.HasPosition)
+            return NoObjectPosition;
+        double distance = Geometry.DistanceMeters(self.Position, goal.Position);
+        return distance > MaximumGoToMeters
+            ? $"{goal.Name} is {distance:0} m away, and a walk is planned to at most {MaximumGoToMeters:0} m"
+            : null;
+    }
+
     private bool TryFindGoal(
         IAutomationSurface automation,
         PluginNavigationSnapshot self,
@@ -350,7 +364,7 @@ internal sealed class MotorVerbs : IVerbFamily
 
         if (!automation.Objects.TryGet(id, out goal) || !goal.HasPosition)
         {
-            problem = "the client holds no position for that object";
+            problem = NoObjectPosition;
             return false;
         }
         problem = string.Empty;
@@ -368,9 +382,9 @@ internal sealed class MotorVerbs : IVerbFamily
         INavigationAutomation navigation = _host.Automation.Navigation;
         PluginNavigationSnapshot self = navigation.Snapshot;
         if (!self.IsAvailable)
-            return Refuse(line, "the client has no position for its own body");
+            return Refuse(line, NoOwnPosition);
         if (self.IsPortalSpace)
-            return Refuse(line, "the character is in portal space");
+            return Refuse(line, InPortalSpace);
 
         PluginNavigationCommandStatus status = navigation.Move(direction, pace, amount.Value, amount.Unit);
         if (status != PluginNavigationCommandStatus.Accepted)
@@ -490,22 +504,61 @@ internal sealed class MotorVerbs : IVerbFamily
         return VerbResult.Handled;
     }
 
+    /// <summary>
+    /// <c>stance combat</c> enters the stance the wielded weapon or held caster
+    /// calls for, as the client's own combat key does, and <c>stance peace</c>
+    /// leaves it. A stance is not named, because the weapon decides it.
+    /// </summary>
     private VerbResult Stance(CommandLine line)
     {
-        if (!Stances.TryGetValue(line.Arguments.Trim(), out PluginCombatMode mode))
-            return Refuse(line, "usage: stance peace|melee|missile|magic");
         ICombatAutomation combat = _host.Automation.Combat;
-        PluginCombatCommandResult result = combat.EnterMode(mode);
+        switch (line.Arguments.Trim().ToLowerInvariant())
+        {
+            case "combat":
+                return EnterStance(line, combat, combat.EnterDefaultMode(), "combat", InCombat);
+            case "peace":
+                return EnterStance(line, combat, combat.EnterMode(PluginCombatMode.Peace), "peace",
+                    static mode => mode == PluginCombatMode.Peace);
+            case "melee" or "missile" or "magic":
+                return Refuse(line,
+                    "a stance is not named; 'stance combat' enters the one the wielded weapon or held caster calls for");
+            default:
+                return Refuse(line, "usage: stance combat|peace");
+        }
+    }
+
+    private VerbResult EnterStance(
+        CommandLine line,
+        ICombatAutomation combat,
+        PluginCombatCommandResult result,
+        string stance,
+        Func<PluginCombatMode, bool> reached)
+    {
         if (!result.Accepted)
         {
             return Refuse(line, result.Notice
                 ?? $"the client did not change stance ({WireNames.Kebab(result.Status.ToString())})");
         }
-        Accepted(line, new JsonObject { ["stance"] = WireNames.Kebab(mode.ToString()) });
-        _outcomes.Watch(line.Id, line.Verb, RecordKinds.GoalResolved, StanceWindowSeconds,
-            () => combat.Snapshot.Mode == mode ? new Resolution(Completed) : null);
+        Accepted(line, new JsonObject { ["stance"] = stance });
+        if (result.Status == PluginCombatCommandStatus.AlreadyReady)
+        {
+            _outcomes.ResolveNow(line.Id, line.Verb, RecordKinds.GoalResolved,
+                new Resolution(Completed, "the character was already in that stance", StanceFields(combat.Snapshot.Mode)));
+            return VerbResult.Handled;
+        }
+        _outcomes.Watch(line.Id, line.Verb, RecordKinds.GoalResolved, StanceWindowSeconds, () =>
+        {
+            PluginCombatMode mode = combat.Snapshot.Mode;
+            return reached(mode) ? new Resolution(Completed, null, StanceFields(mode)) : null;
+        });
         return VerbResult.Handled;
     }
+
+    private static bool InCombat(PluginCombatMode mode) =>
+        mode is PluginCombatMode.Melee or PluginCombatMode.Missile or PluginCombatMode.Magic;
+
+    private static JsonObject StanceFields(PluginCombatMode mode) =>
+        new() { ["mode"] = WireNames.Kebab(mode.ToString()) };
 
     private VerbResult Cancel(CommandLine line)
     {

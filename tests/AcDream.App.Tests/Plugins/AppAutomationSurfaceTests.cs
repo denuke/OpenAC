@@ -608,6 +608,66 @@ public sealed class AppAutomationSurfaceTests
         }
     }
 
+    [Theory]
+    [InlineData(0x2000u, true)]
+    [InlineData(0x1u, true)]
+    [InlineData(0x1000u, false)]
+    [InlineData(0u, false)]
+    public void AnObjectOpensWhenItIsACorpseOrMarkedOpenable(uint publicFlags, bool opens) =>
+        Assert.Equal(opens, AppAutomationSurface.Opens(publicFlags));
+
+    [Fact]
+    public void SellRefusesWhatTheOpenVendorWouldNotBuy()
+    {
+        const uint player = 0x50000001u;
+        const uint gem = 0x70000021u;
+        const uint heirloom = 0x70000022u;
+        var objects = new ClientObjectTable();
+        objects.AddOrUpdate(new ClientObject { ObjectId = gem, Type = ItemType.Misc, ContainerId = player, Value = 20 });
+        var keepsake = new ClientObject { ObjectId = heirloom, Type = ItemType.Misc, ContainerId = player, Value = 20 };
+        keepsake.Properties.Bools[(uint)AcDream.Core.Properties.PropertyBool.IsSellable] = false;
+        objects.AddOrUpdate(keepsake);
+
+        Assert.Equal(
+            PluginItemCommandStatus.InvalidTarget,
+            AppAutomationSurface.RefuseSell(new VendorState(), objects, player, gem, 0u)?.Status);
+
+        var vendor = new VendorState();
+        Assert.True(vendor.Apply(VendorId, Profile(sellRate: 1f), [Listing(0x70000011u, stock: 2, value: 10)]));
+
+        Assert.Null(AppAutomationSurface.RefuseSell(vendor, objects, player, gem, 0u));
+        Assert.Equal(
+            PluginItemCommandStatus.InvalidItem,
+            AppAutomationSurface.RefuseSell(vendor, objects, player, 0x70000099u, 0u)?.Status);
+        Assert.Equal(
+            PluginItemCommandStatus.Refused,
+            AppAutomationSurface.RefuseSell(vendor, objects, player, gem, 2u)?.Status);
+        PluginItemCommandResult? unsellable = AppAutomationSurface.RefuseSell(vendor, objects, player, heirloom, 0u);
+        Assert.Equal(PluginItemCommandStatus.Refused, unsellable?.Status);
+        Assert.Equal("This item cannot be sold", unsellable?.Notice);
+    }
+
+    [Fact]
+    public void CheckSellIsUnavailableWithoutALiveSession()
+    {
+        using var surface = new AppAutomationSurface();
+
+        Assert.Equal(PluginItemCommandStatus.Unavailable, surface.Items.CheckSell(0x70000021u).Status);
+        Assert.Equal(
+            PluginItemCommandStatus.Unavailable,
+            NoOpAutomationSurface.Instance.Items.CheckSell(0x70000021u).Status);
+    }
+
+    [Fact]
+    public void WorldIdentifyIsUnavailableWithoutALiveSession()
+    {
+        using var surface = new AppAutomationSurface();
+
+        Assert.Equal(
+            PluginItemCommandStatus.Unavailable,
+            ((IWorldObjectAutomation)surface).Identify(0x70000021u).Status);
+    }
+
     private const uint VendorId = 0x70000010u;
 
     private static VendorShopProfile Profile(float sellRate) => new(

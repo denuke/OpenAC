@@ -31,7 +31,11 @@ public sealed record NavRoute(
     IReadOnlyList<Vector3> Legs,
     float Length,
     int Expansions,
-    double Milliseconds);
+    double Milliseconds)
+{
+    /// <summary>The legs flown as standing long jumps rather than walked, in order.</summary>
+    public IReadOnlyList<NavRouteLeap> Leaps { get; init; } = [];
+}
 
 /// <summary>
 /// Finds routes over a <see cref="NavGrid"/> with A*. A route starts from a
@@ -59,8 +63,48 @@ public static class NavRouter
 
     public const int MaximumExpansions = 4_000_000;
 
-    /// <summary>Nodes nearer a wall or a ledge than this cost more, so routes keep to the middle of doorways.</summary>
-    private const float ComfortableClearance = 1.25f;
+    /// <summary>
+    /// How a search weighs walking near walls and ledges: a node nearer one than
+    /// <paramref name="Clearance"/> costs <paramref name="Weight"/> more to step onto
+    /// for each meter it falls short, so routes keep to the middle of doorways.
+    /// </summary>
+    private readonly record struct SearchProfile(float Clearance, float Weight);
+
+    /// <summary>
+    /// A route is planned in each of these ways at once, from one keeping well clear
+    /// of walls to the shortest, and the tidiest of the routes found is kept. A
+    /// route toward a goal beyond the grid is planned the first way only.
+    /// </summary>
+    private static readonly SearchProfile[] Profiles = [new(1.25f, 0.5f), new(2f, 1f), new(0f, 0f)];
+
+    /// <summary>
+    /// What makes a route untidy to walk, in meters added to its length: each leg,
+    /// each turn sharper than <see cref="SharpTurnDegrees"/>, and each square meter
+    /// of shortfall from <see cref="ComfortableLegClearance"/> along its legs.
+    /// </summary>
+    private const float LegUntidiness = 0.5f;
+    private const float TurnUntidiness = 2f;
+    private const float ScrapeUntidiness = 2f;
+    private const float SharpTurnDegrees = 30f;
+
+    /// <summary>What a leap costs a route beyond the distance it covers, in meters, and more for each share of full power.</summary>
+    private const float LeapCost = 3f;
+    private const float LeapPowerCost = 2f;
+
+    /// <summary>A route toward a goal beyond the grid found with leaps is taken only when it ends this much nearer the goal.</summary>
+    private const float LeapWorthMeters = 1f;
+
+    private const string ReachedEdgeReason = "the goal lies beyond this grid, so the route ends at its edge toward the goal";
+
+    /// <summary>
+    /// A corner a route turns at is moved, when it helps and there is room, so that
+    /// both legs through it keep up to this far from walls and ledges, the way a
+    /// walker takes a corner wide instead of brushing it. A corner moves at most
+    /// <see cref="CornerShift"/>, and only for a gain of at least <see cref="CornerGain"/>.
+    /// </summary>
+    private const float ComfortableLegClearance = 1f;
+    private const float CornerShift = 1.5f;
+    private const float CornerGain = 0.1f;
 
     /// <summary>How far above or below an avoided spot a node is still kept out of it.</summary>
     private const float AvoidanceHeight = 2f;
@@ -70,76 +114,71 @@ public static class NavRouter
 
     private const float DiagonalStep = 1.41421356f;
 
+    /// <summary>
+    /// Plans a route in each of the <see cref="Profiles"/> at once and returns the
+    /// tidiest: a route that arrives before one that ends short of the goal, and of
+    /// those alike, the one least untidy to walk. When no walked route arrives and
+    /// <paramref name="leaps"/> says what the body can leap, the route is planned
+    /// again the first way with leaps, and the better of the two is returned.
+    /// </summary>
     public static NavRoute Find(
         NavGrid grid,
         Vector3 from,
         Vector3 to,
         float arrivalRadius,
-        IReadOnlyList<NavAvoidance>? avoid = null)
+        IReadOnlyList<NavAvoidance>? avoid = null,
+        NavLeapAbility? leaps = null)
     {
         ArgumentNullException.ThrowIfNull(grid);
+        var clock = Stopwatch.StartNew();
+        var plans = new (NavRoute Route, float Untidiness)[Profiles.Length];
+        Parallel.For(0, Profiles.Length, index => plans[index] = Find(grid, from, to, arrivalRadius, avoid, Profiles[index], leaps: null));
+        (NavRoute Route, float Untidiness) tidiest = plans[0];
+        foreach ((NavRoute Route, float Untidiness) plan in plans)
+        {
+            int rank = Rank(plan.Route);
+            if (rank < Rank(tidiest.Route) || (rank == Rank(tidiest.Route) && plan.Untidiness < tidiest.Untidiness))
+                tidiest = plan;
+        }
+        if (Rank(tidiest.Route) > 0 && leaps is { } ability)
+        {
+            (NavRoute Route, float Untidiness) leapt =
+                Find(grid, from, to, arrivalRadius, avoid, Profiles[0], new NavLeapFinder(grid, ability));
+            if (Rank(leapt.Route) < Rank(tidiest.Route))
+                tidiest = leapt;
+        }
+        return tidiest.Route with { Milliseconds = clock.Elapsed.TotalMilliseconds };
+    }
+
+    /// <summary>A route that arrives ranks first, then one that ends short of the goal, then one that failed.</summary>
+    private static int Rank(NavRoute route) =>
+        route.Outcome != NavRouteOutcome.Routed ? 2 : route.Reason == "routed" ? 0 : 1;
+
+    private static (NavRoute Route, float Untidiness) Find(
+        NavGrid grid,
+        Vector3 from,
+        Vector3 to,
+        float arrivalRadius,
+        IReadOnlyList<NavAvoidance>? avoid,
+        SearchProfile profile,
+        NavLeapFinder? leaps)
+    {
         var clock = Stopwatch.StartNew();
         IReadOnlyList<NavAvoidance> avoided = avoid ?? [];
         float reach = MathF.Max(arrivalRadius, grid.CellSize);
         int start = grid.FindWalkableNode(from, StartRadius, StartHeightTolerance);
         if (start < 0)
-        {
-            return Failed(
-                NavRouteOutcome.NoStart,
-                "no clear spot near the start can be walked to without passing a wall",
-                0,
-                clock);
-        }
+            return (NoStart(clock), float.PositiveInfinity);
         var goal = new GoalTest(grid, to, reach, avoided);
         bool nearGoalSeen = goal.MaySucceed();
 
-        var cost = new float[grid.NodeCount];
-        Array.Fill(cost, float.PositiveInfinity);
-        var parent = new int[grid.NodeCount];
-        var closed = new bool[grid.NodeCount];
-        var open = new PriorityQueue<int, float>();
-        cost[start] = 0f;
-        parent[start] = start;
-        open.Enqueue(start, Remaining(grid.Position(start), to, reach));
-        int expansions = 0;
-        while (open.TryDequeue(out int node, out _))
-        {
-            if (closed[node])
-                continue;
-            closed[node] = true;
-            expansions++;
-            if (nearGoalSeen && goal.IsReachedAt(node))
-                return Routed(grid, from, start, node, parent, avoided, expansions, clock, "routed");
-            if (expansions >= MaximumExpansions)
-            {
-                return Failed(
-                    NavRouteOutcome.NoPath,
-                    $"the search gave up after {expansions} expansions",
-                    expansions,
-                    clock);
-            }
-
-            Vector3 here = grid.Position(node);
-            for (int direction = 0; direction < NavGrid.DirectionCount; direction++)
-            {
-                int next = grid.Link(node, direction);
-                if (next < 0 || closed[next] || !grid.IsClear(next))
-                    continue;
-                Vector3 there = grid.Position(next);
-                if (IsAvoided(there, avoided))
-                    continue;
-                float step = (grid.CellSize * (direction < 4 ? 1f : DiagonalStep))
-                    + MathF.Abs(there.Z - here.Z)
-                    + WallCost(grid, next);
-                float total = cost[node] + step;
-                if (total >= cost[next])
-                    continue;
-                cost[next] = total;
-                parent[next] = node;
-                open.Enqueue(next, total + Remaining(there, to, reach));
-            }
-        }
-        int nearest = goal.NearestSeeingAmong(closed);
+        var search = new Search(grid, start, to, reach, avoided, profile, leaps);
+        int end = search.Run(node => nearGoalSeen && goal.IsReachedAt(node));
+        if (end >= 0)
+            return Routed(grid, from, start, end, search, avoided, clock, "routed");
+        if (end == Search.GaveUp)
+            return (SearchGaveUp(search, clock), float.PositiveInfinity);
+        int nearest = goal.NearestSeeingAmong(search.Closed);
         if (nearest >= 0)
         {
             Vector3 at = grid.Position(nearest);
@@ -149,14 +188,13 @@ public static class NavRouter
                 from,
                 start,
                 nearest,
-                parent,
+                search,
                 avoided,
-                expansions,
                 clock,
                 $"nothing within {reach:0.#} m of the goal can be reached and see it, so the route ends at "
                 + $"the nearest spot that can, {away:0.0} m from it");
         }
-        int nearestUnseeing = avoided.Count == 0 ? goal.NearestAmong(closed) : -1;
+        int nearestUnseeing = avoided.Count == 0 ? goal.NearestAmong(search.Closed) : -1;
         if (nearestUnseeing >= 0)
         {
             Vector3 at = grid.Position(nearestUnseeing);
@@ -166,39 +204,125 @@ public static class NavRouter
                 from,
                 start,
                 nearestUnseeing,
-                parent,
+                search,
                 avoided,
-                expansions,
                 clock,
                 $"no reachable spot can see the goal, so the route ends at the nearest spot, {away:0.0} m from it, "
                 + "without a line of sight");
         }
-        return nearGoalSeen
+        NavRoute failed = nearGoalSeen
             ? Failed(
                 NavRouteOutcome.NoPath,
                 $"no clear path leads from the start to a spot within {FallbackReach:0} m that can see the goal",
-                expansions,
+                search.Expansions,
                 clock)
             : Failed(
                 NavRouteOutcome.NoGoal,
                 $"no spot within {FallbackReach:0} m of the goal that the start can reach can see it",
-                expansions,
+                search.Expansions,
                 clock);
+        return (failed, float.PositiveInfinity);
     }
 
-    private static NavRoute Routed(
+    /// <summary>
+    /// Finds a route toward a goal that lies beyond the grid, for a walk too long
+    /// for one grid to hold: to the first reachable node within
+    /// <paramref name="band"/> of the nearest the grid comes to the goal, or, when
+    /// none is reachable, to the reachable node nearest the goal. When no walked
+    /// route reaches the grid's edge toward the goal and <paramref name="leaps"/> says
+    /// what the body can leap, it is found again with leaps, and taken when it ends
+    /// nearer the goal.
+    /// </summary>
+    public static NavRoute FindToward(
+        NavGrid grid,
+        Vector3 from,
+        Vector3 goal,
+        float band,
+        IReadOnlyList<NavAvoidance>? avoid = null,
+        NavLeapAbility? leaps = null)
+    {
+        ArgumentNullException.ThrowIfNull(grid);
+        NavRoute walked = FindTowardWith(grid, from, goal, band, avoid, null);
+        if (leaps is not { } ability || walked.Reason.StartsWith(ReachedEdgeReason, StringComparison.Ordinal))
+            return walked;
+        NavRoute leapt = FindTowardWith(grid, from, goal, band, avoid, new NavLeapFinder(grid, ability));
+        if (leapt.Outcome != NavRouteOutcome.Routed)
+            return walked;
+        return walked.Outcome != NavRouteOutcome.Routed
+            || Away(leapt.Legs[^1], goal) + LeapWorthMeters < Away(walked.Legs[^1], goal)
+                ? leapt
+                : walked;
+    }
+
+    private static NavRoute FindTowardWith(
+        NavGrid grid,
+        Vector3 from,
+        Vector3 goal,
+        float band,
+        IReadOnlyList<NavAvoidance>? avoid,
+        NavLeapFinder? leaps)
+    {
+        var clock = Stopwatch.StartNew();
+        IReadOnlyList<NavAvoidance> avoided = avoid ?? [];
+        int start = grid.FindWalkableNode(from, StartRadius, StartHeightTolerance);
+        if (start < 0)
+            return NoStart(clock);
+
+        float enough = DistanceBeyond(grid, goal) + MathF.Max(band, grid.CellSize);
+        int nearest = start;
+        float nearestAway = Away(grid.Position(start), goal);
+        var search = new Search(grid, start, goal, 0f, avoided, Profiles[0], leaps);
+        int end = search.Run(node =>
+        {
+            float away = Away(grid.Position(node), goal);
+            if (away < nearestAway)
+            {
+                nearest = node;
+                nearestAway = away;
+            }
+            return away <= enough;
+        });
+        if (end >= 0)
+        {
+            return Routed(
+                grid,
+                from,
+                start,
+                end,
+                search,
+                avoided,
+                clock,
+                $"{ReachedEdgeReason}, {nearestAway:0} m from it").Route;
+        }
+        if (nearest != start && Away(from, goal) - nearestAway >= grid.CellSize)
+        {
+            return Routed(
+                grid,
+                from,
+                start,
+                nearest,
+                search,
+                avoided,
+                clock,
+                $"the goal lies beyond this grid, and the route ends at the reachable spot nearest it, {nearestAway:0} m from it").Route;
+        }
+        return end == Search.GaveUp
+            ? SearchGaveUp(search, clock)
+            : Failed(NavRouteOutcome.NoPath, "no clear path leads any nearer the goal", search.Expansions, clock);
+    }
+
+    private static (NavRoute Route, float Untidiness) Routed(
         NavGrid grid,
         Vector3 from,
         int start,
         int end,
-        int[] parent,
+        Search search,
         IReadOnlyList<NavAvoidance> avoided,
-        int expansions,
         Stopwatch clock,
         string reason)
     {
         var nodes = new List<int>();
-        for (int node = end; ; node = parent[node])
+        for (int node = end; ; node = search.Parent[node])
         {
             nodes.Add(node);
             if (node == start)
@@ -210,7 +334,70 @@ public static class NavRouter
         foreach (int node in nodes)
             path.Add(grid.Position(node));
 
-        var legs = new List<Vector3> { path[0] };
+        // The walked stretches between leaps are straightened on their own, so a
+        // leap's takeoff and landing stay where the search found them.
+        var corners = new List<int>();
+        var leaps = new List<(int Corner, NavLeap Leap)>();
+        int stretchStart = 0;
+        for (int index = 1; index <= nodes.Count; index++)
+        {
+            NavLeap leap = default;
+            bool leapsHere = index < nodes.Count
+                && search.LeapInto.TryGetValue(nodes[index], out leap)
+                && leap.From == nodes[index - 1];
+            if (index < nodes.Count && !leapsHere)
+                continue;
+            List<int> stretch = nodes.GetRange(stretchStart, index - stretchStart);
+            List<int> stretchCorners = stretch.Count == 1
+                ? [stretch[0]]
+                : Straighten(grid, stretch, path.GetRange(stretchStart, index - stretchStart), avoided);
+            DropNeedlessCorners(grid, stretchCorners, avoided);
+            WidenCorners(grid, stretchCorners, avoided);
+            DropNeedlessCorners(grid, stretchCorners, avoided);
+            corners.AddRange(stretchCorners);
+            if (leapsHere)
+                leaps.Add((corners.Count, leap));
+            stretchStart = index;
+        }
+        var legs = new List<Vector3>(corners.Count);
+        foreach (int corner in corners)
+            legs.Add(grid.Position(corner));
+
+        float offNode = Vector2.Distance(new Vector2(from.X, from.Y), new Vector2(path[0].X, path[0].Y));
+        int inserted = 0;
+        if (legs.Count > 1 && offNode > StartOffNode && !grid.CanSweep(from, legs[1]))
+        {
+            legs.Insert(0, from);
+            inserted = 1;
+        }
+
+        float length = 0f;
+        for (int index = 1; index < legs.Count; index++)
+            length += Vector3.Distance(legs[index - 1], legs[index]);
+        var route = new NavRoute(
+            NavRouteOutcome.Routed,
+            reason,
+            path,
+            legs,
+            length,
+            search.Expansions,
+            clock.Elapsed.TotalMilliseconds)
+        {
+            Leaps = [.. leaps.Select(pair => new NavRouteLeap(pair.Corner + inserted, pair.Leap.Power, pair.Leap.Run))],
+        };
+        float untidiness = Untidiness(grid, corners);
+        foreach ((_, NavLeap leap) in leaps)
+            untidiness += LeapCost + (leap.Power * LeapPowerCost);
+        return (route, untidiness);
+    }
+
+    /// <summary>
+    /// The nodes a route's straight legs join: from the start, each leg runs to the
+    /// farthest node along the path a body can walk to in a straight line.
+    /// </summary>
+    private static List<int> Straighten(NavGrid grid, List<int> nodes, List<Vector3> path, IReadOnlyList<NavAvoidance> avoided)
+    {
+        var corners = new List<int> { nodes[0] };
         int anchor = 0;
         while (anchor < nodes.Count - 1)
         {
@@ -221,46 +408,212 @@ public static class NavRouter
             {
                 furthest++;
             }
-            legs.Add(path[furthest]);
+            corners.Add(nodes[furthest]);
             anchor = furthest;
         }
-
-        float offNode = Vector2.Distance(new Vector2(from.X, from.Y), new Vector2(path[0].X, path[0].Y));
-        if (legs.Count > 1 && offNode > StartOffNode && !grid.CanSweep(from, legs[1]))
-            legs.Insert(0, from);
-
-        float length = 0f;
-        for (int index = 1; index < legs.Count; index++)
-            length += Vector3.Distance(legs[index - 1], legs[index]);
-        return new NavRoute(
-            NavRouteOutcome.Routed,
-            reason,
-            path,
-            legs,
-            length,
-            expansions,
-            clock.Elapsed.TotalMilliseconds);
+        return corners;
     }
 
-    private static float WallCost(NavGrid grid, int node)
+    /// <summary>
+    /// Removes each corner whose neighbours a body can walk between in a straight
+    /// line keeping as far from walls and ledges as the two legs through it did.
+    /// </summary>
+    private static void DropNeedlessCorners(NavGrid grid, List<int> corners, IReadOnlyList<NavAvoidance> avoided)
     {
-        float clearance = MathF.Min(grid.WallDistance(node), grid.BorderDistance(node) * grid.CellSize);
-        return clearance >= ComfortableClearance ? 0f : (ComfortableClearance - clearance) * 0.5f;
+        int index = 1;
+        while (index < corners.Count - 1)
+        {
+            int before = corners[index - 1];
+            int after = corners[index + 1];
+            float kept = MathF.Min(LegClearance(grid, before, corners[index]), LegClearance(grid, corners[index], after));
+            if (grid.CanWalkStraight(before, after, kept, BorderStepsFor(grid, kept))
+                && !PassesAvoided(grid.Position(before), grid.Position(after), avoided))
+            {
+                corners.RemoveAt(index);
+                index = Math.Max(1, index - 1);
+            }
+            else
+            {
+                index++;
+            }
+        }
     }
 
-    private static bool IsAvoided(Vector3 point, IReadOnlyList<NavAvoidance> avoided)
+    /// <summary>
+    /// Moves each corner to a nearby node on the same floor from which both of its
+    /// legs keep farther from walls and ledges, up to
+    /// <see cref="ComfortableLegClearance"/>, preferring the shortest such turn.
+    /// </summary>
+    private static void WidenCorners(NavGrid grid, List<int> corners, IReadOnlyList<NavAvoidance> avoided)
+    {
+        for (int index = 1; index < corners.Count - 1; index++)
+        {
+            int before = corners[index - 1];
+            int corner = corners[index];
+            int after = corners[index + 1];
+            float kept = MathF.Min(LegClearance(grid, before, corner), LegClearance(grid, corner, after));
+            if (kept + CornerGain > ComfortableLegClearance)
+                continue;
+
+            Vector3 at = grid.Position(corner);
+            Vector3 from = grid.Position(before);
+            Vector3 to = grid.Position(after);
+            (int centreX, int centreY) = grid.ColumnOf(corner);
+            int reach = (int)MathF.Ceiling(CornerShift / grid.CellSize);
+            var candidates = new List<(int Node, float Length)>();
+            for (int y = centreY - reach; y <= centreY + reach; y++)
+            {
+                for (int x = centreX - reach; x <= centreX + reach; x++)
+                {
+                    (int first, int count) = grid.NodesInColumn(x, y);
+                    for (int node = first; node < first + count; node++)
+                    {
+                        Vector3 there = grid.Position(node);
+                        if (node == corner
+                            || !grid.IsClear(node)
+                            || grid.WallDistance(node) < kept + CornerGain
+                            || MathF.Abs(there.Z - at.Z) > grid.Body.StepUpHeight
+                            || Vector2.Distance(new Vector2(there.X, there.Y), new Vector2(at.X, at.Y)) > CornerShift
+                            || IsAvoided(there, avoided, Nowhere))
+                        {
+                            continue;
+                        }
+                        candidates.Add((node, Vector3.Distance(from, there) + Vector3.Distance(there, to)));
+                    }
+                }
+            }
+            candidates.Sort(static (left, right) => left.Length.CompareTo(right.Length));
+
+            bool moved = false;
+            for (float wanted = ComfortableLegClearance; !moved && wanted >= kept + CornerGain; wanted -= CornerGain)
+            {
+                int border = BorderStepsFor(grid, wanted);
+                foreach ((int node, _) in candidates)
+                {
+                    if (grid.WallDistance(node) < wanted || grid.BorderDistance(node) < border)
+                        continue;
+                    Vector3 there = grid.Position(node);
+                    if (grid.CanWalkStraight(before, node, wanted, border)
+                        && grid.CanWalkStraight(node, after, wanted, border)
+                        && !PassesAvoided(from, there, avoided)
+                        && !PassesAvoided(there, to, avoided))
+                    {
+                        corners[index] = node;
+                        moved = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The farthest from walls and ledges, up to <see cref="ComfortableLegClearance"/>,
+    /// that a body walking straight between two nodes keeps.
+    /// </summary>
+    private static float LegClearance(NavGrid grid, int from, int to)
+    {
+        float low = grid.NearestWall;
+        float high = ComfortableLegClearance;
+        if (grid.CanWalkStraight(from, to, high, BorderStepsFor(grid, high)))
+            return high;
+        for (int halving = 0; halving < 5; halving++)
+        {
+            float middle = (low + high) * 0.5f;
+            if (grid.CanWalkStraight(from, to, middle, BorderStepsFor(grid, middle)))
+                low = middle;
+            else
+                high = middle;
+        }
+        return low;
+    }
+
+    /// <summary>
+    /// How untidy a route's legs are to walk, in meters: their length, with
+    /// <see cref="LegUntidiness"/> for each leg, <see cref="TurnUntidiness"/> for each
+    /// sharp turn, and <see cref="ScrapeUntidiness"/> for each square meter of
+    /// shortfall from <see cref="ComfortableLegClearance"/> along them.
+    /// </summary>
+    private static float Untidiness(NavGrid grid, List<int> corners)
+    {
+        float untidiness = LegUntidiness * (corners.Count - 1);
+        float sharp = MathF.Cos(SharpTurnDegrees * (MathF.PI / 180f));
+        for (int index = 1; index < corners.Count; index++)
+        {
+            Vector3 a = grid.Position(corners[index - 1]);
+            Vector3 b = grid.Position(corners[index]);
+            untidiness += Vector3.Distance(a, b) + (ScrapeUntidiness * Scrape(grid, corners[index - 1], corners[index]));
+            if (index + 1 >= corners.Count)
+                continue;
+            Vector3 c = grid.Position(corners[index + 1]);
+            var inbound = new Vector2(b.X - a.X, b.Y - a.Y);
+            var outbound = new Vector2(c.X - b.X, c.Y - b.Y);
+            if (inbound.LengthSquared() > 1e-6f
+                && outbound.LengthSquared() > 1e-6f
+                && Vector2.Dot(Vector2.Normalize(inbound), Vector2.Normalize(outbound)) < sharp)
+            {
+                untidiness += TurnUntidiness;
+            }
+        }
+        return untidiness;
+    }
+
+    /// <summary>
+    /// How much of a leg is walked nearer walls or ledges than
+    /// <see cref="ComfortableLegClearance"/>, in square meters: the shortfall at each
+    /// step along it, times the step.
+    /// </summary>
+    private static float Scrape(NavGrid grid, int from, int to)
+    {
+        float scrape = 0f;
+        foreach (int node in grid.NodesAlong(from, to))
+        {
+            float clearance = MathF.Min(grid.WallDistance(node), grid.BorderDistance(node) * grid.CellSize);
+            scrape += MathF.Max(0f, ComfortableLegClearance - clearance) * grid.CellSize;
+        }
+        return scrape;
+    }
+
+    /// <summary>How many steps from a ledge a body keeps when it keeps <paramref name="clearance"/> from it.</summary>
+    private static int BorderStepsFor(NavGrid grid, float clearance) =>
+        Math.Max(1, (int)MathF.Floor(clearance / grid.CellSize));
+
+    private static float WallCost(NavGrid grid, int node, SearchProfile profile)
+    {
+        if (profile.Weight <= 0f)
+            return 0f;
+        float clearance = MathF.Min(grid.WallDistance(node), grid.BorderDistance(node) * grid.CellSize);
+        return clearance >= profile.Clearance ? 0f : (profile.Clearance - clearance) * profile.Weight;
+    }
+
+    /// <summary>A point no step is taken from, for tests of avoided spots that allow no way out of them.</summary>
+    private static readonly Vector3 Nowhere = new(float.PositiveInfinity);
+
+    /// <summary>
+    /// Whether a step onto a point enters a spot a route keeps out of. A route that
+    /// starts in such a spot, as a walk that stopped against an object does, may
+    /// leave it: a step inside the spot counts only when it comes no farther from
+    /// the spot's middle than the point it was taken from.
+    /// </summary>
+    private static bool IsAvoided(Vector3 point, IReadOnlyList<NavAvoidance> avoided, Vector3 from)
     {
         foreach (NavAvoidance avoidance in avoided)
         {
-            float dx = point.X - avoidance.Centre.X;
-            float dy = point.Y - avoidance.Centre.Y;
-            if ((dx * dx) + (dy * dy) <= avoidance.Radius * avoidance.Radius
-                && MathF.Abs(point.Z - avoidance.Centre.Z) <= AvoidanceHeight)
-            {
-                return true;
-            }
+            float here = FlatDistanceSquared(point, avoidance.Centre);
+            if (here > avoidance.Radius * avoidance.Radius || MathF.Abs(point.Z - avoidance.Centre.Z) > AvoidanceHeight)
+                continue;
+            if (here > FlatDistanceSquared(from, avoidance.Centre))
+                continue;
+            return true;
         }
         return false;
+    }
+
+    private static float FlatDistanceSquared(Vector3 a, Vector3 b)
+    {
+        float dx = a.X - b.X;
+        float dy = a.Y - b.Y;
+        return (dx * dx) + (dy * dy);
     }
 
     private static bool PassesAvoided(Vector3 from, Vector3 to, IReadOnlyList<NavAvoidance> avoided)
@@ -275,11 +628,13 @@ public static class NavRouter
                 ? Math.Clamp(Vector2.Dot(centre - start, along) / lengthSquared, 0f, 1f)
                 : 0f;
             float height = from.Z + ((to.Z - from.Z) * t);
-            if (Vector2.Distance(centre, start + (along * t)) <= avoidance.Radius
-                && MathF.Abs(height - avoidance.Centre.Z) <= AvoidanceHeight)
-            {
-                return true;
-            }
+            float closest = Vector2.Distance(centre, start + (along * t));
+            if (closest > avoidance.Radius || MathF.Abs(height - avoidance.Centre.Z) > AvoidanceHeight)
+                continue;
+            float away = Vector2.Distance(centre, start);
+            if (away <= avoidance.Radius && closest >= away - 1e-3f)
+                continue;
+            return true;
         }
         return false;
     }
@@ -293,6 +648,147 @@ public static class NavRouter
 
     private static NavRoute Failed(NavRouteOutcome outcome, string reason, int expansions, Stopwatch clock) =>
         new(outcome, reason, [], [], 0f, expansions, clock.Elapsed.TotalMilliseconds);
+
+    private static NavRoute NoStart(Stopwatch clock) =>
+        Failed(NavRouteOutcome.NoStart, "no clear spot near the start can be walked to without passing a wall", 0, clock);
+
+    private static NavRoute SearchGaveUp(Search search, Stopwatch clock) =>
+        Failed(
+            NavRouteOutcome.NoPath,
+            $"the search gave up after {search.Expansions} expansions",
+            search.Expansions,
+            clock);
+
+    private static float Away(Vector3 point, Vector3 goal) =>
+        Vector2.Distance(new Vector2(point.X, point.Y), new Vector2(goal.X, goal.Y));
+
+    /// <summary>How far a point lies outside a grid's square, measured flat; zero inside it.</summary>
+    private static float DistanceBeyond(NavGrid grid, Vector3 point)
+    {
+        float dx = MathF.Max(0f, MathF.Max(grid.OriginX - point.X, point.X - (grid.OriginX + grid.Size)));
+        float dy = MathF.Max(0f, MathF.Max(grid.OriginY - point.Y, point.Y - (grid.OriginY + grid.Size)));
+        return MathF.Sqrt((dx * dx) + (dy * dy));
+    }
+
+    /// <summary>
+    /// A best-first expansion of the clear nodes reachable from a start, ordered
+    /// by the cost so far plus the distance left to a point.
+    /// </summary>
+    private sealed class Search
+    {
+        /// <summary>What <see cref="Run"/> returns once every reachable node has been expanded.</summary>
+        public const int Exhausted = -1;
+
+        /// <summary>What <see cref="Run"/> returns when it stops at <see cref="MaximumExpansions"/>.</summary>
+        public const int GaveUp = -2;
+
+        private readonly NavGrid _grid;
+        private readonly Vector3 _toward;
+        private readonly float _reach;
+        private readonly IReadOnlyList<NavAvoidance> _avoided;
+        private readonly SearchProfile _profile;
+        private readonly NavLeapFinder? _leaps;
+        private readonly float[] _cost;
+        private readonly PriorityQueue<int, float> _open = new();
+
+        public Search(
+            NavGrid grid,
+            int start,
+            Vector3 toward,
+            float reach,
+            IReadOnlyList<NavAvoidance> avoided,
+            SearchProfile profile,
+            NavLeapFinder? leaps)
+        {
+            _grid = grid;
+            _toward = toward;
+            _reach = reach;
+            _avoided = avoided;
+            _profile = profile;
+            _leaps = leaps;
+            _cost = new float[grid.NodeCount];
+            Array.Fill(_cost, float.PositiveInfinity);
+            Parent = new int[grid.NodeCount];
+            Closed = new bool[grid.NodeCount];
+            _cost[start] = 0f;
+            Parent[start] = start;
+            _open.Enqueue(start, Remaining(grid.Position(start), toward, reach));
+        }
+
+        public int[] Parent { get; }
+
+        /// <summary>The leap each node reached by one was last reached with.</summary>
+        public Dictionary<int, NavLeap> LeapInto { get; } = [];
+
+        /// <summary>The nodes expanded so far.</summary>
+        public bool[] Closed { get; }
+
+        public int Expansions { get; private set; }
+
+        /// <summary>Expands nodes until one is an end and returns it, or returns <see cref="Exhausted"/> or <see cref="GaveUp"/>.</summary>
+        public int Run(Func<int, bool> isEnd)
+        {
+            while (_open.TryDequeue(out int node, out _))
+            {
+                if (Closed[node])
+                    continue;
+                Closed[node] = true;
+                Expansions++;
+                if (isEnd(node))
+                    return node;
+                if (Expansions >= MaximumExpansions)
+                    return GaveUp;
+
+                Vector3 here = _grid.Position(node);
+                for (int direction = 0; direction < NavGrid.DirectionCount; direction++)
+                {
+                    int next = _grid.Link(node, direction);
+                    if (next < 0 || Closed[next] || !_grid.IsClear(next))
+                        continue;
+                    Vector3 there = _grid.Position(next);
+                    if (IsAvoided(there, _avoided, here))
+                        continue;
+                    float step = (_grid.CellSize * (direction < 4 ? 1f : DiagonalStep))
+                        + MathF.Abs(there.Z - here.Z)
+                        + WallCost(_grid, next, _profile);
+                    float total = _cost[node] + step;
+                    if (total >= _cost[next])
+                        continue;
+                    _cost[next] = total;
+                    Parent[next] = node;
+                    LeapInto.Remove(next);
+                    _open.Enqueue(next, total + Remaining(there, _toward, _reach));
+                }
+                if (_leaps is not null)
+                    RelaxLeaps(node, here);
+            }
+            return Exhausted;
+        }
+
+        private void RelaxLeaps(int node, Vector3 here)
+        {
+            foreach (NavLeap leap in _leaps!.From(node))
+            {
+                int next = leap.To;
+                if (Closed[next] || !_grid.IsClear(next))
+                    continue;
+                Vector3 there = _grid.Position(next);
+                if (IsAvoided(there, _avoided, here))
+                    continue;
+                float total = _cost[node]
+                    + Vector2.Distance(new Vector2(here.X, here.Y), new Vector2(there.X, there.Y))
+                    + MathF.Abs(there.Z - here.Z)
+                    + LeapCost
+                    + (leap.Power * LeapPowerCost);
+                if (total >= _cost[next])
+                    continue;
+                _cost[next] = total;
+                Parent[next] = node;
+                LeapInto[next] = leap;
+                _open.Enqueue(next, total + Remaining(there, _toward, _reach));
+            }
+        }
+    }
 
     /// <summary>
     /// Which nodes count as arriving at a goal: near enough to it, and able to

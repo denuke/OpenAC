@@ -5,6 +5,7 @@ using AcDream.Plugins.Agent.Contract;
 using AcDream.Plugins.Agent.Mcp.Tools;
 using AcDream.Plugins.Agent.Tests.Fakes;
 using AcDream.Plugins.Agent.Tests.Verbs;
+using AcDream.Plugins.Agent.Verbs;
 
 namespace AcDream.Plugins.Agent.Tests.Mcp;
 
@@ -25,6 +26,13 @@ public sealed class ReadToolsTests
     [InlineData("container", "{}", "loot list")]
     [InlineData("corpses", "{}", "loot corpses")]
     [InlineData("corpses", """{"range":12}""", "loot corpses 12")]
+    [InlineData("spells", """{"search":"bolt","limit":5}""", "spells bolt limit 5")]
+    [InlineData("inventory", """{"limit":3}""", "inventory limit 3")]
+    [InlineData("vendor", """{"limit":20}""", "vendor limit 20")]
+    [InlineData("container", """{"limit":2}""", "loot list limit 2")]
+    [InlineData("capabilities", "{}", "capabilities")]
+    [InlineData("capabilities", """{"guid":"  "}""", "capabilities")]
+    [InlineData("capabilities", """{"guid":"0x70000001"}""", "capabilities 0x70000001")]
     public async Task EachReadRunsItsLine(string tool, string arguments, string line)
     {
         using var harness = new McpToolHarness();
@@ -47,6 +55,11 @@ public sealed class ReadToolsTests
     [InlineData("spells", """{"search":"a\nsay hi"}""")]
     [InlineData("inventory", """{"search":7}""")]
     [InlineData("corpses", """{"range":0}""")]
+    [InlineData("spells", """{"limit":0}""")]
+    [InlineData("inventory", """{"limit":501}""")]
+    [InlineData("vendor", """{"limit":2.5}""")]
+    [InlineData("container", """{"limit":"all"}""")]
+    [InlineData("capabilities", """{"guid":"everything"}""")]
     public async Task BadArgumentsAreAnErrorAndRunNothing(string tool, string arguments)
     {
         using var harness = new McpToolHarness();
@@ -88,6 +101,53 @@ public sealed class ReadToolsTests
         Assert.False(record.TryGetProperty("schema", out _));
         Assert.Equal("Strength Self VI", Assert.Single(record.GetProperty("spells").GetProperty("value").EnumerateArray())
             .GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task ASpellListLongerThanItsLimitSaysHowManyMatched()
+    {
+        using var harness = new McpToolHarness();
+        harness.Host.FakeAutomation.FakeSpells.KnownSpells =
+        [
+            FakeSpells.Spell(1u, "Strength Self I"),
+            FakeSpells.Spell(2u, "Strength Self II"),
+            FakeSpells.Spell(3u, "Strength Self III"),
+            FakeSpells.Spell(4u, "Flame Bolt I", selfTargeted: false, beneficial: false),
+        ];
+
+        JsonElement record = McpToolHarness.Structured(await harness.CallAsync("spells",
+            new JsonObject { ["search"] = "strength", ["limit"] = 2 })).GetProperty("record");
+
+        Assert.Equal(3, record.GetProperty("matched").GetInt32());
+        Assert.Equal(2, record.GetProperty("shown").GetInt32());
+        Assert.Equal(1, record.GetProperty("beyondLimit").GetInt32());
+        Assert.Equal(2, record.GetProperty("spells").GetProperty("value").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task ASpellListWithNoLimitShowsTheDefaultRows()
+    {
+        using var harness = new McpToolHarness();
+        harness.Host.FakeAutomation.FakeSpells.KnownSpells = Enumerable.Range(1, CharacterReadVerbs.DefaultSpellRows + 7)
+            .Select(index => FakeSpells.Spell((uint)index, $"Spell {index:000}"))
+            .ToArray();
+
+        JsonElement record = McpToolHarness.Structured(await harness.CallAsync("spells", new JsonObject()))
+            .GetProperty("record");
+
+        Assert.Equal(CharacterReadVerbs.DefaultSpellRows + 7, record.GetProperty("matched").GetInt32());
+        Assert.Equal(CharacterReadVerbs.DefaultSpellRows, record.GetProperty("shown").GetInt32());
+    }
+
+    [Fact]
+    public async Task ACapabilitiesGuidThatIsNotAnIdSaysToLeaveItOut()
+    {
+        using var harness = new McpToolHarness();
+
+        JsonObject result = await harness.CallAsync("capabilities", new JsonObject { ["guid"] = "all" });
+
+        Assert.True(McpToolHarness.IsError(result));
+        Assert.Contains("leave it out", result.ToJsonString());
     }
 
     [Fact]

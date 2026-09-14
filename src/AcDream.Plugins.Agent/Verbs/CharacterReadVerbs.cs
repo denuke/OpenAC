@@ -15,6 +15,9 @@ internal sealed class CharacterReadVerbs : IVerbFamily
 {
     private const string NotInWorld = "no character is in the world";
 
+    /// <summary>Spells shown unless a read asks for more; a trained caster knows hundreds.</summary>
+    internal const int DefaultSpellRows = 50;
+
     private readonly IPluginHost _host;
     private readonly Publisher _publisher;
     private readonly StateTracker _state;
@@ -121,8 +124,9 @@ internal sealed class CharacterReadVerbs : IVerbFamily
     /// <summary>The known spells, narrowed to names containing the search text when one is given.</summary>
     private VerbResult Spells(CommandLine line)
     {
+        if (!RowLimits.TrySplit(line.Arguments, DefaultSpellRows, out string search, out int limit))
+            return VerbResult.Refused(RowLimits.Problem);
         IAutomationSurface automation = _host.Automation;
-        string search = line.Arguments;
         var fields = new JsonObject
         {
             ["id"] = line.Id,
@@ -136,13 +140,14 @@ internal sealed class CharacterReadVerbs : IVerbFamily
         else
         {
             IReadOnlyList<PluginSpellInfo> known = SpellLists.Known(automation.Spells);
+            PluginSpellInfo[] matching = known
+                .Where(spell => search.Length == 0 || spell.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
             var spells = new JsonArray();
-            foreach (PluginSpellInfo spell in known)
-            {
-                if (search.Length == 0 || spell.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
-                    spells.Add(SpellRow(automation, spell));
-            }
+            foreach (PluginSpellInfo spell in matching.Take(limit))
+                spells.Add(SpellRow(automation, spell));
             fields["known"] = Facts.Observed(known.Count);
+            RowLimits.Count(fields, matching.Length, spells.Count);
             fields["spells"] = Facts.Observed(spells);
         }
         _publisher.Publish(RecordKinds.Spells, fields);

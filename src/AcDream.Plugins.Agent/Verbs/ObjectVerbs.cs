@@ -102,6 +102,8 @@ internal sealed class ObjectVerbs : IVerbFamily
         IAutomationSurface automation = _host.Automation;
         if (!Guids.TryParse(line.Arguments, out uint id))
             return Refuse(line, "open needs a container id such as 0x70000001");
+        if (automation.Objects.TryGet(id, out PluginWorldObject value) && OpenProblem(value) is { } problem)
+            return Refuse(line, problem);
         long baseline = automation.Items.LastCompletion.Revision;
         PluginItemCommandResult result = automation.Loot.Open(id);
         if (!result.Accepted)
@@ -116,6 +118,14 @@ internal sealed class ObjectVerbs : IVerbFamily
                     : null);
         return VerbResult.Handled;
     }
+
+    /// <summary>Why using an object in the world would be refused, or null when it would be taken.</summary>
+    internal static string? WorldUseProblem(in PluginNavigationSnapshot self, in PluginWorldObject value) =>
+        self.IsAvailable && value.ObjectId == self.LocalObjectId ? "the character cannot use itself" : null;
+
+    /// <summary>Why opening an object would be refused, or null when it would be taken.</summary>
+    internal static string? OpenProblem(in PluginWorldObject value) =>
+        value.IsOpenable ? null : "it does not open the way a corpse or a chest does; 'use' is for anything else";
 
     private static Resolution? UseAnswered(IAutomationSurface automation, long baseline, uint id)
     {

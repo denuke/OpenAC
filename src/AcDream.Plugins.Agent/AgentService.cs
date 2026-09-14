@@ -84,6 +84,7 @@ internal sealed class AgentService : IDisposable
         Commands.Register(new VendorVerbs(host, Publisher, Outcomes, _clock));
         Commands.Register(new AttackVerbs(host, Publisher, Outcomes));
         Commands.Register(new LoginVerbs(host, Publisher, Outcomes));
+        Commands.Register(new CapabilityVerbs(host, Publisher, Outcomes));
         Context = new AgentContext(host, Commands, Ring, Outcomes, _clock, Publisher);
         Tools = McpTools.Create(Context);
         _endpoint = new McpEndpoint(_sessions, Tools);

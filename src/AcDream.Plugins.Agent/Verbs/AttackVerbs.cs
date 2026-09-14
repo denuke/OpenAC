@@ -8,13 +8,27 @@ using AcDream.Plugins.Agent.Intake;
 namespace AcDream.Plugins.Agent.Verbs;
 
 /// <summary>
-/// <c>attack [id] [power] [high|medium|low]</c>: one melee or missile attack on
-/// the given object or the current selection. The attack charges and is
-/// released once the power bar reaches the requested power, from 0 to 1.
+/// <c>attack [id] [power] [high|medium|low]</c>: a melee or missile attack on the
+/// given object or the current selection. The attack charges and is released
+/// once the power bar reaches the requested power, from 0 to 1. With the
+/// client's repeat attack on, further swings follow by themselves, and the
+/// outcome waits until they stop and counts them.
 /// </summary>
 internal sealed class AttackVerbs : IVerbFamily
 {
-    internal const double WindowSeconds = 10d;
+    /// <summary>How long an attack's swings are waited on to stop, repeats included.</summary>
+    internal const double WindowSeconds = 120d;
+
+    internal const string WrongStance =
+        "enter a melee or missile stance first: 'stance combat' with a melee or missile weapon wielded";
+
+    internal const string NotHostile = "the client does not count it as a hostile creature";
+
+    /// <summary>Why an attack on an object would be refused, or null when it would be taken.</summary>
+    internal static string? AttackProblem(PluginCombatMode stance, bool hostile) =>
+        stance is not (PluginCombatMode.Melee or PluginCombatMode.Missile)
+            ? WrongStance
+            : hostile ? null : NotHostile;
     internal const float DefaultPower = 0.5f;
     internal const string Ended = "ended";
     internal const string Refused = "refused";
@@ -73,7 +87,7 @@ internal sealed class AttackVerbs : IVerbFamily
         ICombatAutomation combat = automation.Combat;
         PluginCombatSnapshot before = combat.Snapshot;
         if (before.Mode is not (PluginCombatMode.Melee or PluginCombatMode.Missile))
-            return Refuse(line, "enter a melee or missile stance first, for example 'stance melee'", "wrong-mode");
+            return Refuse(line, WrongStance, "wrong-mode");
 
         long baseline = before.CompletionRevision;
         PluginCombatCommandResult result = combat.BeginPhysicalAttack(aimed, height, power);
@@ -96,15 +110,6 @@ internal sealed class AttackVerbs : IVerbFamily
         _outcomes.Watch(line.Id, line.Verb, RecordKinds.AttackOutcome, WindowSeconds, () =>
         {
             PluginCombatSnapshot now = combat.Snapshot;
-            if (now.CompletionRevision > baseline)
-            {
-                var fields = new JsonObject { ["weenieError"] = now.CompletionWeenieError };
-                return now.CompletionWeenieError == 0u
-                    ? new Resolution(Ended, null, fields)
-                    : new Resolution(Refused,
-                        $"the server refused the attack with error 0x{now.CompletionWeenieError:X4}",
-                        fields);
-            }
             if (!released
                 && (now.BuildInProgress || now.RequestInProgress)
                 && now.PowerBarLevel >= power)
@@ -112,7 +117,29 @@ internal sealed class AttackVerbs : IVerbFamily
                 combat.ReleasePhysicalAttack();
                 released = true;
             }
-            return null;
+            if (now.CompletionRevision <= baseline
+                || now.BuildInProgress
+                || now.RequestInProgress
+                || now.ServerResponsePending
+                || now.RepeatAttackInProgress)
+            {
+                return null;
+            }
+            long swings = now.CompletionRevision - baseline;
+            var fields = new JsonObject
+            {
+                ["swings"] = swings,
+                ["weenieError"] = now.CompletionWeenieError,
+            };
+            if (now.CompletionWeenieError == 0u)
+                return new Resolution(Ended, null, fields);
+            return swings == 1
+                ? new Resolution(Refused,
+                    $"the server refused the attack with error 0x{now.CompletionWeenieError:X4}",
+                    fields)
+                : new Resolution(Ended,
+                    $"the swings stopped on the server's answer, error 0x{now.CompletionWeenieError:X4}",
+                    fields);
         });
         return VerbResult.Handled;
     }

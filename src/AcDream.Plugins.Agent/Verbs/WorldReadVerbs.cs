@@ -16,6 +16,10 @@ namespace AcDream.Plugins.Agent.Verbs;
 internal sealed class WorldReadVerbs : IVerbFamily
 {
     internal const int ShownLimit = 40;
+
+    internal static readonly string UntracedBecause =
+        $"one answer traces only the nearest {Sight.TracedObjects} objects within "
+        + $"{Sight.TracedRangeMeters:0} m; inspect this one for its own";
     private const string NotInWorld = "no character is in the world";
 
     private readonly IPluginHost _host;
@@ -83,9 +87,7 @@ internal sealed class WorldReadVerbs : IVerbFamily
                 traced++;
             row["sight"] = trace
                 ? Sight.Trace(automation.Projectiles, placed.Value.ObjectId)
-                : Sight.Untraced(
-                    $"one answer traces only the nearest {Sight.TracedObjects} objects within "
-                    + $"{Sight.TracedRangeMeters:0} m; inspect this one for its own");
+                : Sight.Untraced(UntracedBecause);
             entities.Add(row);
         }
 
@@ -108,7 +110,7 @@ internal sealed class WorldReadVerbs : IVerbFamily
         return VerbResult.Handled;
     }
 
-    private static JsonObject Row(
+    internal static JsonObject Row(
         in PluginNavigationSnapshot self,
         in PluginWorldObject value,
         double distance)

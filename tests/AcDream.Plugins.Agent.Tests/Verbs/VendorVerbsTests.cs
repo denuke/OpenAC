@@ -14,6 +14,7 @@ public sealed class VendorVerbsTests
     private const uint Shopkeeper = 0x70000010u;
     private const uint TaperListing = 0x70000011u;
     private const uint Scarab = 0x50000300u;
+    private const uint Bread = 0x50000301u;
 
     [Fact]
     public void VendorListsTheOpenVendorsStock()
@@ -149,6 +150,87 @@ public sealed class VendorVerbsTests
         Assert.Equal("refused", verbs.Handle(Line($"sell 0x{Scarab:X8}")).Outcome);
         Assert.Empty(host.FakeAutomation.FakeItems.Calls);
     }
+
+    [Fact]
+    public void SellingAnItemTheClientHasNeverAppraisedAppraisesItFirstAndRefusesWhatCannotBeSold()
+    {
+        var (host, verbs, correlator, clock, ring) = Build(vendorOpen: true);
+        host.FakeAutomation.FakeItems.Owned.Add(Item(Bread, 1u, "Bread", stack: 1));
+        host.FakeAutomation.FakeObjects.Add(Carried(Bread, "Bread", lastIdTime: 0));
+
+        Assert.Equal("handled", verbs.Handle(Line($"sell 0x{Bread:X8}")).Outcome);
+        correlator.Tick(inWorld: true);
+        Assert.Equal([Bread], host.FakeAutomation.FakeObjects.Identifies);
+        Assert.Empty(host.FakeAutomation.FakeItems.Calls);
+        Assert.True(Records(ring, RecordKinds.InventoryAction).Single().GetProperty("appraisingFirst").GetBoolean());
+
+        host.FakeAutomation.FakeObjects.Add(Carried(Bread, "Bread", lastIdTime: 4200));
+        host.FakeAutomation.FakeItems.NextStatus = PluginItemCommandStatus.Refused;
+        host.FakeAutomation.FakeItems.NextNotice = "This item cannot be sold";
+        clock.Advance(VendorVerbs.CheckSeconds);
+        correlator.Tick(inWorld: true);
+
+        JsonElement outcome = Records(ring, RecordKinds.InventoryOutcome).Single();
+        Assert.Equal("refused", outcome.GetProperty("outcome").GetString());
+        Assert.Equal("This item cannot be sold", outcome.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public void SellingAnItemTheClientHasNeverAppraisedOffersItOnceTheAppraisalArrives()
+    {
+        var (host, verbs, correlator, clock, ring) = Build(vendorOpen: true);
+        host.FakeAutomation.FakeItems.Owned.Add(Item(Scarab, 400u, "Lead Scarab", stack: 1));
+        host.FakeAutomation.FakeObjects.Add(Carried(Scarab, "Lead Scarab", lastIdTime: 0));
+
+        verbs.Handle(Line($"sell 0x{Scarab:X8}"));
+        correlator.Tick(inWorld: true);
+        host.FakeAutomation.FakeObjects.Add(Carried(Scarab, "Lead Scarab", lastIdTime: 4200));
+        clock.Advance(VendorVerbs.CheckSeconds);
+        correlator.Tick(inWorld: true);
+        Assert.Equal([$"sell:{Scarab:X8}:0"], host.FakeAutomation.FakeItems.Calls);
+        Assert.Empty(Records(ring, RecordKinds.InventoryOutcome));
+
+        host.FakeAutomation.FakeItems.Owned.Clear();
+        clock.Advance(VendorVerbs.CheckSeconds);
+        correlator.Tick(inWorld: true);
+
+        Assert.Equal("completed", Records(ring, RecordKinds.InventoryOutcome).Single().GetProperty("outcome").GetString());
+    }
+
+    [Fact]
+    public void ASaleOffersTheItemAnywayWhenTheAppraisalNeverArrives()
+    {
+        var (host, verbs, correlator, clock, _) = Build(vendorOpen: true);
+        host.FakeAutomation.FakeItems.Owned.Add(Item(Scarab, 400u, "Lead Scarab", stack: 1));
+        host.FakeAutomation.FakeObjects.Add(Carried(Scarab, "Lead Scarab", lastIdTime: 0));
+
+        verbs.Handle(Line($"sell 0x{Scarab:X8}"));
+        correlator.Tick(inWorld: true);
+        clock.Advance(VendorVerbs.CheckSeconds);
+        correlator.Tick(inWorld: true);
+        Assert.Empty(host.FakeAutomation.FakeItems.Calls);
+
+        clock.Advance(VendorVerbs.AppraisalSeconds);
+        correlator.Tick(inWorld: true);
+
+        Assert.Equal([$"sell:{Scarab:X8}:0"], host.FakeAutomation.FakeItems.Calls);
+    }
+
+    [Fact]
+    public void SellingAnItemTheClientHasAppraisedOffersItAtOnce()
+    {
+        var (host, verbs, _, _, _) = Build(vendorOpen: true);
+        host.FakeAutomation.FakeItems.Owned.Add(Item(Scarab, 400u, "Lead Scarab", stack: 1));
+        host.FakeAutomation.FakeObjects.Add(Carried(Scarab, "Lead Scarab", lastIdTime: 4200));
+
+        verbs.Handle(Line($"sell 0x{Scarab:X8}"));
+
+        Assert.Empty(host.FakeAutomation.FakeObjects.Identifies);
+        Assert.Equal([$"sell:{Scarab:X8}:0"], host.FakeAutomation.FakeItems.Calls);
+    }
+
+    private static PluginWorldObject Carried(uint id, string name, int lastIdTime) =>
+        new(id, 1u, name, PluginObjectClass.Misc, 0x80u, Self, 0u) { IsOwned = true, LastIdTime = lastIdTime };
 
     private static PluginInventoryItem Item(uint id, uint weenieClassId, string name, int stack) =>
         new(id, weenieClassId, name, 1u, Self, 0u, 0u, 0u, 0u, 0u, 0u,

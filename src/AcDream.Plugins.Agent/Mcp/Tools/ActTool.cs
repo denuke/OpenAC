@@ -11,8 +11,8 @@ internal sealed class ActTool(AgentContext context) : IMcpTool
         "Do something (the only tool that sends)",
         "Runs one command line, such as 'use 0x70000010', 'buy prismatic taper 10', "
         + "'cast Strength Self VI', 'target nearest monster', 'run forward 60s', 'turn left 10', 'go to target', 'attack', "
-        + "'loot list' or 'say hello'. The read tools such as spells, inventory, vendor and nearby "
-        + "list the names and ids to use. Returns a handle and a status: pending is not done, so "
+        + "'loot list' or 'say hello'. The read tools such as capabilities, spells, inventory and vendor "
+        + "list the names, ids and lines to use. Returns a handle and a status: pending is not done, so "
         + "call outcome with the handle, or pass waitSeconds, to learn what actually happened. "
         + "A word no verb claims is said aloud as chat. This is the only tool that can make the "
         + "character act. At the character list, 'login <name>' enters the world, and 'logout' returns to the list.",
