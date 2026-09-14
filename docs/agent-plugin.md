@@ -63,7 +63,7 @@ another plugin's settings. Every other tool only reads.
 | `container` | The items in the open corpse or container. |
 | `corpses` | Corpses in range, and whether each has been opened. |
 | `characters` | The account's characters at the character list, and where the client stands in logging in. |
-| `settings` | The settings other plugins share, such as MossTank's options, monster rules, items and buffs, and how to change them. |
+| `settings` | The settings other plugins share, such as MossTank's options, monster rules, items, buffs and route, and how to change them. |
 | `configure` | Changes a plugin's shared settings with one JSON object, and answers with the parts it changed as the plugin now holds them. |
 
 `capabilities` answers what the character can do in one call. It lists everything around the
@@ -159,7 +159,17 @@ pending. Once nothing has needed the character for a moment, the walk plans
 again from where the character stands and goes on, however often that happens
 along the way. A walk takes the place of MossTank's own route navigation
 among its rules while that is off, so whatever MossTank ranks above navigation
-interrupts the walk and nothing ranked below it does. A walk to an object farther away than one planning grid reaches,
+interrupts the walk and nothing ranked below it does.
+With its route navigation on and **Walk legs with client pathing** checked on
+its Route tab, `walkLegs` in its settings, MossTank walks its own route this
+way. It asks for one walk at a time, to the next point or to the farthest of
+the points ahead that lie along a straight line, counts the points the walk
+goes by, and moves on when the walk arrives, so a fight that shoves the
+character off the route is walked back from wherever it ended. Where the route
+turns, the character stops for a moment before the next walk, as MossTank's own
+steering does. A leg the client cannot walk is skipped with a chat message, and
+while a walk MossTank did not ask for is under way, such as one from `go to`,
+the route waits for it to end. A walk to an object farther away than one planning grid reaches,
 about 270 m, goes in stages, each planned to the edge of a grid toward the
 object, up to 1000 m. Inside a sealed dungeon one grid covers the whole
 dungeon, however large, and serves every walk there; the largest take a few
@@ -192,12 +202,16 @@ client command, so a model can make the character speak.
 MossTank shares all of its own: whether its macro runs and what it is doing,
 every option by name, the advanced ones included, its monster rules in order
 with each rule's priority, actions, damage types and weapons, the items and
-consumables it uses, its extra and blacklisted buffs, and which profiles are
-loaded. `settings mosstank` answers with all of it and with `howToChange`, and
-`settings mosstank options` with one section. `configure mosstank <change>`
-takes one JSON object, such as
+consumables it uses, its extra and blacklisted buffs, its route with every
+waypoint, and which profiles are loaded. `settings mosstank` answers with all of
+it and with `howToChange`, and `settings mosstank options` with one section.
+`configure mosstank <change>` takes one JSON object, such as
 `{"options":{"EnableCombat":true},"macro":{"running":true}}`, and saves the
-change to the loaded profile as MossTank's own panel does. A change wrong in any
+change to the loaded profile as MossTank's own panel does. A route is replaced
+whole, its points written the way `/loc` writes them, with pauses in seconds
+and chat lines between them, such as
+`{"route":{"waypoints":[{"point":"0xA9B40019 [84 7.1 94]"},{"pause":5},{"chat":"/say hi"}],"mode":"Circular","walkLegs":true,"enabled":true}}`.
+A change wrong in any
 part changes nothing and is refused with every reason. An applied change answers
 with the parts it touched as MossTank now holds them, so a range MossTank kept
 within its limits shows the value it kept.
