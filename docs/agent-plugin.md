@@ -169,7 +169,8 @@ character off the route is walked back from wherever it ended. Where the route
 turns, the character stops for a moment before the next walk, as MossTank's own
 steering does. A leg the client cannot walk is skipped with a chat message, and
 while a walk MossTank did not ask for is under way, such as one from `go to`,
-the route waits for it to end. A walk to an object farther away than one planning grid reaches,
+the route waits for it to end. Doors on the legs the client walks are opened by
+the walk, not by MossTank's OpenDoors. A walk to an object farther away than one planning grid reaches,
 about 270 m, goes in stages, each planned to the edge of a grid toward the
 object, up to 1000 m. Inside a sealed dungeon one grid covers the whole
 dungeon, however large, and serves every walk there; the largest take a few
@@ -212,7 +213,9 @@ whole, its points written the way `/loc` writes them, with pauses in seconds
 and chat lines between them, such as
 `{"route":{"waypoints":[{"point":"0xA9B40019 [84 7.1 94]"},{"pause":5},{"chat":"/say hi"}],"mode":"Circular","walkLegs":true,"enabled":true}}`.
 Every position the agent reports, the character's own and each object's, carries
-`loc` in that form, so a model can build a route from where it has stood.
+`loc` in that form, so a model can build a route from where it has stood. A route
+loaded from a VTank file keeps no cells, so its points read as `0x00000000` with
+the point measured from the corner of the map; they walk and write back the same.
 A change wrong in any
 part changes nothing and is refused with every reason. An applied change answers
 with the parts it touched as MossTank now holds them, so a range MossTank kept
