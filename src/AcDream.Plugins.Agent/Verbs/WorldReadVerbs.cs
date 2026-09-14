@@ -91,28 +91,50 @@ internal sealed class WorldReadVerbs : IVerbFamily
         {
             string kind = KindWord(place.Kind);
             kinds[kind] = kinds.TryGetValue(kind, out int seen) ? seen + 1 : 1;
-            (_visited.IsNear(place.Position, place.WidthMeters / 2d) ? visited : unvisited).Add(place);
+            bool been = place.Kind switch
+            {
+                PluginPlaceKind.Landblock => _visited.HasBeenIn(place.LandblockId),
+                PluginPlaceKind.Building => _visited.IsNear(place.Position, BuildingNearMeters),
+                _ => _visited.IsNear(place.Position, place.WidthMeters / 2d),
+            };
+            (been ? visited : unvisited).Add(place);
         }
+        PluginNavigationPosition here = self.Position;
+        double Nearness(PluginNavigationPlace place) =>
+            float.IsFinite(place.WalkMeters) ? place.WalkMeters : Geometry.DistanceMeters(here, place.Position);
+        PluginNavigationPlace[] ordered = [.. unvisited.OrderBy(Nearness), .. visited.OrderBy(Nearness)];
         var rows = new JsonArray();
-        for (int index = 0; index < unvisited.Count + visited.Count && rows.Count < limit; index++)
+        for (int index = 0; index < ordered.Length && rows.Count < limit; index++)
         {
-            bool been = index >= unvisited.Count;
-            PluginNavigationPlace place = been ? visited[index - unvisited.Count] : unvisited[index];
-            rows.Add(new JsonObject
+            PluginNavigationPlace place = ordered[index];
+            var row = new JsonObject
             {
                 ["kind"] = KindWord(place.Kind),
-                ["notes"] = Notes(self.Position, place),
-                ["visited"] = been,
+                ["notes"] = Notes(here, place),
+                ["visited"] = index >= unvisited.Count,
                 ["place"] = Coordinates.DescribePlace(place.Position),
-                ["walk"] = Math.Round(place.WalkMeters, 1),
-                ["distance"] = Math.Round(Geometry.DistanceMeters(self.Position, place.Position), 1),
-                ["bearing"] = Math.Round(Geometry.BearingDegrees(self.Position, place.Position), 0),
-                ["area"] = Math.Round(place.AreaSquareMeters, 0),
-                ["width"] = Math.Round(place.WidthMeters, 1),
-                ["rise"] = Math.Round(place.RiseMeters, 1),
-                ["exits"] = place.Exits,
-                ["go"] = GoLine(place.Position),
-            });
+                ["walk"] = float.IsFinite(place.WalkMeters) ? Math.Round(place.WalkMeters, 1) : null,
+                ["distance"] = Math.Round(Geometry.DistanceMeters(here, place.Position), 1),
+                ["bearing"] = Math.Round(Geometry.BearingDegrees(here, place.Position), 0),
+            };
+            switch (place.Kind)
+            {
+                case PluginPlaceKind.Building:
+                    row["doorways"] = place.Exits;
+                    break;
+                case PluginPlaceKind.Landblock:
+                    break;
+                default:
+                    row["area"] = Math.Round(place.AreaSquareMeters, 0);
+                    row["width"] = Math.Round(place.WidthMeters, 1);
+                    row["rise"] = Math.Round(place.RiseMeters, 1);
+                    row["exits"] = place.Exits;
+                    break;
+            }
+            if (place.LandblockId != 0u)
+                row["landblock"] = $"0x{place.LandblockId >> 16:X4}";
+            row["go"] = GoLine(place.Position);
+            rows.Add(row);
         }
         var counts = new JsonObject();
         foreach (KeyValuePair<string, int> pair in kinds)
@@ -149,23 +171,48 @@ internal sealed class WorldReadVerbs : IVerbFamily
     /// <summary>A place whose floor rises at least this far is a stair or ramp.</summary>
     internal const double StairRiseMeters = 2d;
 
+    /// <summary>How near a building's origin the character must have stood for the building to count as visited.</summary>
+    internal const double BuildingNearMeters = 10d;
+
     internal static string KindWord(PluginPlaceKind kind) => kind switch
     {
         PluginPlaceKind.Passage => "passage",
         PluginPlaceKind.Open => "open ground",
+        PluginPlaceKind.Building => "building",
+        PluginPlaceKind.Landblock => "landblock",
         _ => "room",
     };
+
+    /// <summary>Which way a landblock lies from the one a cell is in: north, south-east and so on.</summary>
+    internal static string DirectionWord(uint fromCellId, uint landblockId)
+    {
+        int east = (int)((landblockId >> 24) & 0xFFu) - (int)((fromCellId >> 24) & 0xFFu);
+        int north = (int)((landblockId >> 16) & 0xFFu) - (int)((fromCellId >> 16) & 0xFFu);
+        string northSouth = north > 0 ? "north" : north < 0 ? "south" : string.Empty;
+        string eastWest = east > 0 ? "east" : east < 0 ? "west" : string.Empty;
+        return northSouth.Length > 0 && eastWest.Length > 0 ? $"{northSouth}-{eastWest}" : northSouth + eastWest;
+    }
 
     /// <summary>What sets a place apart at a glance: a dead end or a junction, a stair or ramp, or floor above or below the character's.</summary>
     internal static JsonArray Notes(in PluginNavigationPosition self, in PluginNavigationPlace place)
     {
         var notes = new JsonArray();
-        if (place.Exits == 1)
-            notes.Add("dead end");
-        else if (place.Exits >= 3)
-            notes.Add("junction");
-        if (place.RiseMeters >= StairRiseMeters)
-            notes.Add("stairs or ramp");
+        if (place.Kind == PluginPlaceKind.Landblock)
+        {
+            notes.Add(DirectionWord(self.CellId, place.LandblockId));
+            if (place.IsWater)
+                notes.Add("water");
+            return notes;
+        }
+        if (place.Kind != PluginPlaceKind.Building)
+        {
+            if (place.Exits == 1)
+                notes.Add("dead end");
+            else if (place.Exits >= 3)
+                notes.Add("junction");
+            if (place.RiseMeters >= StairRiseMeters)
+                notes.Add("stairs or ramp");
+        }
         double up = (place.Position.Elevation - self.Elevation) * 240d;
         if (up >= OtherLevelMeters)
             notes.Add("above");

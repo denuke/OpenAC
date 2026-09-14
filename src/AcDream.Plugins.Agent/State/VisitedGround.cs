@@ -15,13 +15,19 @@ internal sealed class VisitedGround
     internal const int MaximumPatches = 200_000;
 
     private readonly HashSet<(long X, long Y, long Z)> _patches = [];
+    private readonly HashSet<uint> _landblocks = [];
 
     internal void Note(in PluginNavigationPosition position)
     {
         if (_patches.Count >= MaximumPatches)
             _patches.Clear();
         _patches.Add(PatchOf(position));
+        if (position.CellId != 0u)
+            _landblocks.Add(position.CellId >> 16);
     }
+
+    /// <summary>Whether the character has stood in a landblock, named by an id such as 0xA9B5FFFF.</summary>
+    internal bool HasBeenIn(uint landblockId) => _landblocks.Contains(landblockId >> 16);
 
     /// <summary>
     /// Whether the character has stood within about <paramref name="radiusMeters"/> of a

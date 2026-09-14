@@ -272,6 +272,39 @@ public sealed class WorldReadVerbsTests
         Assert.NotEqual("handled", verbs.Handle(Line("explore nowhere")).Outcome);
     }
 
+    [Fact]
+    public void ExploreOutdoorsGivesBuildingsAndTheLandblocksBesideTheCharacters()
+    {
+        var (host, verbs, ring) = Build();
+        host.FakeAutomation.FakeNavigation.PlacesReport = new PluginPlacesReport(
+            PluginPlacesState.Ready,
+            [
+                new PluginNavigationPlace(new PluginNavigationPosition(0u, 0.4d, 0.4d, 0d, 0f, true), float.NaN, PluginPlaceKind.Landblock, 36864f, 192f, 0f, 0)
+                {
+                    LandblockId = 0xAAB5FFFFu,
+                    IsWater = true,
+                },
+                new PluginNavigationPlace(new PluginNavigationPosition(0u, 0.05d, 0d, 0d, 0f, true), float.NaN, PluginPlaceKind.Building, 0f, 0f, 0f, 2)
+                {
+                    LandblockId = 0xA9B4FFFFu,
+                },
+            ],
+            InDungeon: false,
+            "found")
+        {
+            From = new PluginNavigationPosition(0u, 0d, 0d, 0d, 0f, true),
+        };
+
+        Assert.Equal("handled", verbs.Handle(Line("explore")).Outcome);
+
+        JsonElement[] places = [.. Latest(ring, RecordKinds.Explore).GetProperty("places").EnumerateArray()];
+        Assert.Equal(["building", "landblock"], places.Select(place => place.GetProperty("kind").GetString()));
+        Assert.Equal(2, places[0].GetProperty("doorways").GetInt32());
+        Assert.Equal(JsonValueKind.Null, places[0].GetProperty("walk").ValueKind);
+        Assert.Equal("0xAAB5", places[1].GetProperty("landblock").GetString());
+        Assert.Equal(["north-east", "water"], places[1].GetProperty("notes").EnumerateArray().Select(note => note.GetString()));
+    }
+
     private static PluginWorldObject Placed(
         uint id,
         string name,
