@@ -101,9 +101,40 @@ public sealed class NavGeometry
     {
         ArgumentNullException.ThrowIfNull(engine);
         IReadOnlyList<uint> landblocks = OverlappingLandblocks(engine, originX, originY, size);
-        if (landblocks.Count == 0)
-            return null;
+        return landblocks.Count == 0
+            ? null
+            : Capture(engine, originX, originY, size, landblocks, includeTerrain: true);
+    }
 
+    /// <summary>
+    /// Copies the fixed collision geometry of a sealed dungeon over a square
+    /// region: the cells and placed objects of the one landblock that holds the
+    /// dungeon, without terrain, since nothing in a sealed dungeon stands on it.
+    /// Returns null when that landblock is not resident. Call it on the thread
+    /// that owns the physics world.
+    /// </summary>
+    public static NavGeometry? CaptureDungeon(
+        PhysicsEngine engine,
+        uint landblockId,
+        float originX,
+        float originY,
+        float size)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        uint canonical = (landblockId & 0xFFFF0000u) | 0xFFFFu;
+        return engine.TryGetLandblockCollision(canonical, out _, out _, out _)
+            ? Capture(engine, originX, originY, size, [canonical], includeTerrain: false)
+            : null;
+    }
+
+    private static NavGeometry Capture(
+        PhysicsEngine engine,
+        float originX,
+        float originY,
+        float size,
+        IReadOnlyList<uint> landblocks,
+        bool includeTerrain)
+    {
         var terrains = new List<NavTerrain>();
         var cellTriangles = new List<NavTriangle>();
         var objectTriangles = new List<NavTriangle>();
@@ -115,7 +146,8 @@ public sealed class NavGeometry
                 out TerrainSurface terrain,
                 out IReadOnlyList<CellSurface> cells,
                 out Vector3 offset);
-            terrains.Add(new NavTerrain(terrain, offset.X, offset.Y));
+            if (includeTerrain)
+                terrains.Add(new NavTerrain(terrain, offset.X, offset.Y));
             foreach (CellSurface cell in cells)
             {
                 foreach ((Vector3 a, Vector3 b, Vector3 c) in cell.Triangles)
@@ -124,8 +156,6 @@ public sealed class NavGeometry
             AddBuildingShells(engine.DataCache, landblockId, objectTriangles);
             owners.UnionWith(engine.ShadowObjects.CaptureStaticOwnersForLandblock(landblockId));
         }
-        if (landblocks.Count == 0)
-            return null;
 
         var cylinders = new List<NavCylinder>();
         foreach (ShadowEntry entry in engine.ShadowObjects.AllEntriesForDebug())

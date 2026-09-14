@@ -428,6 +428,34 @@ public sealed class NavGridTests
         Assert.Null(NavGeometry.Capture(engine, 400f, -340f, 64f));
     }
 
+    [Fact]
+    public void ADungeonIsCapturedFromItsOwnLandblockWithoutTerrain()
+    {
+        var engine = new PhysicsEngine();
+        var hall = new CellSurface(
+            0x00190100u,
+            new Dictionary<ushort, Vector3>
+            {
+                [0] = new(70f, -330f, 6f),
+                [1] = new(110f, -330f, 6f),
+                [2] = new(110f, -290f, 6f),
+                [3] = new(70f, -290f, 6f),
+            },
+            [[0, 1, 2, 3]]);
+        engine.AddLandblock(0x0019FFFFu, new TerrainSurface(new byte[81], new float[256]), [hall], [], 0f, 0f);
+        engine.AddLandblock(0x0018FFFFu, new TerrainSurface(new byte[81], new float[256]), [], [], 0f, -384f);
+
+        NavGeometry? around = NavGeometry.Capture(engine, 60f, -340f, 64f);
+        NavGeometry? dungeon = NavGeometry.CaptureDungeon(engine, 0x00190100u, 60f, -340f, 64f);
+
+        Assert.Equal([0x0018FFFFu, 0x0019FFFFu], around!.LandblockIds.Order());
+        Assert.NotEmpty(around.Terrains);
+        Assert.Equal([0x0019FFFFu], dungeon!.LandblockIds);
+        Assert.Empty(dungeon.Terrains);
+        Assert.Equal(2, dungeon.CellTriangles.Count);
+        Assert.Null(NavGeometry.CaptureDungeon(engine, 0x12340100u, 60f, -340f, 64f));
+    }
+
     private static float DistanceToSegment(Vector2 point, Vector3 from, Vector3 to)
     {
         var start = new Vector2(from.X, from.Y);
