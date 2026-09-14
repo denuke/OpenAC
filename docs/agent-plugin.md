@@ -209,13 +209,11 @@ it and with `howToChange`, and `settings mosstank options` with one section.
 `configure mosstank <change>` takes one JSON object, such as
 `{"options":{"EnableCombat":true},"macro":{"running":true}}`, and saves the
 change to the loaded profile as MossTank's own panel does. A route is replaced
-whole, its points written the way `/loc` writes them, with pauses in seconds
-and chat lines between them, such as
-`{"route":{"waypoints":[{"point":"0xA9B40019 [84 7.1 94]"},{"pause":5},{"chat":"/say hi"}],"mode":"Circular","walkLegs":true,"enabled":true}}`.
-Every position the agent reports, the character's own and each object's, carries
-`loc` in that form, so a model can build a route from where it has stood. A route
-loaded from a VTank file keeps no cells, so its points read as `0x00000000` with
-the point measured from the corner of the map; they walk and write back the same.
+whole, its points in map coordinates, the way VTank's route files keep them, with
+pauses in seconds and chat lines between them, such as
+`{"route":{"waypoints":[{"point":{"northSouth":42.12345,"eastWest":33.61234,"elevation":0.39169}},{"pause":5},{"chat":"/say hi"}],"mode":"Circular","walkLegs":true,"enabled":true}}`.
+A position the agent reports, the character's own or an object's, can be given as
+a point as it is, so a model can build a route from where it has stood.
 A change wrong in any
 part changes nothing and is refused with every reason. An applied change answers
 with the parts it touched as MossTank now holds them, so a range MossTank kept
