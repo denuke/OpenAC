@@ -1293,6 +1293,28 @@ public sealed class NavigationTests
     }
 
     [Fact]
+    public void AFinishedRouteWalkedByTheClientStillLeavesDoorsAlone()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        automation.WorldObjects.Add(new PluginNavigationObject(55u, "Door", Meters(0d, 0.1d))
+        {
+            IsDoor = true,
+            IsOpen = false,
+            HasLockState = false,
+        });
+        (NavigationController controller, NavigationSettings settings) =
+            ClientLegs(automation, RouteMode.Once, Meters(0d, 1d));
+        settings.OpenDoors = true;
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.False(controller.Tick(0.05d, canAct: true));
+
+        Assert.Equal("Once route complete.", controller.Status);
+        Assert.Empty(automation.UsedObjects);
+        Assert.Empty(automation.GoTos);
+    }
+
+    [Fact]
     public void AClientThatCannotWalkLegsLeavesThePassToTheRulesBelow()
     {
         var automation = new FakeAutomation

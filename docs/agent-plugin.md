@@ -169,8 +169,8 @@ character off the route is walked back from wherever it ended. Where the route
 turns, the character stops for a moment before the next walk, as MossTank's own
 steering does. A leg the client cannot walk is skipped with a chat message, and
 while a walk MossTank did not ask for is under way, such as one from `go to`,
-the route waits for it to end. Doors on the legs the client walks are opened by
-the walk, not by MossTank's OpenDoors. A walk to an object farther away than one planning grid reaches,
+the route waits for it to end. With `walkLegs` on, doors are opened by the walks,
+and MossTank's OpenDoors stands aside. A walk to an object farther away than one planning grid reaches,
 about 270 m, goes in stages, each planned to the edge of a grid toward the
 object, up to 1000 m. Inside a sealed dungeon one grid covers the whole
 dungeon, however large, and serves every walk there; the largest take a few
