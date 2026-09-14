@@ -23,6 +23,15 @@ internal static class Coordinates
         ["text"] = Text(position),
     };
 
+    /// <summary>A place given in map coordinates, which carries no cell, with how players write it.</summary>
+    internal static JsonObject DescribePlace(in PluginNavigationPosition position) => new()
+    {
+        ["northSouth"] = Math.Round(position.NorthSouth, Decimals),
+        ["eastWest"] = Math.Round(position.EastWest, Decimals),
+        ["elevation"] = Math.Round(position.Elevation, Decimals),
+        ["text"] = Text(position),
+    };
+
     /// <summary>Map coordinates the way players write them, such as <c>42.1N, 33.6E</c>.</summary>
     internal static string Text(in PluginNavigationPosition position) =>
         string.Create(
