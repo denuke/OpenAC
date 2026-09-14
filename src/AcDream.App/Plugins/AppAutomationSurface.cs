@@ -1665,7 +1665,8 @@ internal sealed class AppAutomationSurface
             ProjectNavigationPosition(current));
         value = EnrichNavigationObject(
             value,
-            runtime.InventoryOwner.Objects.Get(objectId));
+            runtime.InventoryOwner.Objects.Get(objectId),
+            record);
         return true;
     }
 
@@ -1712,7 +1713,8 @@ internal sealed class AppAutomationSurface
             nearestDistance = distance;
             nearest = EnrichNavigationObject(
                 new PluginNavigationObject(objectId, candidateName, candidate),
-                runtime.InventoryOwner.Objects.Get(objectId));
+                runtime.InventoryOwner.Objects.Get(objectId),
+                record);
             found = true;
         }
 
@@ -1744,7 +1746,8 @@ internal sealed class AppAutomationSurface
                     record.ServerGuid,
                     name,
                     ProjectNavigationPosition(position)),
-                item));
+                item,
+                record));
         }
         result.Sort(static (left, right) => left.ObjectId.CompareTo(right.ObjectId));
         return result;
@@ -2376,9 +2379,15 @@ internal sealed class AppAutomationSurface
         return result;
     }
 
+    /// <summary>
+    /// A navigation object with what the client knows of it as a door. A door stands open
+    /// when the world shows it passable, as it is drawn: its Open property comes with an
+    /// appraisal and does not follow the door opening and closing afterwards.
+    /// </summary>
     private static PluginNavigationObject EnrichNavigationObject(
         in PluginNavigationObject value,
-        ClientObject? item)
+        ClientObject? item,
+        RuntimeEntityRecord? record)
     {
         if (item is null)
             return value;
@@ -2388,11 +2397,14 @@ internal sealed class AppAutomationSurface
         bool hasLocked = item.Properties.Bools.TryGetValue(
             (uint)PropertyBool.Locked,
             out bool isLocked);
+        bool door = ((PublicWeenieFlags)(item.PublicWeenieBitfield ?? 0u)
+            & PublicWeenieFlags.Door) != 0;
         return value with
         {
-            IsDoor = ((PublicWeenieFlags)(item.PublicWeenieBitfield ?? 0u)
-                & PublicWeenieFlags.Door) != 0,
-            IsOpen = hasOpen && isOpen,
+            IsDoor = door,
+            IsOpen = door && record is not null
+                ? record.FinalPhysicsState.HasFlag(PhysicsStateFlags.Ethereal)
+                : hasOpen && isOpen,
             IsLocked = hasLocked && isLocked,
             HasLockState = hasOpen || hasLocked,
             LockDifficulty = item.Properties.GetInt(
