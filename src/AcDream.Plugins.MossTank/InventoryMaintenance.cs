@@ -277,8 +277,11 @@ internal sealed class InventoryMaintenanceController
             {
                 _ignored.Add(pending.SourceObjectId);
                 _ignored.Add(pending.TargetObjectId);
-                _host.Automation.Chat.PostSystemMessage(
-                    "[MossTank] Abandoned trying to stack/cram two bugged items.");
+                MossTankNotices.Announce(
+                    _host,
+                    MossTankNotices.ItemWarning,
+                    PluginNoticeSeverity.Warning,
+                    "Abandoned trying to stack/cram two bugged items.");
             }
         }
         else

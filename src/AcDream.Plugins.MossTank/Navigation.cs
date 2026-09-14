@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using System.Globalization;
 using AcDream.Plugin.Abstractions;
 
@@ -408,6 +409,21 @@ internal sealed class NavigationController
     private CombatSettings? _combatSettings;
     private bool _lowWaypointWarningPosted;
 
+    /// <summary>How long the route may have the character without reaching a waypoint before it is posted stuck.</summary>
+    internal const double StuckSeconds = 90d;
+
+    /// <summary>
+    /// Laps finished and waypoints of a once route done since the route was reset; seconds the
+    /// route has had the character without reaching a waypoint; and whether the route being
+    /// stuck, giving up on walked legs, and the client being unable to walk them have been posted.
+    /// </summary>
+    private int _laps;
+    private int _onceDone;
+    private double _sinceProgress;
+    private bool _stuckPosted;
+    private bool _stoppedPosted;
+    private bool _walkUnavailablePosted;
+
     internal void BindCombatModeGate(CombatModeGate gate, CombatSettings settings)
     {
         _combatModeGate = gate ?? throw new ArgumentNullException(nameof(gate));
@@ -426,8 +442,12 @@ internal sealed class NavigationController
         if (_combatSettings.IdlePeaceMode && !_lowWaypointWarningPosted)
         {
             _lowWaypointWarningPosted = true;
-            _host.Automation.Chat.PostSystemMessage(
-                "[MossTank] " + LowWaypointDistanceWarning);
+            MossTankNotices.Announce(
+                _host,
+                MossTankNotices.Misconfigured,
+                PluginNoticeSeverity.Warning,
+                LowWaypointDistanceWarning,
+                MossTankNotices.Problem(MossTankNotices.LowWaypointDistance));
         }
 
         // fd.cs:135 — the forced Magic push fires regardless of the setting.
@@ -446,7 +466,11 @@ internal sealed class NavigationController
         _status = $"Nav backwards is {_reverse}.";
     }
 
-    internal void ResetOncePerRunWarnings() => _lowWaypointWarningPosted = false;
+    internal void ResetOncePerRunWarnings()
+    {
+        _lowWaypointWarningPosted = false;
+        _walkUnavailablePosted = false;
+    }
 
     public void Reset()
     {
@@ -456,6 +480,11 @@ internal sealed class NavigationController
         _clientLegFailures = 0;
         _clientWalksOnePointAtATime = false;
         LastSkippedLeg = string.Empty;
+        _laps = 0;
+        _onceDone = 0;
+        _sinceProgress = 0d;
+        _stuckPosted = false;
+        _stoppedPosted = false;
         _identifyingDoorObjectId = 0u;
         _index = 0;
         _reverse = false;
@@ -516,6 +545,8 @@ internal sealed class NavigationController
             _status = "Navigation paused.";
             return false;
         }
+        if (_settings.Mode != RouteMode.Target && !_onceComplete && _settings.Waypoints.Count > 0)
+            NoteTimeWithoutProgress(elapsedSeconds);
 
         // With legs walked by the client, doors are the walks' to open: a walk opens the
         // doors on its way itself, and a second use would close a door again.
@@ -1266,16 +1297,22 @@ internal sealed class NavigationController
         AdvanceWaypoint();
     }
 
-    private void AdvanceWaypoint()
+    private void AdvanceWaypoint(bool skipped = false)
     {
         ClearAction();
         _checkpointElapsed = 0d;
+        _sinceProgress = 0d;
+        _stuckPosted = false;
         int count = _settings.Waypoints.Count;
         if (count == 0)
             return;
+        int reached = _index;
+        bool reversing = _reverse;
+        bool lapFinished = false;
         switch (_settings.Mode)
         {
             case RouteMode.Circular:
+                lapFinished = !_reverse ? _index == count - 1 : _index == 0;
                 _index = !_reverse
                     ? (_index + 1) % count
                     : (_index - 1 + count) % count;
@@ -1297,6 +1334,7 @@ internal sealed class NavigationController
                     {
                         _index = 0;
                         _reverse = false;
+                        lapFinished = true;
                     }
                 }
                 break;
@@ -1304,8 +1342,107 @@ internal sealed class NavigationController
                 _settings.Waypoints.RemoveAt(_index);
                 _index = 0;
                 _onceComplete = _settings.Waypoints.Count == 0;
+                _onceDone++;
                 break;
         }
+        PostProgress(reached, count, reversing, lapFinished, skipped);
+    }
+
+    /// <summary>
+    /// Posts the waypoint the route just reached or skipped with how far through its lap that
+    /// is, and the lap or the route's end when that came with it. A linear route's lap is out
+    /// and back; a once route's lap is the whole route.
+    /// </summary>
+    private void PostProgress(int reached, int count, bool reversing, bool lapFinished, bool skipped)
+    {
+        int waypoint;
+        int total;
+        int percent;
+        int? next;
+        switch (_settings.Mode)
+        {
+            case RouteMode.Once:
+                total = _onceDone + _settings.Waypoints.Count;
+                waypoint = _onceDone - 1;
+                percent = _onceDone * 100 / total;
+                next = _onceComplete ? null : waypoint + 1;
+                break;
+            case RouteMode.Linear:
+                total = count;
+                waypoint = reached;
+                percent = (reversing ? 2 * count - reached : reached + 1) * 100 / (2 * count);
+                next = _index;
+                break;
+            default:
+                total = count;
+                waypoint = reached;
+                percent = (reversing ? count - reached : reached + 1) * 100 / count;
+                next = _index;
+                break;
+        }
+        MossTankNotices.Post(
+            _host,
+            MossTankNotices.RouteWaypoint,
+            PluginNoticeSeverity.Info,
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"Waypoint {waypoint + 1} of {total} {(skipped ? "skipped" : "reached")}, {percent}% of lap {_laps + 1}."),
+            new JsonObject
+            {
+                ["waypoint"] = waypoint,
+                ["count"] = total,
+                ["percent"] = percent,
+                ["lap"] = _laps + 1,
+                ["next"] = next,
+                ["skipped"] = skipped,
+            });
+        if (lapFinished)
+        {
+            _laps++;
+            MossTankNotices.Post(
+                _host,
+                MossTankNotices.RouteLap,
+                PluginNoticeSeverity.Info,
+                string.Create(CultureInfo.InvariantCulture, $"Lap {_laps} of the route finished."),
+                new JsonObject { ["laps"] = _laps, ["count"] = total });
+        }
+        if (_onceComplete)
+        {
+            MossTankNotices.Post(
+                _host,
+                MossTankNotices.RouteFinished,
+                PluginNoticeSeverity.Info,
+                string.Create(CultureInfo.InvariantCulture, $"The route is finished: all {total} waypoints are done."),
+                new JsonObject { ["count"] = total });
+        }
+    }
+
+    /// <summary>
+    /// Counts the time the route has the character without reaching a waypoint, and posts the
+    /// route stuck once that passes <see cref="StuckSeconds"/>.
+    /// </summary>
+    private void NoteTimeWithoutProgress(double elapsedSeconds)
+    {
+        _sinceProgress += elapsedSeconds;
+        if (_stuckPosted || _sinceProgress < StuckSeconds)
+            return;
+        _stuckPosted = true;
+        int count = _settings.Waypoints.Count;
+        int waypoint = Math.Clamp(_index, 0, count - 1);
+        MossTankNotices.Post(
+            _host,
+            MossTankNotices.RouteStuck,
+            PluginNoticeSeverity.Warning,
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"The route has not reached waypoint {waypoint + 1} of {count} in {_sinceProgress:0} seconds."),
+            new JsonObject
+            {
+                ["waypoint"] = waypoint,
+                ["count"] = count,
+                ["seconds"] = Math.Round(_sinceProgress),
+                ["status"] = _status,
+            });
     }
 
     private void ClearAction()
@@ -1358,6 +1495,7 @@ internal sealed class NavigationController
         if (goal is null && underWay)
         {
             _status = "Waiting for a walk the route did not ask for to end.";
+            _sinceProgress = 0d;
             return true;
         }
 
@@ -1396,6 +1534,7 @@ internal sealed class NavigationController
             {
                 _clientLegFailures = 0;
                 _clientWalksOnePointAtATime = false;
+                _stoppedPosted = false;
             }
             StopClientWalk();
             AdvanceWaypoint();
@@ -1416,8 +1555,17 @@ internal sealed class NavigationController
             {
                 _clientLegFailures++;
                 LastSkippedLeg = $"Waypoint {_index + 1} could not be walked ({report.Reason ?? report.State.ToString()})";
-                _host.Automation.Chat.PostSystemMessage($"[MossTank] {LastSkippedLeg}; moving on to the next.");
-                AdvanceWaypoint();
+                MossTankNotices.Announce(
+                    _host,
+                    MossTankNotices.RouteSkipped,
+                    PluginNoticeSeverity.Warning,
+                    $"{LastSkippedLeg}; moving on to the next.",
+                    new JsonObject
+                    {
+                        ["waypoint"] = _index,
+                        ["reason"] = report.Reason ?? report.State.ToString(),
+                    });
+                AdvanceWaypoint(skipped: true);
                 return true;
             }
         }
@@ -1425,6 +1573,17 @@ internal sealed class NavigationController
         if (_clientLegFailures >= count)
         {
             _status = "No leg of the route could be walked; reset the route to try again.";
+            _sinceProgress = 0d;
+            if (!_stoppedPosted)
+            {
+                _stoppedPosted = true;
+                MossTankNotices.Announce(
+                    _host,
+                    MossTankNotices.RouteStopped,
+                    PluginNoticeSeverity.Error,
+                    _status,
+                    new JsonObject { ["count"] = count });
+            }
             return false;
         }
         RouteWaypoint target = _clientWalksOnePointAtATime ? waypoint : LegGoal(position, waypoint);
@@ -1434,6 +1593,16 @@ internal sealed class NavigationController
             _status = asked == PluginNavigationCommandStatus.Unavailable
                 ? "This client cannot walk route legs; turn off walking legs with the client."
                 : "The client refused the walk to the waypoint.";
+            if (asked == PluginNavigationCommandStatus.Unavailable && !_walkUnavailablePosted)
+            {
+                _walkUnavailablePosted = true;
+                MossTankNotices.Announce(
+                    _host,
+                    MossTankNotices.Misconfigured,
+                    PluginNoticeSeverity.Error,
+                    _status,
+                    MossTankNotices.Problem(MossTankNotices.WalkLegsUnavailable));
+            }
             return false;
         }
         _clientWalkGoal = target;

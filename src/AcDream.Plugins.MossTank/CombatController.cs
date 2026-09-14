@@ -201,7 +201,7 @@ internal sealed class CombatController
         if (Enabled)
         {
             Disable("Macro stopped");
-            _host.Automation.Chat.PostSystemMessage("[MossTank] Macro stopped.");
+            MossTankNotices.Announce(_host, MossTankNotices.MacroStopped, PluginNoticeSeverity.Info, "Macro stopped.");
             return;
         }
 
@@ -216,7 +216,7 @@ internal sealed class CombatController
         _combatPolicySuspended = !_settings.Enabled;
         _untilScan = 0d;
         Status = _settings.Enabled ? "Scanning for targets" : "Combat disabled";
-        _host.Automation.Chat.PostSystemMessage("[MossTank] Macro started.");
+        MossTankNotices.Announce(_host, MossTankNotices.MacroStarted, PluginNoticeSeverity.Info, "Macro started.");
     }
 
     public void SetPaused(bool paused)
@@ -808,7 +808,7 @@ internal sealed class CombatController
     {
         if (!_postedAttackWarnings.Add(text))
             return;
-        _host.Automation.Chat.PostSystemMessage("[MossTank] " + text);
+        MossTankNotices.Announce(_host, MossTankNotices.CombatWarning, PluginNoticeSeverity.Warning, text);
     }
 
     private readonly HashSet<string> _postedAttackWarnings =
@@ -2822,8 +2822,11 @@ internal sealed class CombatController
         PluginCombatCommandResult result =
             _host.Automation.Combat.DismissGhostTarget(objectId);
         string suffix = result.Accepted ? "deleted" : "ignored";
-        _host.Automation.Chat.PostSystemMessage(
-            $"[MossTank] Ghost target 0x{objectId:X8} {suffix}.");
+        MossTankNotices.Announce(
+            _host,
+            MossTankNotices.GhostTarget,
+            PluginNoticeSeverity.Info,
+            $"Ghost target 0x{objectId:X8} {suffix}.");
         // gj.cs:263-278 — ReleaseObject on the awaited target drops the
         // tracker to idle; deleting a ghost is our own version of that event.
         _castTracker.ResetForTarget(objectId);

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Nodes;
 using AcDream.Plugin.Abstractions;
 
 namespace AcDream.Plugins.MossTank;
@@ -7,6 +8,23 @@ namespace AcDream.Plugins.MossTank;
 internal static class MossTankProfileRecovery
 {
     internal static string Preserve(
+        IPluginHost host,
+        string family,
+        string key,
+        string? content,
+        Exception error)
+    {
+        string notice = Keep(host, family, key, content, error);
+        MossTankNotices.Post(
+            host,
+            MossTankNotices.ProfileRecovered,
+            PluginNoticeSeverity.Warning,
+            notice,
+            new JsonObject { ["family"] = family, ["key"] = key });
+        return notice;
+    }
+
+    private static string Keep(
         IPluginHost host,
         string family,
         string key,

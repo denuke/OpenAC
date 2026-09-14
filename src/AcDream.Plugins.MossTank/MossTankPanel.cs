@@ -4360,7 +4360,10 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
         if (!macroRunning || !_combatSettings.StopMacroOnDeath)
             return;
         SetMacroRunning(false);
-        Announce("Macro stopped because the character died.");
+        Announce(
+            MossTankNotices.CharacterDied,
+            PluginNoticeSeverity.Warning,
+            "Macro stopped because the character died.");
     }
 
     private bool _wasDeadForMacro;
@@ -4439,6 +4442,7 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
         ObserveCastSuspension(elapsedSeconds);
         _scheduler.ExternalSuspension = _prologueOwnsAction;
         _scheduler.Advance(elapsedSeconds);
+        NoteMacroState(_combat.Enabled, elapsedSeconds);
         if (double.IsFinite(elapsedSeconds) && elapsedSeconds > 0d)
             _walkClock += elapsedSeconds;
         if (_scheduler.LastExecutedRule?.Name == "Attack")
@@ -4587,7 +4591,7 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
                 ? _host.Automation.Items.CaptureOwnedItems()
                 : [],
             _buffSettings.BlacklistedSpellComponents,
-            text => Announce(text),
+            text => Announce(MossTankNotices.BuffWarning, PluginNoticeSeverity.Warning, text),
             static (_, _, _) => { });
         for (int attempt = 0; attempt < 100; attempt++)
         {

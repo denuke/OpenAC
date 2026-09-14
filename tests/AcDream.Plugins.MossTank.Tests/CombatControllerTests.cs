@@ -1873,7 +1873,8 @@ public sealed class CombatControllerTests
         settings.Rules.Add(new MonsterRule(
             "DEFAULT",
             new MonsterRuleActions { Flags = MonsterActionFlags.Attack }));
-        var controller = new CombatController(new FakeHost(surface), settings);
+        var host = new FakeHost(surface);
+        var controller = new CombatController(host, settings);
 
         controller.Toggle();
         for (int tick = 0; tick < 4; tick++)
@@ -1890,6 +1891,11 @@ public sealed class CombatControllerTests
         Assert.DoesNotContain("EnterDefaultMode", surface.CallLog);
         Assert.DoesNotContain("EnterMode:Melee", surface.CallLog);
         Assert.Equal(0, surface.BeginCount);
+        Assert.Equal("macro-started", host.FakeNotices.Posted[0].Kind);
+        PluginNotice problem = Assert.Single(host.FakeNotices.Posted, static notice => notice.Kind == "misconfigured");
+        Assert.Equal(PluginNoticeSeverity.Error, problem.Severity);
+        Assert.Equal(CombatModeGate.NoWandNotice, problem.Message);
+        Assert.Contains("\"no-casting-device\"", problem.DetailsJson, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -3109,6 +3115,8 @@ public sealed class CombatControllerTests
         public ISelectionService Selection { get; } = new FakeSelection();
         public IUiRegistry Ui => NoOpUiRegistry.Instance;
         public IAutomationSurface Automation => automation;
+        public RecordingNotices FakeNotices { get; } = new();
+        public IPluginNoticeBoard Notices => FakeNotices;
     }
 
     private sealed class FakeAutomation :
