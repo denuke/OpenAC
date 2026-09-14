@@ -286,8 +286,8 @@ internal sealed class NavigationSettings
     /// Whether the legs to point waypoints are walked by the client's own route
     /// planning instead of steered straight at each point: around walls and creatures,
     /// through doors, over drops and gaps, and on from wherever the character was
-    /// pushed. Points along a straight stretch are walked in one walk. Other waypoints
-    /// run as before.
+    /// pushed. Points along a straight stretch are walked in one walk, and doors on
+    /// those legs are left to the walk. Other waypoints run as before.
     /// </summary>
     public bool WalkLegsWithClient { get; set; }
 
@@ -506,10 +506,15 @@ internal sealed class NavigationController
 
         // A walk the client plans opens the doors on its way itself, and a second use
         // would close a door again.
-        if (_settings.WalkLegsWithClient && IsUnderWay(navigation.GoToReport.State))
+        if (_settings.WalkLegsWithClient
+            && (OnPointWaypoint() || IsUnderWay(navigation.GoToReport.State)))
+        {
             ClearDoor();
+        }
         else if (TickDoor(navigation, snapshot, elapsedSeconds))
+        {
             return true;
+        }
 
         if (_settings.Mode == RouteMode.Target)
             return TickFollow(navigation, snapshot);
@@ -1420,6 +1425,13 @@ internal sealed class NavigationController
         if (report.Sequence == _clientWalkSequence && IsUnderWay(report.State))
             _ = navigation.StopGoTo();
     }
+
+    /// <summary>Whether the route is on a point waypoint, whose leg the client walks when walking legs with the client.</summary>
+    private bool OnPointWaypoint() =>
+        _settings.Mode != RouteMode.Target
+        && !_onceComplete
+        && _settings.Waypoints.Count > 0
+        && _settings.Waypoints[Math.Clamp(_index, 0, _settings.Waypoints.Count - 1)].Type == RouteWaypointType.Point;
 
     private static bool IsUnderWay(PluginGoToState state) =>
         state is PluginGoToState.Planning or PluginGoToState.Walking or PluginGoToState.Waiting;

@@ -1264,25 +1264,32 @@ public sealed class NavigationTests
     }
 
     [Fact]
-    public void DoorsOnAClientWalkAreLeftToTheWalk()
+    public void DoorsOnALegTheClientWalksAreLeftToTheWalk()
     {
         var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
-        (NavigationController controller, NavigationSettings settings) =
-            ClientLegs(automation, RouteMode.Circular, Meters(0d, 20d), Meters(20d, 20d));
-        Assert.True(controller.Tick(0.05d, canAct: true));
-        automation.WalkIs(PluginGoToState.Walking);
-        settings.OpenDoors = true;
-        automation.WorldObjects.Add(new PluginNavigationObject(55u, "Dungeon Door", Meters(0d, 2d))
+        automation.WorldObjects.Add(new PluginNavigationObject(55u, "Door", Meters(0d, 0.1d))
+        {
+            IsDoor = true,
+            IsOpen = false,
+            HasLockState = false,
+        });
+        automation.WorldObjects.Add(new PluginNavigationObject(56u, "Door", Meters(0d, 3d))
         {
             IsDoor = true,
             IsOpen = false,
             HasLockState = true,
         });
+        (NavigationController controller, NavigationSettings settings) =
+            ClientLegs(automation, RouteMode.Circular, Meters(0d, 20d), Meters(20d, 20d));
+        settings.OpenDoors = true;
 
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        automation.WalkIs(PluginGoToState.Walking);
         Assert.True(controller.Tick(0.05d, canAct: true));
 
         Assert.Empty(automation.UsedObjects);
         Assert.Single(automation.GoTos);
+        Assert.DoesNotContain("door", controller.Status, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
