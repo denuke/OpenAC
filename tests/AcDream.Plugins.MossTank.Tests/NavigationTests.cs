@@ -1216,6 +1216,24 @@ public sealed class NavigationTests
     }
 
     [Fact]
+    public void AnUnwalkablePointBesideOneTheCharacterStandsAtIsNotAskedForForever()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        (NavigationController controller, _) = ClientLegs(automation, RouteMode.Circular, Meters(0d, 1d), Meters(0d, 45d));
+
+        for (int pass = 0; pass < 12; pass++)
+        {
+            controller.Tick(0.05d, canAct: true);
+            if (automation.GoToReport.State == PluginGoToState.Planning)
+                automation.WalkIs(PluginGoToState.NoRoute, "no spot within 10 m of the goal that the start can reach can see it");
+        }
+
+        Assert.Equal(2, automation.GoTos.Count);
+        Assert.Equal(2, automation.PostedSystemMessages.Count);
+        Assert.Contains("No leg of the route could be walked", controller.Status, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AFailedWalkPastPointsAlongALineIsAskedAgainOnePointAtATime()
     {
         var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };

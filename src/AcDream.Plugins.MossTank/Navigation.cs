@@ -1364,9 +1364,12 @@ internal sealed class NavigationController
         {
             if (!TryRegisterArrival())
                 return true;
+            if (goal is not null)
+            {
+                _clientLegFailures = 0;
+                _clientWalksOnePointAtATime = false;
+            }
             StopClientWalk();
-            _clientLegFailures = 0;
-            _clientWalksOnePointAtATime = false;
             AdvanceWaypoint();
             return true;
         }
