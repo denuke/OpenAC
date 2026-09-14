@@ -18,7 +18,7 @@ public sealed class McpToolsTests
         Assert.Equal(
             [
                 "act", "buffs", "capabilities", "characters", "configure", "container", "corpses", "equipment", "events",
-                "inspect", "inventory", "nearby", "observe", "outcome", "settings", "skills", "spells", "vendor",
+                "explore", "inspect", "inventory", "nearby", "observe", "outcome", "settings", "skills", "spells", "vendor",
             ],
             definitions.Select(tool => tool["name"]!.GetValue<string>()).Order(StringComparer.Ordinal));
         foreach (JsonObject tool in definitions)

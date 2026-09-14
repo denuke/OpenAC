@@ -11,7 +11,8 @@ namespace AcDream.Plugins.Agent.Verbs;
 /// <summary>
 /// <c>nearby</c> and <c>inspect</c>: what is around the character and what the
 /// client holds about one object, each with a sight verdict for an arc spell, a
-/// war bolt and an arrow. Neither sends anything to the server.
+/// war bolt and an arrow; and <c>explore</c>: spots the character can walk to. None
+/// sends anything to the server.
 /// </summary>
 internal sealed class WorldReadVerbs : IVerbFamily
 {
@@ -22,21 +23,173 @@ internal sealed class WorldReadVerbs : IVerbFamily
         + $"{Sight.TracedRangeMeters:0} m; inspect this one for its own";
     private const string NotInWorld = "no character is in the world";
 
+    /// <summary>How many spots one <c>explore</c> answer shows unless asked for more.</summary>
+    internal const int ExploreShown = 12;
+
     private readonly IPluginHost _host;
     private readonly Publisher _publisher;
+    private readonly VisitedGround _visited;
 
-    internal WorldReadVerbs(IPluginHost host, Publisher publisher)
+    internal WorldReadVerbs(IPluginHost host, Publisher publisher, VisitedGround? visited = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(publisher);
         _host = host;
         _publisher = publisher;
+        _visited = visited ?? new VisitedGround();
     }
 
-    public IReadOnlyCollection<string> ReservedWords { get; } = ["nearby", "inspect"];
+    public IReadOnlyCollection<string> ReservedWords { get; } = ["nearby", "inspect", "explore"];
 
-    public VerbResult Handle(CommandLine line) =>
-        line.Verb == "nearby" ? Nearby(line) : Inspect(line);
+    public VerbResult Handle(CommandLine line) => line.Verb switch
+    {
+        "nearby" => Nearby(line),
+        "explore" => Explore(line),
+        _ => Inspect(line),
+    };
+
+    /// <summary>
+    /// The places the character can walk to, from the client's navigation mesh: those it has
+    /// not stood near first, then those it has, each nearest walk first, with the line that
+    /// walks there.
+    /// </summary>
+    private VerbResult Explore(CommandLine line)
+    {
+        int limit = ExploreShown;
+        string[] words = line.Arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        for (int index = 0; index < words.Length; index++)
+        {
+            if (words[index].Equals("limit", StringComparison.OrdinalIgnoreCase)
+                && index + 1 < words.Length
+                && int.TryParse(words[index + 1], NumberStyles.None, CultureInfo.InvariantCulture, out int asked)
+                && asked >= 1)
+            {
+                limit = asked;
+                index++;
+            }
+            else
+            {
+                return RefuseExplore(line, $"'{words[index]}' is not understood; use explore [limit <n>]");
+            }
+        }
+
+        IAutomationSurface automation = _host.Automation;
+        if (!automation.IsAvailable)
+            return RefuseExplore(line, NotInWorld);
+        PluginNavigationSnapshot self = automation.Navigation.Snapshot;
+        if (!self.IsAvailable)
+            return RefuseExplore(line, "the client has no position for its own body");
+        PluginPlacesReport report = automation.Navigation.CapturePlaces();
+        if (report.State == PluginPlacesState.Unavailable)
+            return RefuseExplore(line, report.Reason ?? "the client cannot find places now");
+
+        IReadOnlyList<PluginNavigationPlace> places = report.Places ?? [];
+        var kinds = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var unvisited = new List<PluginNavigationPlace>();
+        var visited = new List<PluginNavigationPlace>();
+        foreach (PluginNavigationPlace place in places)
+        {
+            string kind = KindWord(place.Kind);
+            kinds[kind] = kinds.TryGetValue(kind, out int seen) ? seen + 1 : 1;
+            (_visited.IsNear(place.Position, place.WidthMeters / 2d) ? visited : unvisited).Add(place);
+        }
+        var rows = new JsonArray();
+        for (int index = 0; index < unvisited.Count + visited.Count && rows.Count < limit; index++)
+        {
+            bool been = index >= unvisited.Count;
+            PluginNavigationPlace place = been ? visited[index - unvisited.Count] : unvisited[index];
+            rows.Add(new JsonObject
+            {
+                ["kind"] = KindWord(place.Kind),
+                ["notes"] = Notes(self.Position, place),
+                ["visited"] = been,
+                ["place"] = Coordinates.DescribePlace(place.Position),
+                ["walk"] = Math.Round(place.WalkMeters, 1),
+                ["distance"] = Math.Round(Geometry.DistanceMeters(self.Position, place.Position), 1),
+                ["bearing"] = Math.Round(Geometry.BearingDegrees(self.Position, place.Position), 0),
+                ["area"] = Math.Round(place.AreaSquareMeters, 0),
+                ["width"] = Math.Round(place.WidthMeters, 1),
+                ["rise"] = Math.Round(place.RiseMeters, 1),
+                ["exits"] = place.Exits,
+                ["go"] = GoLine(place.Position),
+            });
+        }
+        var counts = new JsonObject();
+        foreach (KeyValuePair<string, int> pair in kinds)
+            counts[pair.Key] = pair.Value;
+        string state = report.State == PluginPlacesState.Mapping
+            ? "mapping"
+            : Geometry.DistanceMeters(self.Position, report.From) > StalePlacesMeters ? "refreshing" : "ready";
+        var record = new JsonObject
+        {
+            ["id"] = line.Id,
+            ["state"] = state,
+            ["region"] = report.InDungeon ? "dungeon" : "land",
+            ["center"] = Coordinates.Describe(self.Position),
+            ["found"] = places.Count,
+            ["kinds"] = counts,
+            ["visited"] = visited.Count,
+            ["shown"] = rows.Count,
+            ["places"] = rows,
+        };
+        if (state == "mapping")
+            record["note"] = "the client is still mapping the ground around the character; ask again in a few seconds";
+        else if (state == "refreshing")
+            record["note"] = "these places were found from where the character stood before; ask again in a moment for walks from here";
+        _publisher.Publish(RecordKinds.Explore, record);
+        return VerbResult.Handled;
+    }
+
+    /// <summary>How far the character may stand from where places were found before they are found again.</summary>
+    internal const double StalePlacesMeters = 10d;
+
+    /// <summary>How far above or below the character a place's floor lies before it is said to be above or below.</summary>
+    internal const double OtherLevelMeters = 2.5d;
+
+    /// <summary>A place whose floor rises at least this far is a stair or ramp.</summary>
+    internal const double StairRiseMeters = 2d;
+
+    internal static string KindWord(PluginPlaceKind kind) => kind switch
+    {
+        PluginPlaceKind.Passage => "passage",
+        PluginPlaceKind.Open => "open ground",
+        _ => "room",
+    };
+
+    /// <summary>What sets a place apart at a glance: a dead end or a junction, a stair or ramp, or floor above or below the character's.</summary>
+    internal static JsonArray Notes(in PluginNavigationPosition self, in PluginNavigationPlace place)
+    {
+        var notes = new JsonArray();
+        if (place.Exits == 1)
+            notes.Add("dead end");
+        else if (place.Exits >= 3)
+            notes.Add("junction");
+        if (place.RiseMeters >= StairRiseMeters)
+            notes.Add("stairs or ramp");
+        double up = (place.Position.Elevation - self.Elevation) * 240d;
+        if (up >= OtherLevelMeters)
+            notes.Add("above");
+        else if (up <= -OtherLevelMeters)
+            notes.Add("below");
+        return notes;
+    }
+
+    /// <summary>The command line that walks to a place.</summary>
+    internal static string GoLine(in PluginNavigationPosition position) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"go to {position.NorthSouth:0.#####} {position.EastWest:0.#####} {position.Elevation:0.#####}");
+
+    private VerbResult RefuseExplore(CommandLine line, string reason)
+    {
+        _publisher.Publish(RecordKinds.ExploreRefused, new JsonObject
+        {
+            ["id"] = line.Id,
+            ["line"] = line.Text,
+            ["reason"] = reason,
+        });
+        return VerbResult.Refused(reason);
+    }
 
     private VerbResult Nearby(CommandLine line)
     {

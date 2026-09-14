@@ -74,7 +74,7 @@ internal sealed class AgentService : IDisposable
         Commands = new CommandDispatcher(host, Publisher);
         Commands.Register(new ChatVerbs(host));
         Commands.Register(new CharacterReadVerbs(host, Publisher, _state, _clock));
-        Commands.Register(new WorldReadVerbs(host, Publisher));
+        Commands.Register(new WorldReadVerbs(host, Publisher, _visited));
         Commands.Register(new TargetVerbs(host, Publisher, Outcomes));
         Commands.Register(new MotorVerbs(host, Publisher, Outcomes));
         Commands.Register(new CastVerbs(host, Publisher, Outcomes));
@@ -90,6 +90,9 @@ internal sealed class AgentService : IDisposable
         Tools = McpTools.Create(Context);
         _endpoint = new McpEndpoint(_sessions, Tools);
     }
+
+    /// <summary>The ground the character has stood on, which explore leaves out.</summary>
+    private readonly VisitedGround _visited = new();
 
     internal RecordRing Ring { get; }
 
@@ -149,6 +152,11 @@ internal sealed class AgentService : IDisposable
         _clock.Advance(elapsedSeconds);
         IAutomationSurface automation = _host.Automation;
         Outcomes.Tick(automation.IsAvailable && automation.Character.IsInWorld);
+        if (automation.IsAvailable
+            && automation.Navigation.Snapshot is { IsAvailable: true, IsPortalSpace: false } body)
+        {
+            _visited.Note(body.Position);
+        }
         if (!IsActive)
             return;
         _state.Tick(_clock.Now);

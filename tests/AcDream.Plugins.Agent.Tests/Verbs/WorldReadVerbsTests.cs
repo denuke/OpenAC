@@ -3,6 +3,7 @@ using AcDream.Plugin.Abstractions;
 using AcDream.Plugins.Agent.Contract;
 using AcDream.Plugins.Agent.Egress;
 using AcDream.Plugins.Agent.Intake;
+using AcDream.Plugins.Agent.State;
 using AcDream.Plugins.Agent.Tests.Fakes;
 using AcDream.Plugins.Agent.Verbs;
 
@@ -214,6 +215,63 @@ public sealed class WorldReadVerbsTests
         Assert.Equal("visible", sight.GetProperty("arrow").GetString());
     }
 
+    [Fact]
+    public void ExploreListsPlacesByKindUnvisitedFirstAndMarksWhereTheCharacterHasBeen()
+    {
+        var visited = new VisitedGround();
+        var (host, verbs, ring) = Build(visited);
+        visited.Note(new PluginNavigationPosition(0u, 0.1d, 0d, 0d, 0f, true));
+        host.FakeAutomation.FakeNavigation.PlacesReport = new PluginPlacesReport(
+            PluginPlacesState.Ready,
+            [
+                new PluginNavigationPlace(new PluginNavigationPosition(0u, 0.1d, 0d, 0d, 0f, true), 26f, PluginPlaceKind.Room, 144f, 11f, 0f, 1),
+                new PluginNavigationPlace(new PluginNavigationPosition(0u, 0d, 0.2d, 0d, 0f, true), 50f, PluginPlaceKind.Passage, 30f, 2f, 2.5f, 3),
+            ],
+            InDungeon: true,
+            "found")
+        {
+            From = new PluginNavigationPosition(0u, 0d, 0d, 0d, 0f, true),
+        };
+
+        Assert.Equal("handled", verbs.Handle(Line("explore")).Outcome);
+
+        JsonElement explore = Latest(ring, RecordKinds.Explore);
+        Assert.Equal("ready", explore.GetProperty("state").GetString());
+        Assert.Equal("dungeon", explore.GetProperty("region").GetString());
+        Assert.Equal(1, explore.GetProperty("visited").GetInt32());
+        Assert.Equal(1, explore.GetProperty("kinds").GetProperty("room").GetInt32());
+        JsonElement[] places = [.. explore.GetProperty("places").EnumerateArray()];
+        Assert.Equal(["passage", "room"], places.Select(place => place.GetProperty("kind").GetString()));
+        Assert.Equal([false, true], places.Select(place => place.GetProperty("visited").GetBoolean()));
+        Assert.Equal("go to 0.2 0 0", places[0].GetProperty("go").GetString());
+        Assert.Equal(["junction", "stairs or ramp"], places[0].GetProperty("notes").EnumerateArray().Select(note => note.GetString()));
+        Assert.Equal(48d, places[0].GetProperty("distance").GetDouble());
+        Assert.Equal(["dead end"], places[1].GetProperty("notes").EnumerateArray().Select(note => note.GetString()));
+    }
+
+    [Fact]
+    public void ExploreSaysToAskAgainWhileTheClientMapsTheGroundOrOnceTheCharacterHasMovedOn()
+    {
+        var (host, verbs, ring) = Build();
+        FakeNavigation navigation = host.FakeAutomation.FakeNavigation;
+        navigation.PlacesReport = new PluginPlacesReport(
+            PluginPlacesState.Mapping, [], false, "mapping the ground around the character");
+
+        Assert.Equal("handled", verbs.Handle(Line("explore")).Outcome);
+        JsonElement mapping = Latest(ring, RecordKinds.Explore);
+        Assert.Equal("mapping", mapping.GetProperty("state").GetString());
+        Assert.Contains("ask again", mapping.GetProperty("note").GetString());
+
+        navigation.PlacesReport = new PluginPlacesReport(PluginPlacesState.Ready, [], false, "found")
+        {
+            From = new PluginNavigationPosition(0u, 0.2d, 0d, 0d, 0f, true),
+        };
+        verbs.Handle(Line("explore"));
+        Assert.Equal("refreshing", Latest(ring, RecordKinds.Explore).GetProperty("state").GetString());
+
+        Assert.NotEqual("handled", verbs.Handle(Line("explore nowhere")).Outcome);
+    }
+
     private static PluginWorldObject Placed(
         uint id,
         string name,
@@ -242,7 +300,7 @@ public sealed class WorldReadVerbsTests
     private static JsonElement Latest(RecordRing ring, string kind) =>
         JsonDocument.Parse(ring.Read(-1, new HashSet<string> { kind }).Records.Last().Json).RootElement;
 
-    private static (FakePluginHost Host, WorldReadVerbs Verbs, RecordRing Ring) Build()
+    private static (FakePluginHost Host, WorldReadVerbs Verbs, RecordRing Ring) Build(VisitedGround? visited = null)
     {
         var host = new FakePluginHost();
         host.FakeAutomation.FakeNavigation.Snapshot = new PluginNavigationSnapshot(
@@ -253,6 +311,6 @@ public sealed class WorldReadVerbsTests
             IsMoving: false,
             IsAirborne: false);
         var ring = new RecordRing(32);
-        return (host, new WorldReadVerbs(host, new Publisher(new AgentClock(), ring)), ring);
+        return (host, new WorldReadVerbs(host, new Publisher(new AgentClock(), ring), visited), ring);
     }
 }
