@@ -621,7 +621,9 @@ internal sealed class NavigationWalkController
         }
         else if (wasLeaping && !driver.IsLeaping && driver.State == RuntimeRouteDriveState.Driving)
         {
-            _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: the leap landed at {sample.Position.Z:0.0} m");
+            _say?.Invoke(
+                $"Walk to 0x{active.ObjectId:X8}: the leap landed at {sample.Position.Z:0.0} m, "
+                + $"{driver.LandingError:0.0} m from where it was planned");
         }
 
         switch (driver.State)
@@ -644,6 +646,13 @@ internal sealed class NavigationWalkController
                 break;
             case RuntimeRouteDriveState.Interrupted:
                 End(active, NavigationWalkState.Interrupted, "the player moved the character");
+                break;
+            case RuntimeRouteDriveState.LandedElsewhere:
+                _driver = null;
+                active.Builds = 0;
+                string elsewhere = $"the leap landed at {sample.Position.Z:0.0} m, {driver.LandingError:0.0} m from where it was planned; planning on from there";
+                Publish(active, NavigationWalkState.Planning, elsewhere, float.NaN);
+                _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {elsewhere}");
                 break;
             default:
                 End(active, NavigationWalkState.Lost, "the character entered portal space");
