@@ -2456,7 +2456,7 @@ internal sealed class AppAutomationSurface
                 ? record.FinalPhysicsState.HasFlag(PhysicsStateFlags.Ethereal)
                 : hasOpen && isOpen,
             IsLocked = hasLocked && isLocked,
-            HasLockState = hasOpen || hasLocked,
+            HasLockState = hasOpen || hasLocked || item.LastAppraisalTimeMs > 0,
             LockDifficulty = item.Properties.GetInt(
                 (uint)PropertyInt.ResistLockpick),
         };
