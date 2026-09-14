@@ -51,7 +51,9 @@ internal sealed class OutcomeCorrelator
     /// a resolution. The probe runs on the update thread and returns
     /// <see langword="null"/> while the action is still pending. An action
     /// <paramref name="outOfWorld"/> goes on being probed while no character is
-    /// in the world, instead of being lost.
+    /// in the world, instead of being lost. While <paramref name="waiting"/> says
+    /// the action waits on something else, such as a walk waiting while a plugin
+    /// fights, its window does not run down.
     /// </summary>
     internal void Watch(
         long id,
@@ -59,12 +61,16 @@ internal sealed class OutcomeCorrelator
         string outcomeKind,
         double windowSeconds,
         Func<Resolution?> probe,
-        bool outOfWorld = false)
+        bool outOfWorld = false,
+        Func<bool>? waiting = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(verb);
         ArgumentException.ThrowIfNullOrWhiteSpace(outcomeKind);
         ArgumentNullException.ThrowIfNull(probe);
-        _pending.Add(new Pending(id, verb, outcomeKind, _clock.Now + windowSeconds, probe, outOfWorld));
+        _pending.Add(new Pending(id, verb, outcomeKind, _clock.Now + windowSeconds, probe, outOfWorld, waiting)
+        {
+            Probed = _clock.Now,
+        });
     }
 
     internal void ResolveNow(long id, string verb, string outcomeKind, Resolution resolution) =>
@@ -98,6 +104,8 @@ internal sealed class OutcomeCorrelator
                 try
                 {
                     resolution = pending.Probe();
+                    if (resolution is null && pending.Waiting?.Invoke() == true)
+                        pending.Deadline += now - pending.Probed;
                 }
                 catch (Exception error)
                 {
@@ -114,6 +122,7 @@ internal sealed class OutcomeCorrelator
                 }
             }
 
+            pending.Probed = now;
             if (resolution is { } ended)
             {
                 _pending.Remove(pending);
@@ -149,5 +158,12 @@ internal sealed class OutcomeCorrelator
         string OutcomeKind,
         double Deadline,
         Func<Resolution?> Probe,
-        bool OutOfWorld);
+        bool OutOfWorld,
+        Func<bool>? Waiting)
+    {
+        public double Deadline { get; set; } = Deadline;
+
+        /// <summary>When the action was last probed, on the agent's clock.</summary>
+        public double Probed { get; set; }
+    }
 }
