@@ -13,6 +13,7 @@ internal sealed class ScopedPluginHost : IPluginHost, IDisposable
     private readonly ScopedPluginCommandRegistry _commands;
     private readonly ScopedLootClassifierRegistry _lootClassifiers;
     private readonly ScopedSettingsRegistry _sharedSettings;
+    private readonly ScopedNoticeBoard _notices;
     private bool _disposed;
 
     internal ScopedPluginHost(
@@ -39,6 +40,7 @@ internal sealed class ScopedPluginHost : IPluginHost, IDisposable
             inner.SharedSettings,
             pluginId,
             pluginDisplayName);
+        _notices = new ScopedNoticeBoard(inner.Notices, pluginId);
     }
 
     public bool HasUi => _inner.HasUi;
@@ -52,6 +54,7 @@ internal sealed class ScopedPluginHost : IPluginHost, IDisposable
     public IPluginCommandRegistry Commands => _commands;
     public IPluginLootClassifierRegistry LootClassifiers => _lootClassifiers;
     public IPluginSettingsRegistry SharedSettings => _sharedSettings;
+    public IPluginNoticeBoard Notices => _notices;
     public IReadOnlyDictionary<string, string> SessionSettings =>
         _inner is IPerPluginSessionSettings perPlugin
             ? perPlugin.SessionSettingsFor(_pluginId)
@@ -112,6 +115,20 @@ internal sealed class ScopedPluginHost : IPluginHost, IDisposable
         _commands.Dispose();
         _lootClassifiers.Dispose();
         _sharedSettings.Dispose();
+    }
+
+    /// <summary>Posts a plugin's notices under its own id.</summary>
+    private sealed class ScopedNoticeBoard(IPluginNoticeBoard inner, string pluginId) : IPluginNoticeBoard
+    {
+        public void Post(string kind, PluginNoticeSeverity severity, string message, string? detailsJson = null)
+        {
+            if (inner is PluginNoticeBoard board)
+                board.Post(pluginId, kind, severity, message, detailsJson);
+            else
+                inner.Post(kind, severity, message, detailsJson);
+        }
+
+        public IReadOnlyList<PluginNotice> Capture(long afterSequence) => inner.Capture(afterSequence);
     }
 
     private sealed class ScopedSettingsRegistry(

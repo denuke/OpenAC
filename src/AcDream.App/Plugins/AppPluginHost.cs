@@ -15,7 +15,8 @@ public sealed class AppPluginHost : IPluginHost
         IPluginCommandRegistry? commands = null,
         IPluginLootClassifierRegistry? lootClassifiers = null,
         IPluginStorage? vtankProfiles = null,
-        IPluginSettingsRegistry? sharedSettings = null)
+        IPluginSettingsRegistry? sharedSettings = null,
+        IPluginNoticeBoard? notices = null)
     {
         Log = log;
         State = state;
@@ -29,6 +30,7 @@ public sealed class AppPluginHost : IPluginHost
             ?? NoOpPluginLootClassifierRegistry.Instance;
         VtankProfiles = vtankProfiles ?? NoOpPluginStorage.Instance;
         SharedSettings = sharedSettings ?? NoOpPluginSettingsRegistry.Instance;
+        Notices = notices ?? NoOpPluginNoticeBoard.Instance;
     }
 
     public bool HasUi => true;
@@ -43,4 +45,5 @@ public sealed class AppPluginHost : IPluginHost
     public IPluginLootClassifierRegistry LootClassifiers { get; }
     public IPluginStorage VtankProfiles { get; }
     public IPluginSettingsRegistry SharedSettings { get; }
+    public IPluginNoticeBoard Notices { get; }
 }
