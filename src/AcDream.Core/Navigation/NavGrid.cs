@@ -57,6 +57,9 @@ public sealed class NavGrid
     /// <summary>How near a line of sight may pass a wall's footprint before the wall hides what is behind it.</summary>
     private const float SightMargin = 0.02f;
 
+    /// <summary>How far a surface may reach into a body in the air, or a landing lie past its feet, and still count as clear.</summary>
+    private const float AirTolerance = 0.05f;
+
     private const byte UnboundedDistance = byte.MaxValue;
     private const int ClipCapacity = 32;
 
@@ -138,6 +141,9 @@ public sealed class NavGrid
 
     public int NodeCount => _nodeZ.Length;
 
+    /// <summary>The columns east and north one step in a direction moves.</summary>
+    public static (int X, int Y) StepOf(int direction) => (StepX[direction], StepY[direction]);
+
     public static int DirectionOf(int stepX, int stepY)
     {
         for (int direction = 0; direction < DirectionCount; direction++)
@@ -165,6 +171,73 @@ public sealed class NavGrid
 
     /// <summary>Horizontal distance from the node's centre to the nearest wall the body would touch, or infinity.</summary>
     public float WallDistance(int node) => _wallDistance[node];
+
+    /// <summary>The height of the underside of whatever stands above a node, or infinity.</summary>
+    public float Ceiling(int node) => _nodeCeiling[node];
+
+    /// <summary>
+    /// Whether a body in the air with its feet at <paramref name="feet"/> touches
+    /// nothing: no wall nearer its centre than <see cref="NearestWall"/> overlaps its
+    /// height, and no floor or ceiling in the columns under it cuts into it.
+    /// </summary>
+    public bool IsOpenAir(Vector3 feet)
+    {
+        float localX = feet.X - OriginX;
+        float localY = feet.Y - OriginY;
+        float top = feet.Z + Body.Height;
+        int centreX = (int)MathF.Floor(localX / CellSize);
+        int centreY = (int)MathF.Floor(localY / CellSize);
+        int reach = (int)MathF.Ceiling(Body.Radius / CellSize);
+        float underSquared = NearestWall * NearestWall;
+        for (int y = Math.Max(0, centreY - reach); y <= Math.Min(Side - 1, centreY + reach); y++)
+        {
+            for (int x = Math.Max(0, centreX - reach); x <= Math.Min(Side - 1, centreX + reach); x++)
+            {
+                for (int piece = _walls.First(x, y); piece != -1; piece = _walls.Next[piece])
+                {
+                    if (_walls.High[piece] > feet.Z + AirTolerance
+                        && _walls.Low[piece] < top
+                        && _walls.Distance(piece, localX, localY) < NearestWall)
+                    {
+                        return false;
+                    }
+                }
+                float dx = ((x + 0.5f) * CellSize) - localX;
+                float dy = ((y + 0.5f) * CellSize) - localY;
+                if ((dx * dx) + (dy * dy) > underSquared)
+                    continue;
+                (int first, int count) = NodesInColumn(x, y);
+                int below = -1;
+                for (int node = first; node < first + count; node++)
+                {
+                    if (_nodeZ[node] <= feet.Z + AirTolerance)
+                        below = node;
+                    else if (_nodeZ[node] < top)
+                        return false;
+                }
+                if (below >= 0 && _nodeCeiling[below] < top)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// The node in the column under a falling body whose top its feet crossed on the
+    /// way down from <paramref name="fromHeight"/> to <paramref name="feet"/>, or -1.
+    /// </summary>
+    public int LandingUnder(Vector3 feet, float fromHeight)
+    {
+        int x = (int)MathF.Floor((feet.X - OriginX) / CellSize);
+        int y = (int)MathF.Floor((feet.Y - OriginY) / CellSize);
+        (int first, int count) = NodesInColumn(x, y);
+        for (int node = first + count - 1; node >= first; node--)
+        {
+            if (_nodeZ[node] <= fromHeight + AirTolerance && _nodeZ[node] >= feet.Z - AirTolerance)
+                return node;
+        }
+        return -1;
+    }
 
     public Vector3 Position(int node)
     {
@@ -278,7 +351,58 @@ public sealed class NavGrid
     /// along the line between them holds a clear node linked to the last, and no
     /// wall comes nearer the line than <see cref="NearestWall"/>.
     /// </summary>
-    public bool CanWalkStraight(int from, int to)
+    public bool CanWalkStraight(int from, int to) => CanWalkStraight(from, to, NearestWall, EdgeMargin);
+
+    /// <summary>
+    /// Whether a body can walk straight from one node to another and keep at least
+    /// <paramref name="clearance"/> from walls and <paramref name="borderSteps"/>
+    /// steps from ledges: every column along the line between them holds a clear
+    /// node, linked to the last, that is at least that far from both, and no wall
+    /// comes nearer the line than <paramref name="clearance"/> or
+    /// <see cref="NearestWall"/>, whichever is farther.
+    /// </summary>
+    /// <summary>
+    /// The nodes a straight walk from one node to another steps onto, one for each
+    /// column along the line after the first, following links; empty when a column
+    /// along the line holds no node linked to the last.
+    /// </summary>
+    public IReadOnlyList<int> NodesAlong(int from, int to)
+    {
+        (int x, int y) = ColumnOf(from);
+        (int targetX, int targetY) = ColumnOf(to);
+        int distanceX = Math.Abs(targetX - x);
+        int distanceY = Math.Abs(targetY - y);
+        int signX = Math.Sign(targetX - x);
+        int signY = Math.Sign(targetY - y);
+        int error = distanceX - distanceY;
+        int node = from;
+        var nodes = new List<int>(Math.Max(distanceX, distanceY));
+        while (x != targetX || y != targetY)
+        {
+            int moveX = 0;
+            int moveY = 0;
+            int doubled = error * 2;
+            if (doubled > -distanceY)
+            {
+                error -= distanceY;
+                x += signX;
+                moveX = signX;
+            }
+            if (doubled < distanceX)
+            {
+                error += distanceX;
+                y += signY;
+                moveY = signY;
+            }
+            node = Link(node, DirectionOf(moveX, moveY));
+            if (node < 0)
+                return [];
+            nodes.Add(node);
+        }
+        return nodes;
+    }
+
+    public bool CanWalkStraight(int from, int to, float clearance, int borderSteps)
     {
         (int x, int y) = ColumnOf(from);
         (int targetX, int targetY) = ColumnOf(to);
@@ -306,10 +430,10 @@ public sealed class NavGrid
                 moveY = signY;
             }
             node = Link(node, DirectionOf(moveX, moveY));
-            if (node < 0 || !IsClear(node))
+            if (node < 0 || !IsClear(node) || WallDistance(node) < clearance || BorderDistance(node) < borderSteps)
                 return false;
         }
-        return node == to && CanSweep(Position(from), Position(to));
+        return node == to && !WallNear(Position(from), Position(to), MathF.Max(NearestWall, clearance), sight: false);
     }
 
     public static NavGrid Build(NavGeometry geometry, NavBody body, float cellSize = DefaultCellSize)

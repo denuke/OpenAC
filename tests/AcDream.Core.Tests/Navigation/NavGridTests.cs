@@ -321,6 +321,26 @@ public sealed class NavGridTests
     }
 
     [Fact]
+    public void LegsAroundACornerKeepTheRoomTheRouteKept()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 20f, 0f),
+            .. Wall(10f, 0f, 10f, 10f, 0f, 3f),
+            .. Wall(10f, 10f, 20f, 10f, 0f, 3f)]);
+
+        NavRoute route = NavRouter.Find(grid, new Vector3(16f, 15f, 0f), new Vector3(4f, 4f, 0f), arrivalRadius: 1f);
+
+        Assert.Equal(NavRouteOutcome.Routed, route.Outcome);
+        Assert.True(route.Legs.Count <= 3, $"the route turns the corner in {route.Legs.Count - 1} legs");
+        var corner = new Vector2(10f, 10f);
+        for (int leg = 1; leg < route.Legs.Count; leg++)
+        {
+            float distance = DistanceToSegment(corner, route.Legs[leg - 1], route.Legs[leg]);
+            Assert.True(distance >= 0.85f, $"leg {leg} passes within {distance:0.00} m of the corner");
+        }
+    }
+
+    [Fact]
     public void ARouteKeepsOutOfAvoidedSpots()
     {
         NavGrid grid = Build([
@@ -455,6 +475,84 @@ public sealed class NavGridTests
         Assert.Equal(2, dungeon.CellTriangles.Count);
         Assert.Null(NavGeometry.CaptureDungeon(engine, 0x12340100u, 60f, -340f, 64f));
     }
+
+    [Fact]
+    public void AHopTakesARouteOffADeckDownToTheGroundBelow()
+    {
+        NavGrid grid = Build([
+            .. Floor(2f, 2f, 12f, 12f, 3f),
+            .. Wall(12f, 2f, 12f, 12f, 0f, 3f),
+            .. Floor(12f, 2f, 24f, 12f, 0f)]);
+        var from = new Vector3(6f, 7f, 3f);
+        var to = new Vector3(18f, 7f, 0f);
+
+        NavRoute walked = NavRouter.Find(grid, from, to, 1f);
+        NavRoute leapt = NavRouter.Find(grid, from, to, 1f, leaps: Leaper);
+
+        Assert.NotEqual("routed", walked.Reason);
+        Assert.Equal("routed", leapt.Reason);
+        NavRouteLeap leap = Assert.Single(leapt.Leaps);
+        Assert.False(leap.Run);
+        Assert.True(leap.Power <= 0.3f, $"the hop took {leap.Power:0.0} of full power");
+        Assert.Equal(3f, leapt.Legs[leap.LegIndex - 1].Z, 1);
+        Assert.Equal(0f, leapt.Legs[leap.LegIndex].Z, 1);
+    }
+
+    [Fact]
+    public void ARunningJumpTakesARouteAcrossAGap()
+    {
+        NavGrid grid = Build([
+            .. Floor(2f, 2f, 10f, 12f, 0f),
+            .. Floor(13f, 2f, 24f, 12f, 0f)]);
+        var from = new Vector3(6f, 7f, 0f);
+        var to = new Vector3(18f, 7f, 0f);
+
+        NavRoute walked = NavRouter.Find(grid, from, to, 1f);
+        NavRoute leapt = NavRouter.Find(grid, from, to, 1f, leaps: Leaper);
+
+        Assert.NotEqual("routed", walked.Reason);
+        Assert.Equal("routed", leapt.Reason);
+        NavRouteLeap leap = Assert.Single(leapt.Leaps);
+        Assert.True(leap.Run);
+        Assert.True(leapt.Legs[leap.LegIndex - 1].X < 10f && leapt.Legs[leap.LegIndex].X > 13f);
+    }
+
+    [Fact]
+    public void AStandingJumpTakesARouteUpOntoALedge()
+    {
+        NavGrid grid = Build([
+            .. Floor(2f, 2f, 12f, 12f, 0f),
+            .. Wall(12f, 2f, 12f, 12f, 0f, 1.5f),
+            .. Floor(12f, 2f, 24f, 12f, 1.5f)]);
+        var from = new Vector3(6f, 7f, 0f);
+        var to = new Vector3(18f, 7f, 1.5f);
+
+        NavRoute walked = NavRouter.Find(grid, from, to, 1f);
+        NavRoute leapt = NavRouter.Find(grid, from, to, 1f, leaps: Leaper);
+
+        Assert.NotEqual("routed", walked.Reason);
+        Assert.Equal("routed", leapt.Reason);
+        NavRouteLeap leap = Assert.Single(leapt.Leaps);
+        Assert.Equal(0f, leapt.Legs[leap.LegIndex - 1].Z, 1);
+        Assert.Equal(1.5f, leapt.Legs[leap.LegIndex].Z, 1);
+    }
+
+    [Fact]
+    public void ADropDeeperThanTheBodyMayFallIsNotTaken()
+    {
+        NavGrid grid = Build([
+            .. Floor(2f, 2f, 12f, 12f, 8f),
+            .. Wall(12f, 2f, 12f, 12f, 0f, 8f),
+            .. Floor(12f, 2f, 24f, 12f, 0f)]);
+
+        NavRoute leapt = NavRouter.Find(grid, new Vector3(6f, 7f, 8f), new Vector3(18f, 7f, 0f), 1f, leaps: Leaper);
+
+        Assert.NotEqual("routed", leapt.Reason);
+        Assert.Empty(leapt.Leaps);
+    }
+
+    /// <summary>A body that walks at 3.12 m/s, runs at 7.3 m/s, jumps 4.2 m high at full power and may drop 5 m.</summary>
+    private static readonly NavLeapAbility Leaper = new(WalkSpeed: 3.12f, RunSpeed: 7.3f, FullJumpHeight: 4.2f, MaximumDrop: 5f);
 
     private static float DistanceToSegment(Vector2 point, Vector3 from, Vector3 to)
     {
