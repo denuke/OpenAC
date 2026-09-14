@@ -453,6 +453,9 @@ internal sealed class NavigationWalkController
     /// <summary>Whether a grid is being built or a route searched for, off the update thread.</summary>
     internal bool IsSearching => _routing is not null || _building is not null;
 
+    /// <summary>Whether a grid build or route search under way has finished, so the next tick takes it up.</summary>
+    internal bool SearchFinished => _building is { IsCompleted: true } || _routing is { IsCompleted: true };
+
     /// <summary>Whether a request is waiting, being planned or being walked.</summary>
     public bool IsBusy
     {

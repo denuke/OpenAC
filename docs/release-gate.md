@@ -126,6 +126,21 @@ pwsh ./tools/run-release-gate.ps1 -SkipRestore -SkipBuild `
   -TestFilter 'Lane=InstalledDat&Status!=KnownFailure&Purpose!=Diagnostic'
 ```
 
+The installed-DAT lane includes the navigation walk corpus,
+`NavigationWalkCorpusTests`. It walks fixed routes through real dungeons and
+towns with the walk controller and a simulated character, and compares what
+happened with `tests/AcDream.App.Tests/Navigation/NavigationWalkCorpus.txt`.
+The routes cover big and small dungeons, a door that opens, locked doors with
+and without another way, and walks between outdoors and buildings. After a
+change meant to alter the walks, record them again and review the difference:
+
+```powershell
+$env:ACDREAM_UPDATE_WALK_CORPUS = '1'
+$env:ACDREAM_DAT_DIR = 'C:\path\to\Asherons Call'
+dotnet test tests/AcDream.App.Tests/AcDream.App.Tests.csproj -c Release `
+  --filter 'FullyQualifiedName~NavigationWalkCorpusTests'
+```
+
 The prepared-package lane additionally requires a validated `acdream.pak`
 beside the DATs or at `ACDREAM_PAK_PATH`:
 

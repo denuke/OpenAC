@@ -989,7 +989,7 @@ public sealed class NavigationWalkControllerTests
         }
     }
 
-    private sealed class Goals : Dictionary<uint, Vector3>, INavigationGoalSource
+    internal sealed class Goals : Dictionary<uint, Vector3>, INavigationGoalSource
     {
         public bool TryGlobalOf(Vector3 world, out Vector3 global)
         {
@@ -1026,7 +1026,7 @@ public sealed class NavigationWalkControllerTests
     }
 
     /// <summary>A single door that opens a few frames after it is used, or never.</summary>
-    private sealed class FakeDoors : INavigationDoors
+    internal sealed class FakeDoors : INavigationDoors
     {
         private int _pollsUntilOpen = -1;
 
@@ -1111,11 +1111,8 @@ public sealed class NavigationWalkControllerTests
     /// speeds, sliding off a round obstacle and reporting a move blocked once it
     /// stops making progress.
     /// </summary>
-    private sealed class SimulatedBody : INavigationWalkBody
+    internal sealed class SimulatedBody : INavigationWalkBody
     {
-        private const float RunSpeed = 4f;
-        private const float WalkSpeed = 1.5f;
-        private const float TurnSpeed = 180f;
         private const float StallSeconds = 1.5f;
 
         private long _sequence;
@@ -1125,6 +1122,21 @@ public sealed class NavigationWalkControllerTests
         private float _stalledSeconds;
 
         public SimulatedBody(Vector3 position) => Position = position;
+
+        public float RunSpeed { get; init; } = 4f;
+
+        public float WalkSpeed { get; init; } = 1.5f;
+
+        /// <summary>Degrees a second the body turns standing or running.</summary>
+        public float TurnSpeed { get; init; } = 180f;
+
+        /// <summary>Degrees a second the body turns while it walks.</summary>
+        public float WalkTurnSpeed { get; init; } = 180f;
+
+        /// <summary>The frame time integrated, and how much of it the body spent walking.</summary>
+        public double Seconds { get; private set; }
+
+        public double WalkingSeconds { get; private set; }
 
         public Vector3 Position { get; private set; }
 
@@ -1222,9 +1234,11 @@ public sealed class NavigationWalkControllerTests
 
         public void Integrate(float seconds)
         {
+            Seconds += seconds;
+            bool walking = _travel.State == RuntimeScriptedMoveState.Moving && _travel.Request.Pace == RuntimeMovePace.Walk;
             if (_turn.State == RuntimeScriptedMoveState.Moving)
             {
-                float step = MathF.Min(_turnRemaining, TurnSpeed * seconds);
+                float step = MathF.Min(_turnRemaining, (walking ? WalkTurnSpeed : TurnSpeed) * seconds);
                 _turnRemaining -= step;
                 float signed = _turn.Request.Direction == RuntimeMoveDirection.TurnRight ? step : -step;
                 Heading = (((Heading + signed) % 360f) + 360f) % 360f;
@@ -1237,6 +1251,8 @@ public sealed class NavigationWalkControllerTests
                 return;
             }
             StillFrames = 0;
+            if (walking)
+                WalkingSeconds += seconds;
 
             float speed = _travel.Request.Pace == RuntimeMovePace.Run ? RunSpeed : WalkSpeed;
             float radians = Heading * MathF.PI / 180f;
