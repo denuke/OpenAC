@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using AcDream.Core.Physics;
 
 namespace AcDream.Core.Navigation;
@@ -165,21 +166,25 @@ public sealed class NavGeometry
         };
     }
 
-    /// <summary>The resident landblocks a square region overlaps.</summary>
+    /// <summary>
+    /// The resident landblocks a square region overlaps, by their terrain's square
+    /// or by the extent of their interior cells, which in a dungeon can lie far
+    /// outside that square.
+    /// </summary>
     public static IReadOnlyList<uint> OverlappingLandblocks(PhysicsEngine engine, float originX, float originY, float size)
     {
         ArgumentNullException.ThrowIfNull(engine);
         var overlapping = new List<uint>();
         foreach (uint landblockId in engine.LandblockIds)
         {
-            if (engine.TryGetLandblockCollision(landblockId, out _, out _, out Vector3 offset)
-                && offset.X < originX + size
+            if (!engine.TryGetLandblockCollision(landblockId, out _, out IReadOnlyList<CellSurface> cells, out Vector3 offset))
+                continue;
+            bool terrain = offset.X < originX + size
                 && offset.X + LandblockSize > originX
                 && offset.Y < originY + size
-                && offset.Y + LandblockSize > originY)
-            {
+                && offset.Y + LandblockSize > originY;
+            if (terrain || ExtentOf(cells).Overlaps(originX, originY, size))
                 overlapping.Add(landblockId);
-            }
         }
         return overlapping;
     }
@@ -191,10 +196,30 @@ public sealed class NavGeometry
     public static bool TryMeasureCells(PhysicsEngine engine, uint landblockId, out Vector2 minimum, out Vector2 maximum)
     {
         ArgumentNullException.ThrowIfNull(engine);
-        var low = new Vector2(float.PositiveInfinity);
-        var high = new Vector2(float.NegativeInfinity);
-        if (engine.TryGetLandblockCollision(landblockId, out _, out IReadOnlyList<CellSurface> cells, out _))
+        if (!engine.TryGetLandblockCollision(landblockId, out _, out IReadOnlyList<CellSurface> cells, out _))
         {
+            minimum = new Vector2(float.PositiveInfinity);
+            maximum = new Vector2(float.NegativeInfinity);
+            return false;
+        }
+        CellExtent extent = ExtentOf(cells);
+        minimum = extent.Minimum;
+        maximum = extent.Maximum;
+        return !extent.IsEmpty;
+    }
+
+    /// <summary>A landblock's cell list is replaced, never edited, so each list's extent is measured once.</summary>
+    private static readonly ConditionalWeakTable<IReadOnlyList<CellSurface>, CellExtent> CellExtents = new();
+
+    private static CellExtent ExtentOf(IReadOnlyList<CellSurface> cells) =>
+        CellExtents.GetValue(cells, static list => new CellExtent(list));
+
+    private sealed class CellExtent
+    {
+        public CellExtent(IReadOnlyList<CellSurface> cells)
+        {
+            var low = new Vector2(float.PositiveInfinity);
+            var high = new Vector2(float.NegativeInfinity);
             foreach (CellSurface cell in cells)
             {
                 foreach ((Vector3 a, Vector3 b, Vector3 c) in cell.Triangles)
@@ -203,10 +228,22 @@ public sealed class NavGeometry
                     high = Vector2.Max(high, Vector2.Max(Flat(a), Vector2.Max(Flat(b), Flat(c))));
                 }
             }
+            Minimum = low;
+            Maximum = high;
         }
-        minimum = low;
-        maximum = high;
-        return low.X <= high.X;
+
+        public Vector2 Minimum { get; }
+
+        public Vector2 Maximum { get; }
+
+        public bool IsEmpty => Minimum.X > Maximum.X;
+
+        public bool Overlaps(float originX, float originY, float size) =>
+            !IsEmpty
+            && Minimum.X < originX + size
+            && Maximum.X > originX
+            && Minimum.Y < originY + size
+            && Maximum.Y > originY;
     }
 
     private static Vector2 Flat(Vector3 point) => new(point.X, point.Y);
