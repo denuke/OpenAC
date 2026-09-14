@@ -27,6 +27,62 @@ public sealed class MossTankPanelTests
         Assert.Contains("{ this is not json", backup.Value, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(false, "Attack", false, false, false, 99d, null)]
+    [InlineData(true, null, false, false, false, 99d, null)]
+    [InlineData(true, "IdlePeace", false, false, false, 99d, null)]
+    [InlineData(true, "RandomHelper", false, false, false, 99d, null)]
+    [InlineData(true, "NavigateRouteIdle", false, false, false, 99d, null)]
+    [InlineData(true, "Attack", false, false, false, 99d, "MossTank is running Attack")]
+    [InlineData(true, "BuffSelf", false, false, false, 99d, "MossTank is running BuffSelf")]
+    [InlineData(true, "NavigateCorpseIdle", false, false, true, 99d, "MossTank is running NavigateCorpseIdle")]
+    [InlineData(true, "NavigateRouteIdle", false, true, false, 99d, "MossTank is following its route")]
+    [InlineData(true, "NavigateRouteIdle", false, false, true, 1d, "MossTank is waiting for a corpse to loot")]
+    [InlineData(true, "NavigateRouteIdle", false, false, false, 1d, null)]
+    [InlineData(true, "NavigateRouteIdle", false, false, true, 3d, null)]
+    [InlineData(false, null, true, false, false, 99d, "MossTank is buffing")]
+    public void AWalkTheClientPlansWaitsWhileTheMacroHasSomethingToDo(
+        bool running,
+        string? lastRule,
+        bool buffing,
+        bool routeNavigation,
+        bool looting,
+        double secondsSinceAttack,
+        string? expected)
+    {
+        Assert.Equal(
+            expected,
+            MossTankPanel.WalkPauseReasonFor(running, lastRule, buffing, routeNavigation, looting, secondsSinceAttack));
+    }
+
+    [Fact]
+    public void AWalkTheClientPlansTakesTheRouteSlotSoRulesBelowItWaitAndItIsNotHeld()
+    {
+        var automation = new FakeAutomation
+        {
+            CurrentHealth = 100,
+            MaxHealth = 100,
+            CurrentStamina = 100,
+            MaxStamina = 100,
+            CurrentMana = 100,
+            MaxMana = 100,
+        };
+        var panel = new MossTankPanel(new FakeHost(automation));
+        panel.ToggleCombat();
+        IMacroRule route = panel.MacroRules.Single(static rule => rule.Name == "NavigateRouteIdle");
+
+        for (int tick = 0; tick < 4; tick++)
+            panel.OnTick(0.3d);
+        Assert.False(route.Running);
+
+        automation.GoToReport = new PluginGoToReport(1, PluginGoToState.Walking, 0x50000001u, 20f, 0, "walking");
+        for (int tick = 0; tick < 4; tick++)
+            panel.OnTick(0.3d);
+
+        Assert.True(route.Running);
+        Assert.Null(panel.WalkPauseReason);
+    }
+
     [Fact]
     public void PanelFillsEveryPositionOfVtanksRuleList()
     {
@@ -5243,6 +5299,7 @@ public sealed class MossTankPanelTests
         public int BusyReferences { get; set; }
         public PluginNavigationSnapshot NavigationSnapshot { get; set; }
         public PluginNavigationSnapshot Snapshot => NavigationSnapshot;
+        public PluginGoToReport GoToReport { get; set; }
         public int CaptureOwnedItemsCallCount { get; private set; }
         public IReadOnlyList<PluginInventoryItem> CaptureOwnedItems()
         {

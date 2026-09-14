@@ -148,7 +148,14 @@ walk that stays blocked names what stood beside that spot in `blockedBy`, such
 as a door that would not open. `remaining` is the straight-line distance from
 the character to where the object stands, and `no-route` means nothing joins
 the character to the object. `stop`, `cancel` and the player's movement keys
-end a walk. A walk to an object farther away than one planning grid reaches,
+end a walk. While MossTank needs the character, to fight, loot or buff, or
+while the character attacks or another plugin steers it, a walk stops where it
+stands and reports `waiting` with what it waits on, and its `go to` stays
+pending. Once nothing has needed the character for a moment, the walk plans
+again from where the character stands and goes on, however often that happens
+along the way. A walk takes the place of MossTank's own route navigation
+among its rules while that is off, so whatever MossTank ranks above navigation
+interrupts the walk and nothing ranked below it does. A walk to an object farther away than one planning grid reaches,
 about 270 m, goes in stages, each planned to the edge of a grid toward the
 object, up to 1000 m. Inside a sealed dungeon one grid covers the whole
 dungeon, however large, and serves every walk there; the largest take a few

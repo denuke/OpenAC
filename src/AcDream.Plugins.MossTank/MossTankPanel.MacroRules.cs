@@ -162,7 +162,7 @@ internal sealed partial class MossTankPanel : IMacroRuleProvider
             "NavigateRoutePriority",
             context => _navigation.Tick(
                 context.ElapsedSeconds,
-                context.CanAct),
+                context.CanAct) || ClientWalkHoldsRouteSlot,
             gate: () => _combat.Enabled && !_buffRule.IsBursting
                 && _navigationSettings.Priority,
             onLostTurn: _navigation.StopForLostTurn,
@@ -171,7 +171,7 @@ internal sealed partial class MossTankPanel : IMacroRuleProvider
             "NavigateRouteIdle",
             context => _navigation.Tick(
                 context.ElapsedSeconds,
-                context.CanAct),
+                context.CanAct) || ClientWalkHoldsRouteSlot,
             gate: () => !_navigationSettings.Priority
                 && _combat.Enabled && !_buffRule.IsBursting,
             onLostTurn: _navigation.StopForLostTurn,
