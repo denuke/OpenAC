@@ -24,6 +24,7 @@ internal static class RecordKinds
     internal const string ItemSpent = "item-spent";
     internal const string Trends = "trends";
     internal const string ExploreRefused = "explore-refused";
+    internal const string ExploreTour = "explore-tour";
     internal const string EntityInspected = "entity-inspected";
     internal const string EntityRefused = "entity-refused";
     internal const string TargetSent = "target-sent";

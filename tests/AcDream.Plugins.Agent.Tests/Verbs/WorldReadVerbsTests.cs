@@ -250,6 +250,56 @@ public sealed class WorldReadVerbsTests
     }
 
     [Fact]
+    public void ExploreTourGivesOneWayThroughEveryUnvisitedPlaceWithARouteMossTankWalks()
+    {
+        var visited = new VisitedGround();
+        var (host, verbs, ring) = Build(visited);
+        visited.Note(new PluginNavigationPosition(0u, 0d, 0d, 0d, 0f, false));
+        host.FakeAutomation.FakeNavigation.PlacesReport = new PluginPlacesReport(
+            PluginPlacesState.Ready,
+            [
+                TourPlace(0d, 0d, 0f, 1),
+                TourPlace(0.1d, 0d, 24f, 0, 2, 3),
+                TourPlace(0.1d, 0.05d, 36f, 1),
+                TourPlace(0.25d, 0d, 60f, 1),
+            ],
+            InDungeon: true,
+            "found")
+        {
+            From = new PluginNavigationPosition(0u, 0d, 0d, 0d, 0f, false),
+        };
+
+        Assert.Equal("handled", verbs.Handle(Line("explore tour")).Outcome);
+
+        JsonElement tour = Latest(ring, RecordKinds.ExploreTour);
+        Assert.Equal("ready", tour.GetProperty("state").GetString());
+        Assert.Equal(3, tour.GetProperty("stops").GetInt32());
+        Assert.Equal([1, 2, 3], tour.GetProperty("tour").EnumerateArray().Select(stop => stop.GetProperty("stop").GetInt32()));
+        Assert.Equal("farthest a walk reaches from the character", tour.GetProperty("end").GetProperty("why").GetString());
+        JsonElement route = tour.GetProperty("route");
+        Assert.Equal("Once", route.GetProperty("mode").GetString());
+        Assert.True(route.GetProperty("walkLegs").GetBoolean());
+        JsonElement[] points = [.. route.GetProperty("waypoints").EnumerateArray().Select(waypoint => waypoint.GetProperty("point"))];
+        Assert.Equal([0.1d, 0.1d, 0.25d], points.Select(point => point.GetProperty("eastWest").GetDouble()));
+        Assert.Equal([0d, 0.05d, 0d], points.Select(point => point.GetProperty("northSouth").GetDouble()));
+
+        Assert.Equal("handled", verbs.Handle(Line("explore tour to 0.05 0.1")).Outcome);
+
+        JsonElement toward = Latest(ring, RecordKinds.ExploreTour);
+        Assert.Equal("nearest the end asked for", toward.GetProperty("end").GetProperty("why").GetString());
+        Assert.Equal(
+            [0.1d, 0.25d, 0.1d],
+            toward.GetProperty("route").GetProperty("waypoints").EnumerateArray().Select(waypoint => waypoint.GetProperty("point").GetProperty("eastWest").GetDouble()));
+        Assert.Equal("refused", verbs.Handle(Line("explore tour to nowhere")).Outcome);
+    }
+
+    private static PluginNavigationPlace TourPlace(double eastWest, double northSouth, float walkMeters, params int[] neighbours) =>
+        new(new PluginNavigationPosition(0u, eastWest, northSouth, 0d, 0f, false), walkMeters, PluginPlaceKind.Room, 60f, 6f, 0f, neighbours.Length)
+        {
+            Neighbours = neighbours,
+        };
+
+    [Fact]
     public void ExploreSaysToAskAgainWhileTheClientMapsTheGroundOrOnceTheCharacterHasMovedOn()
     {
         var (host, verbs, ring) = Build();
