@@ -346,6 +346,64 @@ public sealed class NavGridTests
         Assert.Equal(NavRouteOutcome.NoPath, nowhere.Outcome);
     }
 
+    [Fact]
+    public void AGoalBeyondTheGridIsRoutedToTheGridsEdgeTowardIt()
+    {
+        NavGrid grid = Build(Floor(0f, 0f, 32f, 32f, 0f));
+
+        NavRoute route = NavRouter.FindToward(grid, new Vector3(4f, 16f, 0f), new Vector3(200f, 16f, 0f), band: 4f);
+
+        Assert.Equal(NavRouteOutcome.Routed, route.Outcome);
+        Assert.InRange(route.Legs[^1].X, 27.5f, 32f);
+        Assert.Contains("its edge toward the goal", route.Reason);
+    }
+
+    [Fact]
+    public void AGoalBeyondAWallAcrossTheGridIsRoutedToTheReachableSpotNearestIt()
+    {
+        NavGrid grid = Build([.. Floor(0f, 0f, 32f, 32f, 0f), .. Wall(20f, 0f, 20f, 32f, 0f, 3f)]);
+
+        NavRoute route = NavRouter.FindToward(grid, new Vector3(4f, 16f, 0f), new Vector3(200f, 16f, 0f), band: 4f);
+
+        Assert.Equal(NavRouteOutcome.Routed, route.Outcome);
+        Assert.InRange(route.Legs[^1].X, 17f, 20f);
+        Assert.Contains("the reachable spot nearest it", route.Reason);
+    }
+
+    [Fact]
+    public void ALandblocksCellsAreMeasuredAcrossEveryPolygon()
+    {
+        var engine = new PhysicsEngine();
+        var room = new CellSurface(
+            0xA9B40100u,
+            new Dictionary<ushort, Vector3>
+            {
+                [0] = new(10f, 20f, -30f),
+                [1] = new(40f, 20f, -30f),
+                [2] = new(40f, 50f, -30f),
+                [3] = new(10f, 50f, -30f),
+            },
+            [[0, 1, 2, 3]]);
+        var corridor = new CellSurface(
+            0xA9B40101u,
+            new Dictionary<ushort, Vector3>
+            {
+                [0] = new(40f, 30f, -30f),
+                [1] = new(250f, 30f, -30f),
+                [2] = new(250f, 34f, -30f),
+                [3] = new(40f, 34f, -30f),
+            },
+            [[0, 1, 2, 3]]);
+        engine.AddLandblock(0xA9B4FFFFu, new TerrainSurface(new byte[81], new float[256]), [room, corridor], [], 0f, 0f);
+        engine.AddLandblock(0xAAB4FFFFu, new TerrainSurface(new byte[81], new float[256]), [], [], 192f, 0f);
+
+        Assert.True(NavGeometry.TryMeasureCells(engine, 0xA9B4FFFFu, out Vector2 minimum, out Vector2 maximum));
+        Assert.Equal(new Vector2(10f, 20f), minimum);
+        Assert.Equal(new Vector2(250f, 50f), maximum);
+        Assert.False(NavGeometry.TryMeasureCells(engine, 0xAAB4FFFFu, out _, out _));
+        Assert.False(NavGeometry.TryMeasureCells(engine, 0x1234FFFFu, out _, out _));
+    }
+
     private static float DistanceToSegment(Vector2 point, Vector3 from, Vector3 to)
     {
         var start = new Vector2(from.X, from.Y);

@@ -184,6 +184,33 @@ public sealed class NavGeometry
         return overlapping;
     }
 
+    /// <summary>
+    /// The horizontal extent of a resident landblock's interior cells, or false
+    /// when the physics world holds none for it.
+    /// </summary>
+    public static bool TryMeasureCells(PhysicsEngine engine, uint landblockId, out Vector2 minimum, out Vector2 maximum)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        var low = new Vector2(float.PositiveInfinity);
+        var high = new Vector2(float.NegativeInfinity);
+        if (engine.TryGetLandblockCollision(landblockId, out _, out IReadOnlyList<CellSurface> cells, out _))
+        {
+            foreach (CellSurface cell in cells)
+            {
+                foreach ((Vector3 a, Vector3 b, Vector3 c) in cell.Triangles)
+                {
+                    low = Vector2.Min(low, Vector2.Min(Flat(a), Vector2.Min(Flat(b), Flat(c))));
+                    high = Vector2.Max(high, Vector2.Max(Flat(a), Vector2.Max(Flat(b), Flat(c))));
+                }
+            }
+        }
+        minimum = low;
+        maximum = high;
+        return low.X <= high.X;
+    }
+
+    private static Vector2 Flat(Vector3 point) => new(point.X, point.Y);
+
     private static void AddBuildingShells(PhysicsDataCache? cache, uint landblockId, List<NavTriangle> triangles)
     {
         if (cache is null)

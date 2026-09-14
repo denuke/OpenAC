@@ -83,63 +83,17 @@ public static class NavRouter
         float reach = MathF.Max(arrivalRadius, grid.CellSize);
         int start = grid.FindWalkableNode(from, StartRadius, StartHeightTolerance);
         if (start < 0)
-        {
-            return Failed(
-                NavRouteOutcome.NoStart,
-                "no clear spot near the start can be walked to without passing a wall",
-                0,
-                clock);
-        }
+            return NoStart(clock);
         var goal = new GoalTest(grid, to, reach, avoided);
         bool nearGoalSeen = goal.MaySucceed();
 
-        var cost = new float[grid.NodeCount];
-        Array.Fill(cost, float.PositiveInfinity);
-        var parent = new int[grid.NodeCount];
-        var closed = new bool[grid.NodeCount];
-        var open = new PriorityQueue<int, float>();
-        cost[start] = 0f;
-        parent[start] = start;
-        open.Enqueue(start, Remaining(grid.Position(start), to, reach));
-        int expansions = 0;
-        while (open.TryDequeue(out int node, out _))
-        {
-            if (closed[node])
-                continue;
-            closed[node] = true;
-            expansions++;
-            if (nearGoalSeen && goal.IsReachedAt(node))
-                return Routed(grid, from, start, node, parent, avoided, expansions, clock, "routed");
-            if (expansions >= MaximumExpansions)
-            {
-                return Failed(
-                    NavRouteOutcome.NoPath,
-                    $"the search gave up after {expansions} expansions",
-                    expansions,
-                    clock);
-            }
-
-            Vector3 here = grid.Position(node);
-            for (int direction = 0; direction < NavGrid.DirectionCount; direction++)
-            {
-                int next = grid.Link(node, direction);
-                if (next < 0 || closed[next] || !grid.IsClear(next))
-                    continue;
-                Vector3 there = grid.Position(next);
-                if (IsAvoided(there, avoided))
-                    continue;
-                float step = (grid.CellSize * (direction < 4 ? 1f : DiagonalStep))
-                    + MathF.Abs(there.Z - here.Z)
-                    + WallCost(grid, next);
-                float total = cost[node] + step;
-                if (total >= cost[next])
-                    continue;
-                cost[next] = total;
-                parent[next] = node;
-                open.Enqueue(next, total + Remaining(there, to, reach));
-            }
-        }
-        int nearest = goal.NearestSeeingAmong(closed);
+        var search = new Search(grid, start, to, reach, avoided);
+        int end = search.Run(node => nearGoalSeen && goal.IsReachedAt(node));
+        if (end >= 0)
+            return Routed(grid, from, start, end, search.Parent, avoided, search.Expansions, clock, "routed");
+        if (end == Search.GaveUp)
+            return SearchGaveUp(search, clock);
+        int nearest = goal.NearestSeeingAmong(search.Closed);
         if (nearest >= 0)
         {
             Vector3 at = grid.Position(nearest);
@@ -149,14 +103,14 @@ public static class NavRouter
                 from,
                 start,
                 nearest,
-                parent,
+                search.Parent,
                 avoided,
-                expansions,
+                search.Expansions,
                 clock,
                 $"nothing within {reach:0.#} m of the goal can be reached and see it, so the route ends at "
                 + $"the nearest spot that can, {away:0.0} m from it");
         }
-        int nearestUnseeing = avoided.Count == 0 ? goal.NearestAmong(closed) : -1;
+        int nearestUnseeing = avoided.Count == 0 ? goal.NearestAmong(search.Closed) : -1;
         if (nearestUnseeing >= 0)
         {
             Vector3 at = grid.Position(nearestUnseeing);
@@ -166,9 +120,9 @@ public static class NavRouter
                 from,
                 start,
                 nearestUnseeing,
-                parent,
+                search.Parent,
                 avoided,
-                expansions,
+                search.Expansions,
                 clock,
                 $"no reachable spot can see the goal, so the route ends at the nearest spot, {away:0.0} m from it, "
                 + "without a line of sight");
@@ -177,13 +131,78 @@ public static class NavRouter
             ? Failed(
                 NavRouteOutcome.NoPath,
                 $"no clear path leads from the start to a spot within {FallbackReach:0} m that can see the goal",
-                expansions,
+                search.Expansions,
                 clock)
             : Failed(
                 NavRouteOutcome.NoGoal,
                 $"no spot within {FallbackReach:0} m of the goal that the start can reach can see it",
-                expansions,
+                search.Expansions,
                 clock);
+    }
+
+    /// <summary>
+    /// Finds a route toward a goal that lies beyond the grid, for a walk too long
+    /// for one grid to hold: to the first reachable node within
+    /// <paramref name="band"/> of the nearest the grid comes to the goal, or, when
+    /// none is reachable, to the reachable node nearest the goal.
+    /// </summary>
+    public static NavRoute FindToward(
+        NavGrid grid,
+        Vector3 from,
+        Vector3 goal,
+        float band,
+        IReadOnlyList<NavAvoidance>? avoid = null)
+    {
+        ArgumentNullException.ThrowIfNull(grid);
+        var clock = Stopwatch.StartNew();
+        IReadOnlyList<NavAvoidance> avoided = avoid ?? [];
+        int start = grid.FindWalkableNode(from, StartRadius, StartHeightTolerance);
+        if (start < 0)
+            return NoStart(clock);
+
+        float enough = DistanceBeyond(grid, goal) + MathF.Max(band, grid.CellSize);
+        int nearest = start;
+        float nearestAway = Away(grid.Position(start), goal);
+        var search = new Search(grid, start, goal, 0f, avoided);
+        int end = search.Run(node =>
+        {
+            float away = Away(grid.Position(node), goal);
+            if (away < nearestAway)
+            {
+                nearest = node;
+                nearestAway = away;
+            }
+            return away <= enough;
+        });
+        if (end >= 0)
+        {
+            return Routed(
+                grid,
+                from,
+                start,
+                end,
+                search.Parent,
+                avoided,
+                search.Expansions,
+                clock,
+                $"the goal lies beyond this grid, so the route ends at its edge toward the goal, {nearestAway:0} m from it");
+        }
+        if (nearest != start && Away(from, goal) - nearestAway >= grid.CellSize)
+        {
+            return Routed(
+                grid,
+                from,
+                start,
+                nearest,
+                search.Parent,
+                avoided,
+                search.Expansions,
+                clock,
+                $"the goal lies beyond this grid, and the route ends at the reachable spot nearest it, {nearestAway:0} m from it");
+        }
+        return end == Search.GaveUp
+            ? SearchGaveUp(search, clock)
+            : Failed(NavRouteOutcome.NoPath, "no clear path leads any nearer the goal", search.Expansions, clock);
     }
 
     private static NavRoute Routed(
@@ -293,6 +312,106 @@ public static class NavRouter
 
     private static NavRoute Failed(NavRouteOutcome outcome, string reason, int expansions, Stopwatch clock) =>
         new(outcome, reason, [], [], 0f, expansions, clock.Elapsed.TotalMilliseconds);
+
+    private static NavRoute NoStart(Stopwatch clock) =>
+        Failed(NavRouteOutcome.NoStart, "no clear spot near the start can be walked to without passing a wall", 0, clock);
+
+    private static NavRoute SearchGaveUp(Search search, Stopwatch clock) =>
+        Failed(
+            NavRouteOutcome.NoPath,
+            $"the search gave up after {search.Expansions} expansions",
+            search.Expansions,
+            clock);
+
+    private static float Away(Vector3 point, Vector3 goal) =>
+        Vector2.Distance(new Vector2(point.X, point.Y), new Vector2(goal.X, goal.Y));
+
+    /// <summary>How far a point lies outside a grid's square, measured flat; zero inside it.</summary>
+    private static float DistanceBeyond(NavGrid grid, Vector3 point)
+    {
+        float dx = MathF.Max(0f, MathF.Max(grid.OriginX - point.X, point.X - (grid.OriginX + grid.Size)));
+        float dy = MathF.Max(0f, MathF.Max(grid.OriginY - point.Y, point.Y - (grid.OriginY + grid.Size)));
+        return MathF.Sqrt((dx * dx) + (dy * dy));
+    }
+
+    /// <summary>
+    /// A best-first expansion of the clear nodes reachable from a start, ordered
+    /// by the cost so far plus the distance left to a point.
+    /// </summary>
+    private sealed class Search
+    {
+        /// <summary>What <see cref="Run"/> returns once every reachable node has been expanded.</summary>
+        public const int Exhausted = -1;
+
+        /// <summary>What <see cref="Run"/> returns when it stops at <see cref="MaximumExpansions"/>.</summary>
+        public const int GaveUp = -2;
+
+        private readonly NavGrid _grid;
+        private readonly Vector3 _toward;
+        private readonly float _reach;
+        private readonly IReadOnlyList<NavAvoidance> _avoided;
+        private readonly float[] _cost;
+        private readonly PriorityQueue<int, float> _open = new();
+
+        public Search(NavGrid grid, int start, Vector3 toward, float reach, IReadOnlyList<NavAvoidance> avoided)
+        {
+            _grid = grid;
+            _toward = toward;
+            _reach = reach;
+            _avoided = avoided;
+            _cost = new float[grid.NodeCount];
+            Array.Fill(_cost, float.PositiveInfinity);
+            Parent = new int[grid.NodeCount];
+            Closed = new bool[grid.NodeCount];
+            _cost[start] = 0f;
+            Parent[start] = start;
+            _open.Enqueue(start, Remaining(grid.Position(start), toward, reach));
+        }
+
+        public int[] Parent { get; }
+
+        /// <summary>The nodes expanded so far.</summary>
+        public bool[] Closed { get; }
+
+        public int Expansions { get; private set; }
+
+        /// <summary>Expands nodes until one is an end and returns it, or returns <see cref="Exhausted"/> or <see cref="GaveUp"/>.</summary>
+        public int Run(Func<int, bool> isEnd)
+        {
+            while (_open.TryDequeue(out int node, out _))
+            {
+                if (Closed[node])
+                    continue;
+                Closed[node] = true;
+                Expansions++;
+                if (isEnd(node))
+                    return node;
+                if (Expansions >= MaximumExpansions)
+                    return GaveUp;
+
+                Vector3 here = _grid.Position(node);
+                for (int direction = 0; direction < NavGrid.DirectionCount; direction++)
+                {
+                    int next = _grid.Link(node, direction);
+                    if (next < 0 || Closed[next] || !_grid.IsClear(next))
+                        continue;
+                    Vector3 there = _grid.Position(next);
+                    if (IsAvoided(there, _avoided))
+                        continue;
+                    float step = (_grid.CellSize * (direction < 4 ? 1f : DiagonalStep))
+                        + MathF.Abs(there.Z - here.Z)
+                        + WallCost(_grid, next);
+                    float total = _cost[node] + step;
+                    if (total >= _cost[next])
+                        continue;
+                    _cost[next] = total;
+                    Parent[next] = node;
+                    _open.Enqueue(next, total + Remaining(there, _toward, _reach));
+                }
+            }
+            return Exhausted;
+        }
+    }
 
     /// <summary>
     /// Which nodes count as arriving at a goal: near enough to it, and able to
