@@ -367,6 +367,106 @@ public sealed class NavGridTests
     }
 
     [Fact]
+    public void ARouteGoesAroundACreatureWhereThereIsRoomAndKeepsAsClearOfWalls()
+    {
+        NavGrid grid = Build(Floor(0f, 0f, 20f, 20f, 0f));
+        var from = new Vector3(10f, 2f, 0f);
+        var to = new Vector3(10f, 18f, 0f);
+        var creature = new NavAvoidance(new Vector3(10f, 10f, 0f), 1.6f);
+
+        NavRoute plain = NavRouter.Find(grid, from, to, 1f);
+        NavRoute around = NavRouter.Find(grid, from, to, 1f, crowd: [creature]);
+
+        Assert.Equal("routed", around.Reason);
+        Assert.True(plain.Crowding == 0f, "a route not asked about the creature measures no crowding");
+        for (int leg = 1; leg < around.Legs.Count; leg++)
+        {
+            float distance = DistanceToSegment(new Vector2(10f, 10f), around.Legs[leg - 1], around.Legs[leg]);
+            Assert.True(distance >= creature.Radius - 0.05f, $"leg {leg} passes {distance:0.00} m from the creature");
+        }
+        Assert.True(around.Crowding < 0.05f, $"the route grazes the creature by {around.Crowding:0.000} m");
+        Assert.True(
+            around.Scrape <= plain.Scrape + 0.25f,
+            $"around the creature scrapes {around.Scrape:0.00} m², straight on {plain.Scrape:0.00} m²");
+    }
+
+    [Fact]
+    public void ARouteGoesThroughACreatureFillingACorridorRatherThanScrapingAlongItsWalls()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 20f, 0f),
+            .. Wall(8.5f, 0f, 8.5f, 20f, 0f, 3f),
+            .. Wall(11.5f, 0f, 11.5f, 20f, 0f, 3f)]);
+        var from = new Vector3(10f, 2f, 0f);
+        var to = new Vector3(10f, 18f, 0f);
+        var creature = new NavAvoidance(new Vector3(10f, 10f, 0f), 1.4f);
+
+        NavRoute plain = NavRouter.Find(grid, from, to, 1f);
+        NavRoute route = NavRouter.Find(grid, from, to, 1f, crowd: [creature]);
+
+        Assert.Equal("routed", route.Reason);
+        Assert.True(route.Crowding > 0f, "the route goes through the creature");
+        Assert.True(
+            route.Scrape <= plain.Scrape + 0.25f,
+            $"the route scrapes {route.Scrape:0.00} m², straight on {plain.Scrape:0.00} m²");
+        Assert.All(route.Legs, point => Assert.InRange(point.X, 9.5f, 10.5f));
+    }
+
+    [Fact]
+    public void ARouteSidestepsACreatureOnTheSideWithRoomAndKeepsClearOfTheWallThere()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 20f, 0f),
+            .. Wall(6f, 0f, 6f, 20f, 0f, 3f),
+            .. Wall(14f, 0f, 14f, 20f, 0f, 3f)]);
+        var from = new Vector3(9f, 2f, 0f);
+        var to = new Vector3(9f, 18f, 0f);
+        var creature = new NavAvoidance(new Vector3(8f, 10f, 0f), 1.4f);
+
+        NavRoute plain = NavRouter.Find(grid, from, to, 1f);
+        NavRoute route = NavRouter.Find(grid, from, to, 1f, crowd: [creature]);
+
+        Assert.Equal("routed", route.Reason);
+        Assert.True(route.Crowding < 0.05f, $"the route grazes the creature by {route.Crowding:0.000} m");
+        for (int leg = 1; leg < route.Legs.Count; leg++)
+        {
+            float distance = DistanceToSegment(new Vector2(8f, 10f), route.Legs[leg - 1], route.Legs[leg]);
+            Assert.True(distance >= creature.Radius - 0.05f, $"leg {leg} passes {distance:0.00} m from the creature");
+        }
+        Assert.All(route.Path, point => Assert.True(point.X <= 13f, $"the route comes within {14f - point.X:0.00} m of the far wall"));
+        Assert.True(
+            route.Scrape <= plain.Scrape + 0.25f,
+            $"the sidestep scrapes {route.Scrape:0.00} m², straight on {plain.Scrape:0.00} m²");
+    }
+
+    [Fact]
+    public void ACreatureWhereARouteRoundsACornerDoesNotPullTheRouteIntoTheCorner()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 20f, 0f),
+            .. Wall(10f, 0f, 10f, 10f, 0f, 3f),
+            .. Wall(10f, 10f, 20f, 10f, 0f, 3f)]);
+        var from = new Vector3(16f, 15f, 0f);
+        var to = new Vector3(4f, 4f, 0f);
+        NavRoute plain = NavRouter.Find(grid, from, to, 1f);
+        Assert.True(plain.Legs.Count > 2);
+        var creature = new NavAvoidance(plain.Legs[1], 1.2f);
+
+        NavRoute route = NavRouter.Find(grid, from, to, 1f, crowd: [creature]);
+
+        Assert.Equal("routed", route.Reason);
+        var corner = new Vector2(10f, 10f);
+        for (int leg = 1; leg < route.Legs.Count; leg++)
+        {
+            float distance = DistanceToSegment(corner, route.Legs[leg - 1], route.Legs[leg]);
+            Assert.True(distance >= 0.85f, $"leg {leg} passes within {distance:0.00} m of the corner");
+        }
+        Assert.True(
+            route.Scrape <= plain.Scrape + 0.25f,
+            $"the route scrapes {route.Scrape:0.00} m², without the creature {plain.Scrape:0.00} m²");
+    }
+
+    [Fact]
     public void ARouteStartingInsideAnAvoidedSpotLeavesItWithoutGoingDeeper()
     {
         NavGrid grid = Build(Floor(0f, 0f, 20f, 20f, 0f));
