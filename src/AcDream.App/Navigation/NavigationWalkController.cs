@@ -53,13 +53,14 @@ internal readonly record struct NavigationWalkReport(
     string Reason,
     uint BlockedByObjectId = 0u);
 
-/// <summary>The local player's body on one frame, as a walk sees it.</summary>
+/// <summary>The local player's body on one frame, as a walk sees it, and the cell it stands in.</summary>
 internal readonly record struct NavigationWalkBodySample(
     Vector3 Position,
     float HeadingDegrees,
     NavBody Body,
     RuntimeScriptedMoveSnapshot Moves,
-    bool InPortalSpace);
+    bool InPortalSpace,
+    uint CellId = 0u);
 
 /// <summary>A server object standing where a walk stopped making progress.</summary>
 internal readonly record struct NavigationBlocker(uint ObjectId, string Name, bool IsClosedDoor);
@@ -113,7 +114,10 @@ internal interface INavigationGoalSource
 /// Plans routes to objects over navigation grids built from the physics world,
 /// and walks the local player along them with scripted moves. A grid covers a
 /// square region around the character and its goal and is built off the update
-/// thread. A walk that stops making progress plans again from where the
+/// thread. Inside a sealed dungeon a grid covers every cell of the dungeon, so
+/// one grid serves every walk there. A goal too far away for one region is
+/// walked to in stages, each planned over a region reaching toward the goal. A
+/// walk that stops making progress plans again from where the
 /// character stands, keeping out of the spot where it stuck, a few times before
 /// it gives up and names what stood beside that spot. A walk that meets a closed
 /// door on its way, or stops making progress beside one, has the client open it
@@ -132,6 +136,18 @@ internal sealed class NavigationWalkController
 
     /// <summary>The side of the grid kept around the character while the grid is shown and nothing is planned.</summary>
     internal const float ViewRegion = 128f;
+
+    /// <summary>
+    /// A goal too far away for one region is walked to in stages, each planned
+    /// over a region reaching from the character toward the goal. A stage must
+    /// bring the character at least this much nearer, and a walk has at most
+    /// this many.
+    /// </summary>
+    internal const float MinimumStageProgress = 16f;
+    internal const int MaximumStages = 12;
+
+    /// <summary>The largest region a grid covering a whole sealed dungeon may have.</summary>
+    internal const float MaximumDungeonRegion = 384f;
 
     /// <summary>
     /// A walk that stops making progress keeps its next plans out of a spot this
@@ -170,6 +186,7 @@ internal sealed class NavigationWalkController
     private readonly INavigationGoalSource _goals;
     private readonly Action<string>? _say;
     private readonly INavigationDoors? _doors;
+    private readonly Func<uint, bool>? _isSealedDungeon;
     private readonly object _gate = new();
 
     private Request? _incoming;
@@ -193,13 +210,15 @@ internal sealed class NavigationWalkController
         INavigationWalkBody body,
         INavigationGoalSource goals,
         Action<string>? say = null,
-        INavigationDoors? doors = null)
+        INavigationDoors? doors = null,
+        Func<uint, bool>? isSealedDungeon = null)
     {
         _physics = physics ?? throw new ArgumentNullException(nameof(physics));
         _body = body ?? throw new ArgumentNullException(nameof(body));
         _goals = goals ?? throw new ArgumentNullException(nameof(goals));
         _say = say;
         _doors = doors;
+        _isSealedDungeon = isSealedDungeon;
     }
 
     /// <summary>Whether to keep a grid built around the character while nothing is planned.</summary>
@@ -216,6 +235,9 @@ internal sealed class NavigationWalkController
 
     /// <summary>The index in the route's legs of the leg end the character is walking toward, while it walks.</summary>
     public int? LegIndex => _driver?.LegIndex;
+
+    /// <summary>Whether the route being walked is one stage of a walk to a goal beyond it.</summary>
+    public bool IsStaged => _active is { Staged: true };
 
     /// <summary>Whether a request is waiting, being planned or being walked.</summary>
     public bool IsBusy
@@ -304,18 +326,56 @@ internal sealed class NavigationWalkController
         Vector3 to,
         out float originX,
         out float originY,
+        out float size) =>
+        TryChooseSquare(
+            new Vector2(MathF.Min(from.X, to.X), MathF.Min(from.Y, to.Y)),
+            new Vector2(MathF.Max(from.X, to.X), MathF.Max(from.Y, to.Y)),
+            MaximumRegion,
+            out originX,
+            out originY,
+            out size);
+
+    /// <summary>
+    /// The region one stage of a walk to a goal too far away for one region is
+    /// planned over: the largest region, holding the character with room behind
+    /// it and reaching as far toward the goal as it can.
+    /// </summary>
+    internal static void ChooseStageRegion(
+        Vector3 from,
+        Vector3 to,
+        out float originX,
+        out float originY,
         out float size)
     {
-        float span = MathF.Max(MathF.Abs(to.X - from.X), MathF.Abs(to.Y - from.Y)) + (2f * RegionMargin);
+        size = MaximumRegion;
+        float half = size * 0.5f;
+        var toward = new Vector2(to.X - from.X, to.Y - from.Y);
+        float longest = MathF.Max(MathF.Abs(toward.X), MathF.Abs(toward.Y));
+        Vector2 centre = new Vector2(from.X, from.Y)
+            + (longest > 1e-3f ? toward * ((half - RegionMargin) / longest) : Vector2.Zero);
+        originX = Snap(centre.X - half);
+        originY = Snap(centre.Y - half);
+    }
+
+    /// <summary>A square region holding a rectangle with room around it, or false when it would be larger than <paramref name="largest"/>.</summary>
+    private static bool TryChooseSquare(
+        Vector2 minimum,
+        Vector2 maximum,
+        float largest,
+        out float originX,
+        out float originY,
+        out float size)
+    {
+        float span = MathF.Max(maximum.X - minimum.X, maximum.Y - minimum.Y) + (2f * RegionMargin);
         size = MathF.Ceiling(MathF.Max(MinimumRegion, span) / 16f) * 16f;
-        if (size > MaximumRegion)
+        if (size > largest)
         {
             originX = 0f;
             originY = 0f;
             return false;
         }
-        originX = Snap(((from.X + to.X) * 0.5f) - (size * 0.5f));
-        originY = Snap(((from.Y + to.Y) * 0.5f) - (size * 0.5f));
+        originX = Snap(((minimum.X + maximum.X) * 0.5f) - (size * 0.5f));
+        originY = Snap(((minimum.Y + maximum.Y) * 0.5f) - (size * 0.5f));
         return true;
     }
 
@@ -380,34 +440,40 @@ internal sealed class NavigationWalkController
             return;
         }
 
-        if (_grid is not { } grid
-            || grid.Body != sample.Body
-            || !grid.Contains(sample.Position, CoverMargin)
-            || !grid.Contains(active.Goal, CoverMargin)
-            || IsStale(grid))
+        NavGrid? usable = _grid is { } built
+            && built.Body == sample.Body
+            && built.Contains(sample.Position, CoverMargin)
+            && !IsStale(built)
+                ? built
+                : null;
+        bool staged = false;
+        if (usable is null || !usable.Contains(active.Goal, CoverMargin))
         {
-            if (!TryChooseRegion(sample.Position, active.Goal, out float originX, out float originY, out float size))
+            if (TryChooseDungeonRegion(sample, active.Goal, out float originX, out float originY, out float size)
+                || TryChooseRegion(sample.Position, active.Goal, out originX, out originY, out size))
             {
-                End(active, NavigationWalkState.NoRoute, "the goal is too far away to plan a route to");
+                BuildGrid(active, sample, originX, originY, size);
                 return;
             }
-            if (active.Builds >= MaximumBuildsPerPlan)
+            if (usable is null || !ReachesToward(usable, sample.Position, active.Goal))
             {
-                End(active, NavigationWalkState.NoRoute, "no grid covers both the character and the goal");
+                ChooseStageRegion(sample.Position, active.Goal, out originX, out originY, out size);
+                BuildGrid(active, sample, originX, originY, size);
                 return;
             }
-            active.Builds++;
-            if (!StartBuild(originX, originY, size, sample.Body))
-                End(active, NavigationWalkState.NoRoute, "no collision is loaded around the character");
-            return;
+            staged = true;
         }
 
+        NavGrid grid = usable;
         Vector3 from = sample.Position;
         Vector3 to = active.Goal;
         float arrival = PlanningRadius(active.ArrivalMeters);
         NavAvoidance[] avoid = [.. active.Avoid];
+        active.Staged = staged;
         _routingFor = active;
-        _routing = Task.Run(() => NavRouter.Find(grid, from, to, arrival, avoid));
+        _routing = staged
+            ? Task.Run(() => NavRouter.FindToward(grid, from, to, RegionMargin, avoid))
+            : Task.Run(() => NavRouter.Find(grid, from, to, arrival, avoid));
     }
 
     private void Drive(Request active, RuntimeRouteDriver driver, in NavigationWalkBodySample sample)
@@ -434,7 +500,10 @@ internal sealed class NavigationWalkController
         switch (driver.State)
         {
             case RuntimeRouteDriveState.Driving:
-                Publish(active, NavigationWalkState.Walking, "walking", Remaining(driver, sample.Position));
+                Publish(active, NavigationWalkState.Walking, "walking", Remaining(active, driver, sample.Position));
+                break;
+            case RuntimeRouteDriveState.Arrived when active.Staged:
+                NextStage(active, sample);
                 break;
             case RuntimeRouteDriveState.Arrived:
                 Face(Locate(active), sample);
@@ -561,6 +630,80 @@ internal sealed class NavigationWalkController
         active.WaitingOn = null;
         active.BlockedBy = new NavigationBlocker(door.ObjectId, door.Name, IsClosedDoor: true);
         End(active, NavigationWalkState.Blocked, $"{why}: {door.Name} (0x{door.ObjectId:X8})");
+    }
+
+    /// <summary>Plans the next stage of a walk from where its last stage ended, or gives up after too many.</summary>
+    private void NextStage(Request active, in NavigationWalkBodySample sample)
+    {
+        _driver = null;
+        active.Staged = false;
+        active.Builds = 0;
+        active.Stages++;
+        active.Goal = Locate(active);
+        Goal = (active.Goal, active.ArrivalMeters);
+        float away = HorizontalDistance(sample.Position, active.Goal);
+        if (active.Stages >= MaximumStages)
+        {
+            End(active, NavigationWalkState.NoRoute, $"the goal was still {away:0} m away after {active.Stages} stages");
+            return;
+        }
+        string next = $"stage {active.Stages} walked; planning the next toward the goal, {away:0} m away";
+        Publish(active, NavigationWalkState.Planning, next, float.NaN);
+        _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {next}");
+    }
+
+    private void BuildGrid(Request active, in NavigationWalkBodySample sample, float originX, float originY, float size)
+    {
+        if (active.Builds >= MaximumBuildsPerPlan)
+        {
+            End(active, NavigationWalkState.NoRoute, "no grid covers both the character and the goal");
+            return;
+        }
+        active.Builds++;
+        if (!StartBuild(originX, originY, size, sample.Body))
+            End(active, NavigationWalkState.NoRoute, "no collision is loaded around the character");
+    }
+
+    /// <summary>
+    /// Inside a sealed dungeon, a square region holding every cell of the dungeon
+    /// and both ends of the walk, so one grid serves every walk there. False
+    /// outside a sealed dungeon, or when the dungeon is too big for one grid.
+    /// </summary>
+    private bool TryChooseDungeonRegion(
+        in NavigationWalkBodySample sample,
+        Vector3 goal,
+        out float originX,
+        out float originY,
+        out float size)
+    {
+        originX = 0f;
+        originY = 0f;
+        size = 0f;
+        if (_isSealedDungeon is null || sample.CellId == 0u || !_isSealedDungeon(sample.CellId))
+            return false;
+        uint landblockId = (sample.CellId & 0xFFFF0000u) | 0xFFFFu;
+        if (!NavGeometry.TryMeasureCells(_physics, landblockId, out Vector2 minimum, out Vector2 maximum))
+            return false;
+        var from = new Vector2(sample.Position.X, sample.Position.Y);
+        var to = new Vector2(goal.X, goal.Y);
+        return TryChooseSquare(
+            Vector2.Min(minimum, Vector2.Min(from, to)),
+            Vector2.Max(maximum, Vector2.Max(from, to)),
+            MaximumDungeonRegion,
+            out originX,
+            out originY,
+            out size);
+    }
+
+    /// <summary>Whether a grid reaches far enough toward a goal beyond it to plan a stage over from where the character stands.</summary>
+    private static bool ReachesToward(NavGrid grid, Vector3 from, Vector3 goal)
+    {
+        if (grid.Size <= 2f * RegionMargin)
+            return false;
+        float x = Math.Clamp(goal.X, grid.OriginX + RegionMargin, grid.OriginX + grid.Size - RegionMargin);
+        float y = Math.Clamp(goal.Y, grid.OriginY + RegionMargin, grid.OriginY + grid.Size - RegionMargin);
+        return HorizontalDistance(from, goal) - HorizontalDistance(new Vector3(x, y, 0f), goal)
+            >= 2f * MinimumStageProgress;
     }
 
     private bool Apply(in RuntimeRouteDriveStep step)
@@ -719,6 +862,29 @@ internal sealed class NavigationWalkController
         _say?.Invoke(
             $"Route: {route.Legs.Count - 1} legs, {route.Length:0.0} m, "
             + $"{route.Expansions} expansions in {route.Milliseconds:0} ms");
+        if (requester.Staged)
+        {
+            float left = HorizontalDistance(route.Legs[^1], requester.Goal);
+            float before = _body.TrySample(out NavigationWalkBodySample here)
+                ? HorizontalDistance(here.Position, requester.Goal)
+                : left;
+            if (before - left < MinimumStageProgress)
+            {
+                End(requester, NavigationWalkState.NoRoute, $"no way on toward the goal was found; it is {before:0} m away");
+                return;
+            }
+            if (!requester.Walk)
+            {
+                End(
+                    requester,
+                    NavigationWalkState.Planned,
+                    $"a route was found for the first {route.Length:0} m; the rest is planned on the way");
+                return;
+            }
+            _driver = new RuntimeRouteDriver(route.Legs);
+            Publish(requester, NavigationWalkState.Walking, "walking", route.Length + left);
+            return;
+        }
         if (!requester.Walk)
         {
             End(requester, NavigationWalkState.Planned, "a route was found");
@@ -754,7 +920,8 @@ internal sealed class NavigationWalkController
     private Vector3 Locate(Request request) =>
         _goals.TryLocate(request.ObjectId, out Vector3 position) ? position : request.Goal;
 
-    private static float Remaining(RuntimeRouteDriver driver, Vector3 position)
+    /// <summary>The route left to walk, and for one stage of a longer walk the straight line on from its end to the goal.</summary>
+    private static float Remaining(Request request, RuntimeRouteDriver driver, Vector3 position)
     {
         float remaining = 0f;
         var at = new Vector2(position.X, position.Y);
@@ -764,7 +931,9 @@ internal sealed class NavigationWalkController
             remaining += Vector2.Distance(at, end);
             at = end;
         }
-        return remaining;
+        return request.Staged
+            ? remaining + Vector2.Distance(at, new Vector2(request.Goal.X, request.Goal.Y))
+            : remaining;
     }
 
     private static float HorizontalDistance(Vector3 from, Vector3 to) =>
@@ -802,6 +971,12 @@ internal sealed class NavigationWalkController
 
         /// <summary>Grids built for the current plan.</summary>
         public int Builds { get; set; }
+
+        /// <summary>Whether the route planned or walked is one stage of a walk to a goal beyond it.</summary>
+        public bool Staged { get; set; }
+
+        /// <summary>The stages of the walk already walked.</summary>
+        public int Stages { get; set; }
 
         /// <summary>The spots where the walk stopped making progress, which later plans keep out of.</summary>
         public List<NavAvoidance> Avoid { get; } = [];

@@ -35,7 +35,8 @@ internal sealed class RuntimeNavigationWalkBody : INavigationWalkBody
             MoveToMath.HeadingFromYaw(controller.Yaw),
             NavBody.Player(controller.StepUpHeight, controller.StepDownHeight),
             _movement.ScriptedMove,
-            portal.Kind != RuntimePortalKind.None && !portal.Completed && !portal.Cancelled);
+            portal.Kind != RuntimePortalKind.None && !portal.Completed && !portal.Cancelled,
+            controller.CellId);
         return true;
     }
 

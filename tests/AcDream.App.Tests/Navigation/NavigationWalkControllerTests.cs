@@ -187,17 +187,78 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
-    public void AGoalTooFarAwayToPlanForHasNoRoute()
+    public void AGoalTooFarAwayForOneRegionIsWalkedToInStages()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
-        var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(40f, 500f, 0f) });
+        var walk = new NavigationWalkController(
+            FlatWorld(landblocksNorth: 3),
+            body,
+            new Goals { [Target] = new Vector3(60f, 520f, 0f) });
 
         walk.WalkTo(Target);
-        walk.Tick(Frame);
+        NavigationWalkReport report = RunUntilSettled(walk, body, seconds: 300f);
 
-        Assert.Equal(NavigationWalkState.NoRoute, walk.Report.State);
-        Assert.Equal(460f, walk.Report.RemainingMeters, 1);
-        Assert.Equal(0, body.MovesBegun);
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.InRange(
+            Vector2.Distance(body.Flat, new Vector2(60f, 520f)),
+            0f,
+            NavigationWalkController.DefaultArrivalMeters + 0.05f);
+        Assert.Equal(0, report.Replans);
+    }
+
+    [Fact]
+    public void AWalkTowardAGoalBeyondTheLoadedWorldEndsWhereItCanGetNoNearer()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
+        var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(40f, 900f, 0f) });
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body, seconds: 200f);
+
+        Assert.Equal(NavigationWalkState.NoRoute, report.State);
+        Assert.Contains("no way on toward the goal", report.Reason);
+        Assert.True(body.Position.Y > 150f);
+    }
+
+    [Fact]
+    public void AStageRegionHoldsTheCharacterAndReachesTowardTheGoal()
+    {
+        var from = new Vector3(500f, 500f, 0f);
+        float margin = NavigationWalkController.RegionMargin - NavGrid.DefaultCellSize;
+        foreach (Vector3 goal in new[] { new Vector3(1500f, 500f, 0f), new Vector3(-400f, -600f, 0f), new Vector3(700f, 1400f, 0f) })
+        {
+            NavigationWalkController.ChooseStageRegion(from, goal, out float originX, out float originY, out float size);
+
+            Assert.Equal(NavigationWalkController.MaximumRegion, size);
+            Assert.InRange(from.X - originX, margin, size - margin);
+            Assert.InRange(from.Y - originY, margin, size - margin);
+            var centre = new Vector2(originX + (size * 0.5f), originY + (size * 0.5f));
+            var flatGoal = new Vector2(goal.X, goal.Y);
+            Assert.True(Vector2.Distance(centre, flatGoal) < Vector2.Distance(new Vector2(from.X, from.Y), flatGoal) - 100f);
+        }
+    }
+
+    [Fact]
+    public void InsideASealedDungeonOneGridCoversEveryCellAndServesEveryWalkThere()
+    {
+        const uint room = 0xA9B40100u;
+        var body = new SimulatedBody(new Vector3(20f, 20f, -30f)) { CellId = room };
+        var goals = new Goals
+        {
+            [Target] = new Vector3(60f, 32f, -30f),
+            [Other] = new Vector3(245f, 32f, -30f),
+        };
+        var walk = new NavigationWalkController(DungeonWorld(room), body, goals, isSealedDungeon: cell => cell == room);
+
+        walk.WalkTo(Target);
+        Assert.Equal(NavigationWalkState.Arrived, RunUntilSettled(walk, body).State);
+        NavGrid? first = walk.Grid;
+        walk.WalkTo(Other);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.Same(first, walk.Grid);
+        Assert.True(first!.Contains(new Vector3(10f, 10f, -30f)) && first.Contains(new Vector3(250f, 50f, -30f)));
     }
 
     [Fact]
@@ -290,24 +351,67 @@ public sealed class NavigationWalkControllerTests
         Assert.True(body.Position.Y > 60f);
     }
 
-    private static PhysicsEngine FlatWorld()
+    private static PhysicsEngine FlatWorld(int landblocksNorth = 1)
     {
         var physics = new PhysicsEngine();
-        physics.AddLandblock(0xA9B4FFFFu, new TerrainSurface(new byte[81], new float[256]), [], [], 0f, 0f);
+        for (int index = 0; index < landblocksNorth; index++)
+        {
+            physics.AddLandblock(
+                0xA9B4FFFFu + ((uint)index << 16),
+                new TerrainSurface(new byte[81], new float[256]),
+                [],
+                [],
+                0f,
+                index * 192f);
+        }
         return physics;
     }
 
-    private static NavigationWalkReport RunUntilSettled(NavigationWalkController walk, SimulatedBody body) =>
-        RunUntil(walk, body, report => report.State is not (NavigationWalkState.Planning or NavigationWalkState.Walking));
+    /// <summary>A landblock holding a dungeon 30 m below its terrain: two rooms joined by a corridor 190 m long.</summary>
+    private static PhysicsEngine DungeonWorld(uint firstCell)
+    {
+        static CellSurface Floor(uint cellId, float x0, float y0, float x1, float y1) => new(
+            cellId,
+            new Dictionary<ushort, Vector3>
+            {
+                [0] = new(x0, y0, -30f),
+                [1] = new(x1, y0, -30f),
+                [2] = new(x1, y1, -30f),
+                [3] = new(x0, y1, -30f),
+            },
+            [[0, 1, 2, 3]]);
+
+        var physics = new PhysicsEngine();
+        physics.AddLandblock(
+            0xA9B4FFFFu,
+            new TerrainSurface(new byte[81], new float[256]),
+            [
+                Floor(firstCell, 10f, 10f, 40f, 50f),
+                Floor(firstCell + 1u, 40f, 28f, 230f, 36f),
+                Floor(firstCell + 2u, 230f, 20f, 250f, 50f),
+            ],
+            [],
+            0f,
+            0f);
+        return physics;
+    }
+
+    private static NavigationWalkReport RunUntilSettled(NavigationWalkController walk, SimulatedBody body, float seconds = 120f) =>
+        RunUntil(
+            walk,
+            body,
+            report => report.State is not (NavigationWalkState.Planning or NavigationWalkState.Walking),
+            seconds);
 
     private static NavigationWalkReport RunUntil(
         NavigationWalkController walk,
         SimulatedBody body,
-        Func<NavigationWalkReport, bool> done)
+        Func<NavigationWalkReport, bool> done,
+        float seconds = 120f)
     {
         var wall = Stopwatch.StartNew();
         float simulated = 0f;
-        while (simulated < 120f && wall.Elapsed < TimeSpan.FromSeconds(60))
+        while (simulated < seconds && wall.Elapsed < TimeSpan.FromSeconds(120))
         {
             walk.Tick(Frame);
             NavigationWalkReport report = walk.Report;
@@ -437,6 +541,8 @@ public sealed class NavigationWalkControllerTests
 
         public bool Stuck { get; init; }
 
+        public uint CellId { get; init; }
+
         public (Vector2 Centre, float Radius)? Obstacle { get; init; }
 
         /// <summary>Whether the obstacle is there, for one that can go away, such as a door that opens.</summary>
@@ -458,7 +564,8 @@ public sealed class NavigationWalkControllerTests
                 Heading,
                 NavBody.Player(0.6f, 1.5f),
                 new RuntimeScriptedMoveSnapshot(_travel, default, _turn, 0, false),
-                InPortalSpace: false);
+                InPortalSpace: false,
+                CellId: CellId);
             return true;
         }
 

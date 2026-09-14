@@ -129,7 +129,8 @@ internal sealed record SessionPlayerResult(
     RuntimePlacementProjectionRetrySlot PlacementProjectionRetry,
     CurrentGameRuntimeAdapter GameRuntime,
     GameplayInputActionRouter? GameplayActions,
-    SessionPlayerRuntimeBindings RuntimeBindings);
+    SessionPlayerRuntimeBindings RuntimeBindings,
+    ISealedDungeonCellClassifier? SealedDungeonCells = null);
 
 internal interface IGameWindowSessionPlayerPublication
 {
@@ -1214,7 +1215,8 @@ internal sealed class SessionPlayerCompositionPhase
             placementProjectionRetry,
             gameRuntime,
             gameplayActionsLease?.Resource,
-            bindings);
+            bindings,
+            sealedDungeonCells);
         _publication.PublishSessionPlayer(result);
 
         streamerLease.Transfer();
