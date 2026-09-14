@@ -197,6 +197,25 @@ public sealed class NavGeometry
     }
 
     /// <summary>
+    /// The horizontal footprint of one part of an object's collision, as the point at
+    /// its middle and the radius it fills: a cylinder or sphere as it was registered,
+    /// and a part with a collision model of its own as that model's bounding sphere,
+    /// placed, turned and scaled with the part, since a part's own position can lie
+    /// well off the middle of its model.
+    /// </summary>
+    public static NavAvoidance FootprintOf(ShadowEntry entry, PhysicsDataCache? cache)
+    {
+        if (entry.CollisionType != ShadowCollisionType.BSP || cache?.GetGfxObj(entry.GfxObjId) is not { } model)
+            return new NavAvoidance(entry.Position, entry.Radius);
+        FlatCollisionSphere sphere = model.FlatPhysicsBsp is { RootIndex: >= 0 } flat
+            ? flat.Nodes[flat.RootIndex].BoundingSphere
+            : new FlatCollisionSphere(model.BoundingSphere?.Origin ?? Vector3.Zero, model.BoundingSphere?.Radius ?? entry.Radius);
+        float scale = entry.Scale > 0f ? entry.Scale : 1f;
+        Quaternion rotation = entry.Rotation == default ? Quaternion.Identity : entry.Rotation;
+        return new NavAvoidance(entry.Position + Vector3.Transform(sphere.Origin * scale, rotation), sphere.Radius * scale);
+    }
+
+    /// <summary>
     /// The resident landblocks a square region overlaps, by their terrain's square
     /// or by the extent of their interior cells, which in a dungeon can lie far
     /// outside that square.

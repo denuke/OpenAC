@@ -367,6 +367,21 @@ public sealed class NavGridTests
     }
 
     [Fact]
+    public void ARouteStartingInsideAnAvoidedSpotLeavesItWithoutGoingDeeper()
+    {
+        NavGrid grid = Build(Floor(0f, 0f, 20f, 20f, 0f));
+        var spot = new NavAvoidance(new Vector3(10f, 10f, 0f), 2f);
+
+        NavRoute away = NavRouter.Find(grid, new Vector3(10f, 11f, 0f), new Vector3(10f, 18f, 0f), 1f, [spot]);
+        NavRoute past = NavRouter.Find(grid, new Vector3(10f, 11f, 0f), new Vector3(10f, 2f, 0f), 1f, [spot]);
+
+        Assert.Equal("routed", away.Reason);
+        Assert.Equal("routed", past.Reason);
+        Assert.All(past.Path, point =>
+            Assert.True(Vector2.Distance(new Vector2(point.X, point.Y), new Vector2(10f, 10f)) >= 0.85f));
+    }
+
+    [Fact]
     public void AGoalBeyondTheGridIsRoutedToTheGridsEdgeTowardIt()
     {
         NavGrid grid = Build(Floor(0f, 0f, 32f, 32f, 0f));
@@ -474,6 +489,18 @@ public sealed class NavGridTests
         Assert.Empty(dungeon.Terrains);
         Assert.Equal(2, dungeon.CellTriangles.Count);
         Assert.Null(NavGeometry.CaptureDungeon(engine, 0x12340100u, 60f, -340f, 64f));
+    }
+
+    [Fact]
+    public void AnObjectsFootprintIsItsCylinderOrSphereOrElseWhereItWasRegistered()
+    {
+        var cylinder = new ShadowEntry(1u, 0u, new Vector3(10f, 20f, 1f), Quaternion.Identity, 0.6f, ShadowCollisionType.Cylinder, 2f);
+        var sphere = new ShadowEntry(2u, 0u, new Vector3(5f, 6f, 7f), Quaternion.Identity, 0.4f, ShadowCollisionType.Sphere);
+        var unloadedModel = new ShadowEntry(3u, 0x01001234u, new Vector3(1f, 2f, 3f), Quaternion.Identity, 2.5f);
+
+        Assert.Equal(new NavAvoidance(new Vector3(10f, 20f, 1f), 0.6f), NavGeometry.FootprintOf(cylinder, null));
+        Assert.Equal(new NavAvoidance(new Vector3(5f, 6f, 7f), 0.4f), NavGeometry.FootprintOf(sphere, null));
+        Assert.Equal(new NavAvoidance(new Vector3(1f, 2f, 3f), 2.5f), NavGeometry.FootprintOf(unloadedModel, null));
     }
 
     [Fact]

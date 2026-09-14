@@ -474,7 +474,7 @@ public static class NavRouter
                             || grid.WallDistance(node) < kept + CornerGain
                             || MathF.Abs(there.Z - at.Z) > grid.Body.StepUpHeight
                             || Vector2.Distance(new Vector2(there.X, there.Y), new Vector2(at.X, at.Y)) > CornerShift
-                            || IsAvoided(there, avoided))
+                            || IsAvoided(there, avoided, Nowhere))
                         {
                             continue;
                         }
@@ -586,19 +586,34 @@ public static class NavRouter
         return clearance >= profile.Clearance ? 0f : (profile.Clearance - clearance) * profile.Weight;
     }
 
-    private static bool IsAvoided(Vector3 point, IReadOnlyList<NavAvoidance> avoided)
+    /// <summary>A point no step is taken from, for tests of avoided spots that allow no way out of them.</summary>
+    private static readonly Vector3 Nowhere = new(float.PositiveInfinity);
+
+    /// <summary>
+    /// Whether a step onto a point enters a spot a route keeps out of. A route that
+    /// starts in such a spot, as a walk that stopped against an object does, may
+    /// leave it: a step inside the spot counts only when it comes no farther from
+    /// the spot's middle than the point it was taken from.
+    /// </summary>
+    private static bool IsAvoided(Vector3 point, IReadOnlyList<NavAvoidance> avoided, Vector3 from)
     {
         foreach (NavAvoidance avoidance in avoided)
         {
-            float dx = point.X - avoidance.Centre.X;
-            float dy = point.Y - avoidance.Centre.Y;
-            if ((dx * dx) + (dy * dy) <= avoidance.Radius * avoidance.Radius
-                && MathF.Abs(point.Z - avoidance.Centre.Z) <= AvoidanceHeight)
-            {
-                return true;
-            }
+            float here = FlatDistanceSquared(point, avoidance.Centre);
+            if (here > avoidance.Radius * avoidance.Radius || MathF.Abs(point.Z - avoidance.Centre.Z) > AvoidanceHeight)
+                continue;
+            if (here > FlatDistanceSquared(from, avoidance.Centre))
+                continue;
+            return true;
         }
         return false;
+    }
+
+    private static float FlatDistanceSquared(Vector3 a, Vector3 b)
+    {
+        float dx = a.X - b.X;
+        float dy = a.Y - b.Y;
+        return (dx * dx) + (dy * dy);
     }
 
     private static bool PassesAvoided(Vector3 from, Vector3 to, IReadOnlyList<NavAvoidance> avoided)
@@ -613,11 +628,13 @@ public static class NavRouter
                 ? Math.Clamp(Vector2.Dot(centre - start, along) / lengthSquared, 0f, 1f)
                 : 0f;
             float height = from.Z + ((to.Z - from.Z) * t);
-            if (Vector2.Distance(centre, start + (along * t)) <= avoidance.Radius
-                && MathF.Abs(height - avoidance.Centre.Z) <= AvoidanceHeight)
-            {
-                return true;
-            }
+            float closest = Vector2.Distance(centre, start + (along * t));
+            if (closest > avoidance.Radius || MathF.Abs(height - avoidance.Centre.Z) > AvoidanceHeight)
+                continue;
+            float away = Vector2.Distance(centre, start);
+            if (away <= avoidance.Radius && closest >= away - 1e-3f)
+                continue;
+            return true;
         }
         return false;
     }
@@ -729,7 +746,7 @@ public static class NavRouter
                     if (next < 0 || Closed[next] || !_grid.IsClear(next))
                         continue;
                     Vector3 there = _grid.Position(next);
-                    if (IsAvoided(there, _avoided))
+                    if (IsAvoided(there, _avoided, here))
                         continue;
                     float step = (_grid.CellSize * (direction < 4 ? 1f : DiagonalStep))
                         + MathF.Abs(there.Z - here.Z)
@@ -756,7 +773,7 @@ public static class NavRouter
                 if (Closed[next] || !_grid.IsClear(next))
                     continue;
                 Vector3 there = _grid.Position(next);
-                if (IsAvoided(there, _avoided))
+                if (IsAvoided(there, _avoided, here))
                     continue;
                 float total = _cost[node]
                     + Vector2.Distance(new Vector2(here.X, here.Y), new Vector2(there.X, there.Y))
