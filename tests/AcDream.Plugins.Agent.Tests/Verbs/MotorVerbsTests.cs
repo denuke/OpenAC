@@ -463,6 +463,51 @@ public sealed class MotorVerbsTests
     }
 
     [Fact]
+    public void GoToAPlaceWalksToItsMapCoordinatesAndCompletesWhenItArrives()
+    {
+        var (host, verbs, correlator, _, ring) = Build();
+        FakeNavigation navigation = host.FakeAutomation.FakeNavigation;
+
+        Assert.Equal("handled", verbs.Handle(Line("go to 0.1 -0.05 0.00002 within 3")).Outcome);
+
+        (PluginNavigationPosition place, float within) = Assert.Single(navigation.PlaceGoTos);
+        Assert.Equal(0.1d, place.NorthSouth);
+        Assert.Equal(-0.05d, place.EastWest);
+        Assert.Equal(0.00002d, place.Elevation);
+        Assert.Equal(3f, within);
+        Assert.Empty(navigation.GoTos);
+        JsonElement accepted = Kinds(ring, RecordKinds.GoalAccepted).Single();
+        Assert.Equal(0.1d, accepted.GetProperty("place").GetProperty("northSouth").GetDouble());
+
+        navigation.EndGoTo(PluginGoToState.Arrived, "arrived");
+        correlator.Tick(inWorld: true);
+        Assert.Equal("completed", Kinds(ring, RecordKinds.GoalResolved).Single().GetProperty("outcome").GetString());
+    }
+
+    [Fact]
+    public void GoToAPlaceWrittenWithCompassLettersKeepsTheCharactersOwnElevation()
+    {
+        var (host, verbs, _, _, _) = Build();
+        FakeNavigation navigation = host.FakeAutomation.FakeNavigation;
+
+        Assert.Equal("handled", verbs.Handle(Line("go to 0.05W, 0.1N")).Outcome);
+
+        PluginNavigationPosition place = Assert.Single(navigation.PlaceGoTos).Place;
+        Assert.Equal(0.1d, place.NorthSouth);
+        Assert.Equal(-0.05d, place.EastWest);
+        Assert.Equal(navigation.Snapshot.Position.Elevation, place.Elevation);
+    }
+
+    [Fact]
+    public void GoToAPlaceTooFarAwayIsRefused()
+    {
+        var (host, verbs, _, _, _) = Build();
+
+        Assert.NotEqual("handled", verbs.Handle(Line("go to 50 50 0")).Outcome);
+        Assert.Empty(host.FakeAutomation.FakeNavigation.PlaceGoTos);
+    }
+
+    [Fact]
     public void AWalkWaitingWhileSomethingElseNeedsTheCharacterKeepsItsOutcomeOpen()
     {
         var (host, verbs, correlator, clock, ring) = Build();

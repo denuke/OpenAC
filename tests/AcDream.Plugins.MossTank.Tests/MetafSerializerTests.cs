@@ -4,6 +4,28 @@ namespace AcDream.Plugins.MossTank.Tests;
 
 public sealed class MetafSerializerTests
 {
+    [Fact]
+    public void ARouteWithPointsNearZeroElevationReadsBackItsPoints()
+    {
+        var settings = new NavigationSettings { Mode = RouteMode.Circular };
+        settings.Waypoints.Add(new RouteWaypoint
+        {
+            Type = RouteWaypointType.Point,
+            Position = new AcDream.Plugin.Abstractions.PluginNavigationPosition(0u, -101.1079d, 24.28704d, 0.00002d, 0f, true),
+        });
+        settings.Waypoints.Add(new RouteWaypoint
+        {
+            Type = RouteWaypointType.Point,
+            Position = new AcDream.Plugin.Abstractions.PluginNavigationPosition(0u, -101.10833d, 24.30537d, -0.0000208d, 0f, true),
+        });
+
+        string text = MetafSerializer.SaveNav(settings);
+        var loaded = new NavigationSettings();
+
+        Assert.True(MetafSerializer.TryLoadNav(text, loaded, AcDream.Plugin.Abstractions.NoOpAutomationSurface.Instance, out string error), error);
+        Assert.Equal(settings.Waypoints.Select(waypoint => waypoint.Position), loaded.Waypoints.Select(waypoint => waypoint.Position));
+    }
+
     private static readonly string FixturesRoot = Path.Combine(
         AppContext.BaseDirectory, "Fixtures", "vtank");
 

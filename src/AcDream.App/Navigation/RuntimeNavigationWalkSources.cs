@@ -186,6 +186,47 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
         return obstacles;
     }
 
+    /// <summary>A place in a cell's landblock frame, set relative to where the character stands in the physics world.</summary>
+    public bool TryLocatePlace(uint cellId, Vector3 local, out Vector3 position)
+    {
+        if (_movement.Controller is not { } controller)
+        {
+            position = default;
+            return false;
+        }
+        AcDream.Core.Physics.Position here = controller.CellPosition;
+        position = controller.Position + PlaceOffset(cellId, local, here.ObjCellId, here.Frame.Origin);
+        return true;
+    }
+
+    /// <summary>A point in the physics world measured from the corner of the first landblock, set relative to where the character stands.</summary>
+    public bool TryGlobalOf(Vector3 world, out Vector3 global)
+    {
+        if (_movement.Controller is not { } controller)
+        {
+            global = default;
+            return false;
+        }
+        AcDream.Core.Physics.Position here = controller.CellPosition;
+        global = world - controller.Position - PlaceOffset(0u, Vector3.Zero, here.ObjCellId, here.Frame.Origin);
+        return true;
+    }
+
+    /// <summary>
+    /// How far a place lies from where the character stands, each given as a cell and a
+    /// point in that cell's landblock frame. A cell of zero measures its point from the
+    /// corner of the first landblock, the way a place known only by its map coordinates is.
+    /// </summary>
+    internal static Vector3 PlaceOffset(uint cellId, Vector3 local, uint hereCellId, Vector3 hereLocal)
+    {
+        int blocksEast = (int)((cellId >> 24) & 0xFFu) - (int)((hereCellId >> 24) & 0xFFu);
+        int blocksNorth = (int)((cellId >> 16) & 0xFFu) - (int)((hereCellId >> 16) & 0xFFu);
+        return new Vector3(
+            (blocksEast * NavGeometry.LandblockSize) + local.X - hereLocal.X,
+            (blocksNorth * NavGeometry.LandblockSize) + local.Y - hereLocal.Y,
+            local.Z - hereLocal.Z);
+    }
+
     /// <summary>
     /// The creatures and players near a point, other than the character and the
     /// goal, each as the largest footprint among its parts' collision.

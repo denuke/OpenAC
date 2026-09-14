@@ -98,6 +98,25 @@ internal static class ReadTools
             },
             [],
             Nearby),
+        new ReadTool(context, "explore", "Where can I explore?",
+            "The places the character can walk to from where it stands, for when nothing nearer calls, such as a "
+            + "dungeon with no monsters in sight, told apart on the client's navigation mesh by how open the floor is: "
+            + "rooms, passages in stretches of about 20 m, and open ground, over the whole dungeon the character is in "
+            + "or the land around it, and outdoors also the buildings nearby, with their doorways, and the landblocks "
+            + "beside the character's own, with their direction. Places the character has not been near come first, "
+            + "then those it has, marked "
+            + "visited, each nearest walk first, at its most open point, with its kind, notes such as dead end, junction, "
+            + "stairs or ramp, above or below, its floor area, width, rise and exits, the walk's length, the straight "
+            + "distance and bearing, and a go line to send through act as written. Ask again after walking somewhere: "
+            + "the order follows the character. The first ask maps the ground and can answer mapping, and an answer "
+            + "found from where the character stood before says refreshing; ask again in a few seconds."
+            + Nothing,
+            () => new JsonObject
+            {
+                ["limit"] = LimitProperty(),
+            },
+            [],
+            Explore),
         new ReadTool(context, "inspect", "What is this thing?",
             "Everything the client holds about one object, by id: its kind, whether it is carried, "
             + "where it is and how far, whether an arc spell, a war bolt and an arrow can reach it, whether "
@@ -227,6 +246,8 @@ internal static class ReadTools
             line += " " + meters.ToString(CultureInfo.InvariantCulture);
         return ReadLine.Of(line);
     }
+
+    private static ReadLine Explore(JsonObject arguments) => Limited("explore", arguments);
 
     private static ReadLine Inspect(JsonObject arguments)
     {

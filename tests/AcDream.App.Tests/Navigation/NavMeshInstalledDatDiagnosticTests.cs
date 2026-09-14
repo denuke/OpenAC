@@ -170,6 +170,39 @@ public sealed class NavMeshInstalledDatDiagnosticTests
         RoutePastCreatures("holtburg-creatures", world, grid);
     }
 
+    [Theory]
+    [InlineData(0x019EFFFFu)]
+    [InlineData(0x0019FFFFu)]
+    public void DungeonPlacesAreToldApart(uint dungeon)
+    {
+        uint[] cells = [.. Enumerable.Range(0x100, 0x300).Select(offset => (dungeon & 0xFFFF0000u) | (uint)offset)];
+        PublishedLandblock world = PublishedLandblock.Load(RequireDatDirectory(), dungeon, cells);
+        Assert.True(NavGeometry.TryMeasureCells(world.Engine, dungeon, out Vector2 minimum, out Vector2 maximum));
+        float size = MathF.Ceiling((MathF.Max(maximum.X - minimum.X, maximum.Y - minimum.Y) + 48f) / 16f) * 16f;
+        float originX = MathF.Floor((((minimum.X + maximum.X) * 0.5f) - (size * 0.5f)) / NavGrid.DefaultCellSize) * NavGrid.DefaultCellSize;
+        float originY = MathF.Floor((((minimum.Y + maximum.Y) * 0.5f) - (size * 0.5f)) / NavGrid.DefaultCellSize) * NavGrid.DefaultCellSize;
+        NavGrid grid = NavGrid.Build(NavGeometry.CaptureDungeon(world.Engine, dungeon, originX, originY, size)!, world.Body);
+        (uint firstCell, Vector3 origin) = world.CellOrigins
+            .OrderBy(pair => pair.Key)
+            .First(pair => grid.FindWalkableNode(pair.Value, 1f, 1.5f) >= 0);
+        int start = grid.FindWalkableNode(origin, 1f, 1.5f);
+
+        var watch = Stopwatch.StartNew();
+        IReadOnlyList<NavPlace> places = NavPlaces.Find(grid, start);
+        watch.Stop();
+
+        _output.WriteLine(
+            $"0x{dungeon >> 16:X4}: {grid.NodeCount} nodes, from 0x{firstCell:X8}; {places.Count} places in {watch.ElapsedMilliseconds} ms: "
+            + string.Join(", ", places.GroupBy(place => place.Kind).Select(group => $"{group.Count()} {group.Key}")));
+        foreach (NavPlace place in places.Take(40))
+        {
+            _output.WriteLine(
+                $"  {place.Kind,-7} walk {place.WalkMeters,6:0.0} m  area {place.AreaSquareMeters,6:0} m2  width {place.WidthMeters,5:0.0} m  "
+                + $"rise {place.RiseMeters,4:0.0} m  exits {place.Exits}  at {PointText(place.Position)}");
+        }
+        Assert.NotEmpty(places);
+    }
+
     [Fact]
     public void DungeonRoutesPastACreatureKeepAsClearOfWallsAsWithoutIt()
     {

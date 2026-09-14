@@ -7,13 +7,28 @@ namespace AcDream.Plugins.Agent.State;
 
 internal static class Coordinates
 {
+    /// <summary>
+    /// Decimal places a position's coordinates are stated to, in map units of 240 m: about
+    /// 2.4 mm, so a position given back, such as a MossTank route point, stands where it was read.
+    /// </summary>
+    internal const int Decimals = 5;
+
     internal static JsonObject Describe(in PluginNavigationPosition position) => new()
     {
         ["cell"] = Facts.Hex(position.CellId),
-        ["northSouth"] = Math.Round(position.NorthSouth, 3),
-        ["eastWest"] = Math.Round(position.EastWest, 3),
-        ["elevation"] = Math.Round(position.Elevation, 2),
+        ["northSouth"] = Math.Round(position.NorthSouth, Decimals),
+        ["eastWest"] = Math.Round(position.EastWest, Decimals),
+        ["elevation"] = Math.Round(position.Elevation, Decimals),
         ["indoor"] = !position.IsOutdoor,
+        ["text"] = Text(position),
+    };
+
+    /// <summary>A place given in map coordinates, which carries no cell, with how players write it.</summary>
+    internal static JsonObject DescribePlace(in PluginNavigationPosition position) => new()
+    {
+        ["northSouth"] = Math.Round(position.NorthSouth, Decimals),
+        ["eastWest"] = Math.Round(position.EastWest, Decimals),
+        ["elevation"] = Math.Round(position.Elevation, Decimals),
         ["text"] = Text(position),
     };
 

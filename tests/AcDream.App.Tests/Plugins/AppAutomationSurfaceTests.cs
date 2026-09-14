@@ -34,6 +34,60 @@ public sealed class AppAutomationSurfaceTests
         Assert.Empty(surface.CaptureProjectileDebugSamples());
     }
 
+    [Theory]
+    [InlineData(0xA9B40032u, 144.86f, 40.19f, 94f)]
+    [InlineData(0x00190162u, 90f, -1010f, 6.005f)]
+    [InlineData(0x0101001Fu, 3.5f, 188.25f, -12.5f)]
+    public void APlacePluginsSeeInMapCoordinatesIsPlacedBackInItsLandblocksFrame(uint cell, float x, float y, float z)
+    {
+        var local = new Vector3(x, y, z);
+        PluginNavigationPosition seen = AppAutomationSurface.ProjectNavigationPosition(
+            new Position(cell, new CellFrame(local, Quaternion.Identity)));
+
+        Vector3 placed = AppAutomationSurface.LandblockLocal(seen);
+
+        Assert.Equal(local.X, placed.X, 2);
+        Assert.Equal(local.Y, placed.Y, 2);
+        Assert.Equal(local.Z, placed.Z, 2);
+    }
+
+    [Fact]
+    public void PlacesReachPluginsInMapCoordinatesWithNoCell()
+    {
+        PluginPlacesReport report = AppAutomationSurface.ProjectPlacesReport(new AcDream.App.Navigation.NavigationPlacesReport(
+            AcDream.App.Navigation.NavigationPlacesState.Ready,
+            [
+                new AcDream.App.Navigation.NavigationPlace(
+                    new Vector3(202f, 30296f, 0.005f), 12.5f, AcDream.App.Navigation.NavigationPlaceKind.Passage, 30f, 2f, 2.5f, 3),
+                new AcDream.App.Navigation.NavigationPlace(
+                    new Vector3(24480f, 30432f, 12f), float.NaN, AcDream.App.Navigation.NavigationPlaceKind.Landblock, 36864f, 192f, 0f, 0)
+                {
+                    LandblockId = 0x7F9EFFFFu,
+                    IsWater = true,
+                },
+            ],
+            InDungeon: true,
+            "found")
+        {
+            FromGlobal = new Vector3(210f, 30296f, 0f),
+        });
+
+        Assert.Equal(PluginPlacesState.Ready, report.State);
+        Assert.True(report.InDungeon);
+        Assert.Equal(2, report.Places.Count);
+        PluginNavigationPlace place = report.Places[0];
+        Assert.Equal(PluginPlaceKind.Landblock, report.Places[1].Kind);
+        Assert.Equal(0x7F9EFFFFu, report.Places[1].LandblockId);
+        Assert.True(report.Places[1].IsWater);
+        Assert.Equal(0u, place.Position.CellId);
+        Assert.Equal(-101.10833d, place.Position.EastWest, 4);
+        Assert.Equal(24.28333d, place.Position.NorthSouth, 4);
+        Assert.Equal(12.5f, place.WalkMeters);
+        Assert.Equal(PluginPlaceKind.Passage, place.Kind);
+        Assert.Equal(3, place.Exits);
+        Assert.Equal(-101.075d, report.From.EastWest, 4);
+    }
+
     [Fact]
     public void WalksWaitOnWhatAPluginSaysItNeedsUntilThePluginLetsGo()
     {

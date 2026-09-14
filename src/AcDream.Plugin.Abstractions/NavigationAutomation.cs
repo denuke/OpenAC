@@ -216,6 +216,73 @@ public readonly record struct PluginGoToReport(
     public uint BlockedByObjectId { get; init; }
 }
 
+public enum PluginPlaceKind
+{
+    /// <summary>Floor wide enough to be a room, set apart from the places beside it by doorways or other narrowings.</summary>
+    Room = 0,
+
+    /// <summary>A narrow way, such as a corridor, a ramp or a stair, given in stretches of about 20 m along its length.</summary>
+    Passage,
+
+    /// <summary>Open floor too large to call a room, such as land outdoors or a great cavern.</summary>
+    Open,
+
+    /// <summary>A building outdoors, given at its origin, with its doorways as exits.</summary>
+    Building,
+
+    /// <summary>A landblock beside the character's own, given at its middle on the ground.</summary>
+    Landblock,
+}
+
+/// <summary>
+/// A place the character can walk to: where to stand in it, at its most open point; about
+/// how far a walk there goes, or NaN for a building or landblock no walk has measured; what
+/// kind of place it is; how much floor it holds; about how
+/// wide it is at its widest; how far its floor rises from lowest to highest, as on a stair
+/// or ramp; and how many other places it opens onto, so one is a dead end and three or more
+/// a junction.
+/// </summary>
+public readonly record struct PluginNavigationPlace(
+    PluginNavigationPosition Position,
+    float WalkMeters,
+    PluginPlaceKind Kind,
+    float AreaSquareMeters,
+    float WidthMeters,
+    float RiseMeters,
+    int Exits)
+{
+    /// <summary>For a building or a landblock, the landblock it stands in, such as 0xA9B5FFFF; otherwise zero.</summary>
+    public uint LandblockId { get; init; }
+
+    /// <summary>Whether a landblock's middle lies under water.</summary>
+    public bool IsWater { get; init; }
+}
+
+public enum PluginPlacesState
+{
+    /// <summary>The client cannot find places now, such as out of the world or in portal space.</summary>
+    Unavailable = 0,
+
+    /// <summary>The client is mapping the ground around the character, or finding the places on it.</summary>
+    Mapping,
+
+    Ready,
+}
+
+/// <summary>
+/// The spots the character can walk to, <see cref="Places"/> nearest walk first, and
+/// whether they span the whole sealed dungeon the character is in.
+/// </summary>
+public readonly record struct PluginPlacesReport(
+    PluginPlacesState State,
+    IReadOnlyList<PluginNavigationPlace> Places,
+    bool InDungeon,
+    string? Reason)
+{
+    /// <summary>Where the character stood when the places were found, which their walks are measured from.</summary>
+    public PluginNavigationPosition From { get; init; }
+}
+
 public enum PluginNavigationCommandStatus
 {
     Unavailable = 0,
@@ -303,6 +370,34 @@ public interface INavigationAutomation
     /// </summary>
     PluginNavigationCommandStatus GoTo(uint objectId, float arrivalMeters) =>
         PluginNavigationCommandStatus.Unavailable;
+
+    /// <summary>
+    /// Walks the character to a place the way <see cref="GoTo(uint, float)"/> walks to
+    /// an object: along a route the client plans, ending within
+    /// <paramref name="arrivalMeters"/> of <paramref name="position"/>, and waiting while
+    /// something else needs the character. It does not turn the character to face
+    /// anything on arrival. A position with no cell, such as one read from a VTank route
+    /// file, is placed by its map coordinates alone. <see cref="GoToReport"/> reports the
+    /// walk with no object id.
+    /// </summary>
+    PluginNavigationCommandStatus GoTo(PluginNavigationPosition position, float arrivalMeters) =>
+        PluginNavigationCommandStatus.Unavailable;
+
+    /// <summary>
+    /// The places the character can walk to from where it stands, for choosing where to go
+    /// next, told apart on the client's navigation mesh by how open the floor is: rooms,
+    /// passages in stretches of about 20 m, and open ground, each at its most open point,
+    /// nearest walk first, over the whole sealed dungeon the character is in, or the land
+    /// around it; and outdoors, the buildings in the character's landblock and those beside
+    /// it, and the landblocks beside its own. The first ask maps the ground, which takes a
+    /// moment in a large dungeon,
+    /// and reports <see cref="PluginPlacesState.Mapping"/> until the places are found; ask
+    /// again to read them, and again once the character has moved on, since walks are
+    /// measured from <see cref="PluginPlacesReport.From"/>. A place carries no cell; walk to
+    /// one with <see cref="GoTo(PluginNavigationPosition, float)"/>.
+    /// </summary>
+    PluginPlacesReport CapturePlaces() =>
+        new(PluginPlacesState.Unavailable, [], false, "this client does not find places");
 
     /// <summary>Ends the walk to an object under way, if there is one.</summary>
     PluginNavigationCommandStatus StopGoTo() =>

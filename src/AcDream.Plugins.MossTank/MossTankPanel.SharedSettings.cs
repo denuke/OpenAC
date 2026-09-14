@@ -42,7 +42,13 @@ internal sealed partial class MossTankPanel
         + "\"addConsumables\": [...], \"removeConsumables\": [...]} adds items from the character's packs to the "
         + "lists, or takes them off. "
         + "\"buffs\": {\"addSpells\": [\"<spell name>\"], \"removeSpells\": [...], \"addBlacklistedFamilies\": [...], "
-        + "\"removeBlacklistedFamilies\": [...]}.";
+        + "\"removeBlacklistedFamilies\": [...]}. "
+        + "\"route\": {\"enabled\": true or false, \"mode\": \"Circular\", \"Linear\" or \"Once\", \"walkLegs\": true or false, "
+        + "\"waypoints\": [{\"point\": {\"northSouth\": <n>, \"eastWest\": <e>, \"elevation\": <z>}}, {\"pause\": <seconds>}, "
+        + "{\"chat\": \"<text>\"}]} replaces the route, with points in map coordinates, the way VTank's route files keep them. "
+        + "With walkLegs the client's own route planning walks each leg "
+        + "to a point, around walls, creatures and doors, and back from wherever a fight left the character, and points "
+        + "along a straight stretch are walked in one walk.";
 
     /// <summary>The settings as a JSON object, or only one section of them; null when there is no such section.</summary>
     internal string? ReadSharedSettings(string? section)
@@ -100,8 +106,11 @@ internal sealed partial class MossTankPanel
                 case "buffs":
                     PlanSharedBuffs(value, plan, problems);
                     break;
+                case "route":
+                    PlanSharedRoute(value, plan, problems);
+                    break;
                 default:
-                    problems.Add($"'{part}' is not a part MossTank changes; the parts are macro, options, monsters, items and buffs");
+                    problems.Add($"'{part}' is not a part MossTank changes; the parts are macro, options, monsters, items, buffs and route");
                     break;
             }
         }
@@ -167,8 +176,11 @@ internal sealed partial class MossTankPanel
         {
             ["enabled"] = _navigationSettings.Enabled,
             ["mode"] = _navigationSettings.Mode.ToString(),
-            ["waypoints"] = _navigationSettings.Waypoints.Count,
+            ["walkLegs"] = _navigationSettings.WalkLegsWithClient,
+            ["status"] = _navigation.Status,
+            ["skipped"] = _navigation.LastSkippedLeg.Length == 0 ? null : _navigation.LastSkippedLeg,
             ["current"] = _navigation.CurrentWaypointIndex,
+            ["waypoints"] = new JsonArray([.. _navigationSettings.Waypoints.Select(static waypoint => (JsonNode?)SharedWaypoint(waypoint))]),
         },
         _ => throw new ArgumentOutOfRangeException(nameof(section), section, null),
     };
@@ -540,6 +552,165 @@ internal sealed partial class MossTankPanel
         }
     }
 
+    private static JsonObject SharedWaypoint(RouteWaypoint waypoint)
+    {
+        var node = waypoint.Type switch
+        {
+            RouteWaypointType.Point => new JsonObject { ["point"] = SharedPoint(waypoint.Position) },
+            RouteWaypointType.Pause => new JsonObject { ["pause"] = waypoint.DurationMilliseconds / 1000d },
+            RouteWaypointType.ChatCommand => new JsonObject { ["chat"] = waypoint.Text },
+            _ => new JsonObject { ["type"] = waypoint.Type.ToString(), ["at"] = SharedPoint(waypoint.Position) },
+        };
+        if (waypoint.Type is not (RouteWaypointType.Point or RouteWaypointType.Pause or RouteWaypointType.ChatCommand))
+        {
+            if (waypoint.ObjectName.Length > 0)
+                node["object"] = waypoint.ObjectName;
+            if (waypoint.Text.Length > 0)
+                node["text"] = waypoint.Text;
+        }
+        return node;
+    }
+
+    /// <summary>Decimal places a route point's coordinates are stated to, in map units of 240 m: about 2.4 mm.</summary>
+    private const int SharedPointDecimals = 5;
+
+    /// <summary>
+    /// A position in map coordinates, the way VTank's route files keep it: north-south,
+    /// east-west and elevation, each in map units of 240 m.
+    /// </summary>
+    internal static JsonObject SharedPoint(in PluginNavigationPosition position) => new()
+    {
+        ["northSouth"] = Math.Round(position.NorthSouth, SharedPointDecimals),
+        ["eastWest"] = Math.Round(position.EastWest, SharedPointDecimals),
+        ["elevation"] = Math.Round(position.Elevation, SharedPointDecimals),
+    };
+
+    /// <summary>
+    /// A position from map coordinates: northSouth, eastWest and elevation, each a number.
+    /// Other fields, such as the cell and text reported with a position, are ignored, since a
+    /// route keeps no cells.
+    /// </summary>
+    internal static bool TryReadSharedPoint(JsonNode? node, out PluginNavigationPosition position)
+    {
+        position = default;
+        if (node is not JsonObject point
+            || !TryReadCoordinate(point, "northSouth", out double northSouth)
+            || !TryReadCoordinate(point, "eastWest", out double eastWest)
+            || !TryReadCoordinate(point, "elevation", out double elevation))
+        {
+            return false;
+        }
+        position = new PluginNavigationPosition(0u, eastWest, northSouth, elevation, 0f, IsOutdoor: true);
+        return true;
+    }
+
+    private static bool TryReadCoordinate(JsonObject point, string name, out double value)
+    {
+        value = 0d;
+        return point[name] is JsonValue number
+            && number.TryGetValue(out value)
+            && double.IsFinite(value)
+            && Math.Abs(value) <= 1000d;
+    }
+
+    private static void PlanSharedRoute(JsonNode? node, SharedChange plan, List<string> problems)
+    {
+        if (node is not JsonObject { Count: > 0 } route)
+        {
+            problems.Add("route takes enabled, mode, walkLegs and waypoints");
+            return;
+        }
+        foreach ((string key, JsonNode? value) in route)
+        {
+            switch (key)
+            {
+                case "enabled":
+                    if (value is JsonValue enabled && enabled.TryGetValue(out bool on))
+                        plan.RouteEnabled = on;
+                    else
+                        problems.Add("route.enabled takes true or false");
+                    break;
+                case "mode":
+                    if (SharedText(value) is { } word
+                        && !int.TryParse(word, out _)
+                        && Enum.TryParse(word.Trim(), ignoreCase: true, out RouteMode mode)
+                        && mode is RouteMode.Circular or RouteMode.Linear or RouteMode.Once)
+                    {
+                        plan.Mode = mode;
+                    }
+                    else
+                    {
+                        problems.Add("route.mode takes Circular, Linear or Once");
+                    }
+                    break;
+                case "walkLegs":
+                    if (value is JsonValue legs && legs.TryGetValue(out bool walk))
+                        plan.WalkLegs = walk;
+                    else
+                        problems.Add("route.walkLegs takes true or false");
+                    break;
+                case "waypoints":
+                    if (value is not JsonArray list)
+                    {
+                        problems.Add("route.waypoints must be a list");
+                        break;
+                    }
+                    var waypoints = new List<RouteWaypoint>();
+                    PluginNavigationPosition last = default;
+                    int index = 0;
+                    foreach (JsonNode? item in list)
+                    {
+                        index++;
+                        if (SharedWaypointFrom(item, last) is not { } waypoint)
+                        {
+                            problems.Add($"route.waypoints[{index}] must be {{\"point\": {{\"northSouth\": <n>, \"eastWest\": <e>, \"elevation\": <z>}}}}, {{\"pause\": <seconds up to 3600>}} or {{\"chat\": \"<text>\"}}");
+                            continue;
+                        }
+                        if (waypoint.Type == RouteWaypointType.Point)
+                            last = waypoint.Position;
+                        waypoints.Add(waypoint);
+                    }
+                    plan.Waypoints = waypoints;
+                    break;
+                default:
+                    problems.Add($"route.{key} is not known; use enabled, mode, walkLegs or waypoints");
+                    break;
+            }
+        }
+    }
+
+    private static RouteWaypoint? SharedWaypointFrom(JsonNode? node, PluginNavigationPosition last)
+    {
+        if (node is not JsonObject { Count: 1 } item)
+            return null;
+        (string kind, JsonNode? value) = item.First();
+        switch (kind)
+        {
+            case "point":
+                return TryReadSharedPoint(value, out PluginNavigationPosition at)
+                    ? new RouteWaypoint { Type = RouteWaypointType.Point, Position = at }
+                    : null;
+            case "pause":
+                return value is JsonValue seconds
+                    && seconds.TryGetValue(out double duration)
+                    && double.IsFinite(duration)
+                    && duration is >= 0d and <= 3600d
+                        ? new RouteWaypoint
+                        {
+                            Type = RouteWaypointType.Pause,
+                            Position = last,
+                            DurationMilliseconds = (int)Math.Round(duration * 1000d),
+                        }
+                        : null;
+            case "chat":
+                return SharedText(value) is { Length: > 0 and <= 128 } text
+                    ? new RouteWaypoint { Type = RouteWaypointType.ChatCommand, Position = last, Text = text }
+                    : null;
+            default:
+                return null;
+        }
+    }
+
     private void ApplySharedChange(SharedChange plan)
     {
         if (plan.Options.Count > 0)
@@ -604,6 +775,22 @@ internal sealed partial class MossTankPanel
             _buffSettings.BlacklistedBuffFamilyNames.Add(name);
         foreach (string name in plan.FamilyRemovals)
             _buffSettings.BlacklistedBuffFamilyNames.Remove(name);
+        if (plan.RouteEnabled is { } routeOn)
+            SetMetaOption("EnableNav", ExpressionValue.Boolean(routeOn));
+        if (plan.Mode is { } mode)
+            _navigationSettings.Mode = mode;
+        if (plan.WalkLegs is { } walkLegs)
+            _navigationSettings.WalkLegsWithClient = walkLegs;
+        if (plan.Waypoints is { } waypoints)
+        {
+            _navigationSettings.Waypoints.Clear();
+            _navigationSettings.Waypoints.AddRange(waypoints);
+        }
+        if (plan.RouteEnabled is not null || plan.Mode is not null || plan.WalkLegs is not null || plan.Waypoints is not null)
+        {
+            _navigation.Reset();
+            RefreshRouteEditor();
+        }
         SaveProfile();
         if (plan.Running is { } running)
             SetMacroRunning(running);
@@ -658,6 +845,10 @@ internal sealed partial class MossTankPanel
         public List<string> SpellRemovals { get; } = [];
         public List<string> FamilyAdds { get; } = [];
         public List<string> FamilyRemovals { get; } = [];
+        public bool? RouteEnabled { get; set; }
+        public RouteMode? Mode { get; set; }
+        public bool? WalkLegs { get; set; }
+        public List<RouteWaypoint>? Waypoints { get; set; }
 
         public string Summary()
         {
@@ -675,6 +866,14 @@ internal sealed partial class MossTankPanel
             Count(parts, SpellRemovals.Count, "removed", "buff spell", "buff spells");
             Count(parts, FamilyAdds.Count, "blacklisted", "buff family", "buff families");
             Count(parts, FamilyRemovals.Count, "cleared", "blacklisted buff family", "blacklisted buff families");
+            if (Waypoints is { } waypoints)
+                parts.Add($"replaced the route with {waypoints.Count} waypoint{(waypoints.Count == 1 ? string.Empty : "s")}");
+            if (Mode is { } mode)
+                parts.Add($"set the route to {mode}");
+            if (WalkLegs is { } walkLegs)
+                parts.Add(walkLegs ? "had the client walk the route's legs" : "had MossTank steer the route's legs");
+            if (RouteEnabled is { } on)
+                parts.Add(on ? "turned route navigation on" : "turned route navigation off");
             string said = string.Join(", ", parts);
             return said.Length == 0
                 ? "Nothing needed changing."

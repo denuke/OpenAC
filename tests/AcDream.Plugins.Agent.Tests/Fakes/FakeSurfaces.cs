@@ -58,6 +58,20 @@ internal sealed class FakeNavigation : INavigationAutomation
         return MoveStatus;
     }
 
+    internal List<(PluginNavigationPosition Place, float ArrivalMeters)> PlaceGoTos { get; } = [];
+
+    public PluginNavigationCommandStatus GoTo(PluginNavigationPosition position, float arrivalMeters)
+    {
+        PlaceGoTos.Add((position, arrivalMeters));
+        if (MoveStatus == PluginNavigationCommandStatus.Accepted)
+            GoToReport = new PluginGoToReport(GoToReport.Sequence + 1, PluginGoToState.Planning, 0u, 0f, 0, "planning");
+        return MoveStatus;
+    }
+
+    internal PluginPlacesReport PlacesReport { get; set; } = new(PluginPlacesState.Unavailable, [], false, "no places");
+
+    public PluginPlacesReport CapturePlaces() => PlacesReport;
+
     public PluginNavigationCommandStatus StopGoTo()
     {
         GoToStops++;

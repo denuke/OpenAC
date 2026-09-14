@@ -21,6 +21,86 @@ public sealed class NavGridTests
     }
 
     [Fact]
+    public void PlacesTellRoomsFromThePassageBetweenThem()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 12f, 12f, 0f),
+            .. Floor(12f, 4.5f, 28f, 7.5f, 0f),
+            .. Floor(28f, 0f, 40f, 12f, 0f),
+            .. Floor(50f, 0f, 60f, 10f, 0f)], size: 64f);
+        int start = grid.FindWalkableNode(new Vector3(6f, 6f, 0f), 1.5f, 1f);
+
+        IReadOnlyList<NavPlace> places = NavPlaces.Find(grid, start);
+
+        Assert.Equal([NavPlaceKind.Room, NavPlaceKind.Passage, NavPlaceKind.Room], places.Select(place => place.Kind));
+        Assert.Equal([1, 2, 1], places.Select(place => place.Exits));
+        Assert.InRange(places[0].Position.X, 4f, 8f);
+        Assert.InRange(places[2].Position.X, 32f, 36f);
+        Assert.True(places[1].WidthMeters < places[0].WidthMeters);
+        Assert.Empty(NavPlaces.Find(grid, -1));
+    }
+
+    [Fact]
+    public void ARoomAroundAPillarIsOnePlace()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 14f, 0f),
+            .. Wall(9f, 6f, 11f, 6f, 0f, 3f),
+            .. Wall(11f, 6f, 11f, 8f, 0f, 3f),
+            .. Wall(11f, 8f, 9f, 8f, 0f, 3f),
+            .. Wall(9f, 8f, 9f, 6f, 0f, 3f)]);
+        int start = grid.FindWalkableNode(new Vector3(3f, 7f, 0f), 1.5f, 1f);
+
+        NavPlace place = Assert.Single(NavPlaces.Find(grid, start));
+
+        Assert.Equal(NavPlaceKind.Room, place.Kind);
+        Assert.Equal(0, place.Exits);
+    }
+
+    [Fact]
+    public void AWideCorridorOpeningStraightOntoARoomIsStillAPassage()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 16f, 16f, 0f),
+            .. Floor(16f, 5.5f, 46f, 10.5f, 0f)], size: 64f);
+        int start = grid.FindWalkableNode(new Vector3(8f, 8f, 0f), 1.5f, 1f);
+
+        IReadOnlyList<NavPlace> places = NavPlaces.Find(grid, start);
+
+        Assert.Equal(NavPlaceKind.Room, places[0].Kind);
+        Assert.Equal(1, places.Count(place => place.Kind == NavPlaceKind.Room));
+        Assert.Equal(2, places.Count(place => place.Kind == NavPlaceKind.Passage));
+    }
+
+    [Fact]
+    public void ALongPassageIsGivenInStretches()
+    {
+        NavGrid grid = Build([.. Floor(0f, 0f, 58f, 3f, 0f)], size: 64f);
+        int start = grid.FindWalkableNode(new Vector3(1f, 1.5f, 0f), 1.5f, 1f);
+
+        IReadOnlyList<NavPlace> places = NavPlaces.Find(grid, start);
+
+        Assert.Equal(3, places.Count);
+        Assert.All(places, place => Assert.Equal(NavPlaceKind.Passage, place.Kind));
+        Assert.Equal([1, 2, 1], places.Select(place => place.Exits));
+    }
+
+    [Fact]
+    public void ARampBetweenFloorsRisesAsAPassage()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 20f, 10f, 0f),
+            .. Ramp(8f, 10f, 11f, 24f, 0f, 4f),
+            .. Floor(0f, 24f, 20f, 34f, 4f)], size: 64f);
+        int start = grid.FindWalkableNode(new Vector3(5f, 5f, 0f), 1.5f, 1f);
+
+        IReadOnlyList<NavPlace> places = NavPlaces.Find(grid, start);
+
+        Assert.Equal(2, places.Count(place => place.Kind == NavPlaceKind.Room));
+        Assert.Contains(places, place => place.Kind == NavPlaceKind.Passage && place.RiseMeters > 2f);
+    }
+
+    [Fact]
     public void ARouteAcrossOpenFloorIsOneStraightLeg()
     {
         NavGrid grid = Build(Floor(0f, 0f, 20f, 20f, 0f));
@@ -690,8 +770,8 @@ public sealed class NavGridTests
         return Vector2.Distance(point, start + (along * t));
     }
 
-    private static NavGrid Build(NavTriangle[] triangles, NavCylinder[]? cylinders = null) =>
-        NavGrid.Build(new NavGeometry(0f, 0f, 32f, [], triangles, [], cylinders ?? []), Body);
+    private static NavGrid Build(NavTriangle[] triangles, NavCylinder[]? cylinders = null, float size = 32f) =>
+        NavGrid.Build(new NavGeometry(0f, 0f, size, [], triangles, [], cylinders ?? []), Body);
 
     private static NavTriangle[] Floor(float x0, float y0, float x1, float y1, float z) =>
         Quad(new Vector3(x0, y0, z), new Vector3(x1, y0, z), new Vector3(x1, y1, z), new Vector3(x0, y1, z));

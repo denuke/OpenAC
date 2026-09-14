@@ -1665,7 +1665,8 @@ internal sealed class AppAutomationSurface
             ProjectNavigationPosition(current));
         value = EnrichNavigationObject(
             value,
-            runtime.InventoryOwner.Objects.Get(objectId));
+            runtime.InventoryOwner.Objects.Get(objectId),
+            record);
         return true;
     }
 
@@ -1712,7 +1713,8 @@ internal sealed class AppAutomationSurface
             nearestDistance = distance;
             nearest = EnrichNavigationObject(
                 new PluginNavigationObject(objectId, candidateName, candidate),
-                runtime.InventoryOwner.Objects.Get(objectId));
+                runtime.InventoryOwner.Objects.Get(objectId),
+                record);
             found = true;
         }
 
@@ -1744,7 +1746,8 @@ internal sealed class AppAutomationSurface
                     record.ServerGuid,
                     name,
                     ProjectNavigationPosition(position)),
-                item));
+                item,
+                record));
         }
         result.Sort(static (left, right) => left.ObjectId.CompareTo(right.ObjectId));
         return result;
@@ -1890,6 +1893,89 @@ internal sealed class AppAutomationSurface
             return PluginNavigationCommandStatus.Rejected;
         walk.WalkTo(objectId, arrivalMeters);
         return PluginNavigationCommandStatus.Accepted;
+    }
+
+    public PluginNavigationCommandStatus GoTo(PluginNavigationPosition position, float arrivalMeters)
+    {
+        AcDream.App.Navigation.NavigationWalkController? walk;
+        lock (_gate)
+            walk = _navigationWalk;
+        if (walk is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        if (!double.IsFinite(position.EastWest)
+            || !double.IsFinite(position.NorthSouth)
+            || !double.IsFinite(position.Elevation)
+            || !(arrivalMeters > 0f)
+            || arrivalMeters > MaximumGoToArrivalMeters)
+        {
+            return PluginNavigationCommandStatus.Rejected;
+        }
+        walk.WalkToPlace(position.CellId, LandblockLocal(position), arrivalMeters);
+        return PluginNavigationCommandStatus.Accepted;
+    }
+
+    /// <summary>
+    /// A plugin position's point in its landblock's own frame, the way <see cref="ProjectNavigationPosition"/> was given it;
+    /// for a position with no cell, the point measured from the corner of the first landblock.
+    /// </summary>
+    internal static System.Numerics.Vector3 LandblockLocal(in PluginNavigationPosition position)
+    {
+        uint blockX = (position.CellId >> 24) & 0xFFu;
+        uint blockY = (position.CellId >> 16) & 0xFFu;
+        return new System.Numerics.Vector3(
+            (float)((position.EastWest * 240d) + 84d - (((double)blockX - 127d) * 192d)),
+            (float)((position.NorthSouth * 240d) + 84d - (((double)blockY - 127d) * 192d)),
+            (float)(position.Elevation * 240d));
+    }
+
+    public PluginPlacesReport CapturePlaces()
+    {
+        AcDream.App.Navigation.NavigationWalkController? walk;
+        lock (_gate)
+            walk = _navigationWalk;
+        if (walk is null || !IsAvailable)
+            return new PluginPlacesReport(PluginPlacesState.Unavailable, [], false, "the client cannot find places now");
+        walk.WantPlaces();
+        return ProjectPlacesReport(walk.Places);
+    }
+
+    /// <summary>The walk controller's places as plugins see them: map coordinates with no cell.</summary>
+    internal static PluginPlacesReport ProjectPlacesReport(AcDream.App.Navigation.NavigationPlacesReport report)
+    {
+        var places = new PluginNavigationPlace[report.Places.Count];
+        for (int index = 0; index < places.Length; index++)
+        {
+            AcDream.App.Navigation.NavigationPlace place = report.Places[index];
+            places[index] = new PluginNavigationPlace(
+                ProjectNavigationPosition(new Position(0u, place.Global, System.Numerics.Quaternion.Identity)),
+                place.WalkMeters,
+                place.Kind switch
+                {
+                    AcDream.App.Navigation.NavigationPlaceKind.Passage => PluginPlaceKind.Passage,
+                    AcDream.App.Navigation.NavigationPlaceKind.Open => PluginPlaceKind.Open,
+                    AcDream.App.Navigation.NavigationPlaceKind.Building => PluginPlaceKind.Building,
+                    AcDream.App.Navigation.NavigationPlaceKind.Landblock => PluginPlaceKind.Landblock,
+                    _ => PluginPlaceKind.Room,
+                },
+                place.AreaSquareMeters,
+                place.WidthMeters,
+                place.RiseMeters,
+                place.Exits)
+            {
+                LandblockId = place.LandblockId,
+                IsWater = place.IsWater,
+            };
+        }
+        PluginPlacesState state = report.State switch
+        {
+            AcDream.App.Navigation.NavigationPlacesState.Ready => PluginPlacesState.Ready,
+            AcDream.App.Navigation.NavigationPlacesState.Mapping => PluginPlacesState.Mapping,
+            _ => PluginPlacesState.Unavailable,
+        };
+        return new PluginPlacesReport(state, places, report.InDungeon, report.Reason)
+        {
+            From = ProjectNavigationPosition(new Position(0u, report.FromGlobal, System.Numerics.Quaternion.Identity)),
+        };
     }
 
     public PluginNavigationCommandStatus StopGoTo()
@@ -2343,9 +2429,15 @@ internal sealed class AppAutomationSurface
         return result;
     }
 
+    /// <summary>
+    /// A navigation object with what the client knows of it as a door. A door stands open
+    /// when the world shows it passable, as it is drawn: its Open property comes with an
+    /// appraisal and does not follow the door opening and closing afterwards.
+    /// </summary>
     private static PluginNavigationObject EnrichNavigationObject(
         in PluginNavigationObject value,
-        ClientObject? item)
+        ClientObject? item,
+        RuntimeEntityRecord? record)
     {
         if (item is null)
             return value;
@@ -2355,13 +2447,16 @@ internal sealed class AppAutomationSurface
         bool hasLocked = item.Properties.Bools.TryGetValue(
             (uint)PropertyBool.Locked,
             out bool isLocked);
+        bool door = ((PublicWeenieFlags)(item.PublicWeenieBitfield ?? 0u)
+            & PublicWeenieFlags.Door) != 0;
         return value with
         {
-            IsDoor = ((PublicWeenieFlags)(item.PublicWeenieBitfield ?? 0u)
-                & PublicWeenieFlags.Door) != 0,
-            IsOpen = hasOpen && isOpen,
+            IsDoor = door,
+            IsOpen = door && record is not null
+                ? record.FinalPhysicsState.HasFlag(PhysicsStateFlags.Ethereal)
+                : hasOpen && isOpen,
             IsLocked = hasLocked && isLocked,
-            HasLockState = hasOpen || hasLocked,
+            HasLockState = hasOpen || hasLocked || item.LastAppraisalTimeMs > 0,
             LockDifficulty = item.Properties.GetInt(
                 (uint)PropertyInt.ResistLockpick),
         };

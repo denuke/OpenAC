@@ -53,6 +53,7 @@ another plugin's settings. Every other tool only reads.
 | `outcome` | How the line with a handle ended: its outcome word, its shared class, and every record it produced. |
 | `events` | Records after a cursor. With `waitSeconds` it waits for the next one, and `until` wakes it on a condition. |
 | `nearby` | Objects around the character, nearest first, with distance, bearing, kind and sight. |
+| `explore` | Rooms, passages and open ground the character can walk to, from the client's navigation mesh, and outdoors nearby buildings and the landblocks beside its own, unvisited first and nearest first, each with a line that walks there. |
 | `inspect` | Everything the client holds about one object, with its sight. |
 | `spells` | Known spells, narrowed by `search`, including whether their components are carried. |
 | `skills` | Skills with their training and values. |
@@ -63,7 +64,7 @@ another plugin's settings. Every other tool only reads.
 | `container` | The items in the open corpse or container. |
 | `corpses` | Corpses in range, and whether each has been opened. |
 | `characters` | The account's characters at the character list, and where the client stands in logging in. |
-| `settings` | The settings other plugins share, such as MossTank's options, monster rules, items and buffs, and how to change them. |
+| `settings` | The settings other plugins share, such as MossTank's options, monster rules, items, buffs and route, and how to change them. |
 | `configure` | Changes a plugin's shared settings with one JSON object, and answers with the parts it changed as the plugin now holds them. |
 
 `capabilities` answers what the character can do in one call. It lists everything around the
@@ -106,10 +107,10 @@ the read tools print, such as `0x70000001`.
 | Family | Lines |
 |---|---|
 | Session | `characters`, `login <name or id>`, `logout` |
-| Read | `vitals`, `stats`, `location`, `snapshot`, `capabilities [id]`, `skills`, `buffs`, `spells [search] [limit <n>]`, `nearby [kind] [range]`, `inspect <id>`, `inventory [search] [limit <n>]`, `equipment`, `vendor [limit <n>]`, `loot list [limit <n>]`, `loot corpses [range]` |
+| Read | `vitals`, `stats`, `location`, `snapshot`, `capabilities [id]`, `skills`, `buffs`, `spells [search] [limit <n>]`, `nearby [kind] [range]`, `explore [limit <n>]`, `inspect <id>`, `inventory [search] [limit <n>]`, `equipment`, `vendor [limit <n>]`, `loot list [limit <n>]`, `loot corpses [range]` |
 | Chat | `say <text>`, `tell <name>, <message>`, `emote <text>` |
 | Target | `target <id>`, `target nearest [kind]`, `untarget` |
-| Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `go to <id, name or target> [within <meters>]`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance combat\|peace`, `cancel` |
+| Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `go to <id, name or target> [within <meters>]`, `go to <north-south> <east-west> [elevation] [within <meters>]`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance combat\|peace`, `cancel` |
 | Magic | `cast <spell name or id> [on <id>]` |
 | Objects | `use <id>`, `use <item id> on <id>`, `open <id>` |
 | Items | `loot <item id>`, `drop <item id> [amount]`, `give <item id> to <id> [amount]`, `move <item id> to <container id> [amount]`, `equip <item id>`, `unequip <item id>` |
@@ -159,7 +160,18 @@ pending. Once nothing has needed the character for a moment, the walk plans
 again from where the character stands and goes on, however often that happens
 along the way. A walk takes the place of MossTank's own route navigation
 among its rules while that is off, so whatever MossTank ranks above navigation
-interrupts the walk and nothing ranked below it does. A walk to an object farther away than one planning grid reaches,
+interrupts the walk and nothing ranked below it does.
+With its route navigation on and **Walk legs with client pathing** checked on
+its Route tab, `walkLegs` in its settings, MossTank walks its own route this
+way. It asks for one walk at a time, to the next point or to the farthest of
+the points ahead that lie along a straight line, counts the points the walk
+goes by, and moves on when the walk arrives, so a fight that shoves the
+character off the route is walked back from wherever it ended. Where the route
+turns, the character stops for a moment before the next walk, as MossTank's own
+steering does. A leg the client cannot walk is skipped with a chat message, and
+`skipped` in `settings mosstank route` names the last one skipped. While a walk MossTank did not ask for is under way, such as one from `go to`,
+the route waits for it to end. With `walkLegs` on, doors are opened by the walks,
+and MossTank's OpenDoors stands aside. A walk to an object farther away than one planning grid reaches,
 about 270 m, goes in stages, each planned to the edge of a grid toward the
 object, up to 1000 m. Inside a sealed dungeon one grid covers the whole
 dungeon, however large, and serves every walk there; the largest take a few
@@ -183,6 +195,29 @@ draws its route as a magenta line. Ctrl+F4 also shows the grid, Ctrl+F5 plans
 a route to the selected object, and Ctrl+F6 walks to it or stops the walk;
 without Ctrl on the acdream keymap, where F4 to F6 are free.
 
+`go to` also walks to a place, given in map coordinates the way positions are
+reported: `go to 24.30537 -101.10833 0.00002` gives north-south, east-west and
+elevation, and `go to 24.305N, 101.108W` keeps the character's own elevation. A
+place is walked to the same way in a dungeon, on open land and inside buildings,
+and the walk turns to face nothing when it arrives. `explore` offers places to go
+when nothing nearer calls, such as a dungeon with no monsters in sight: the places
+a walk reaches from where the character stands, over the whole dungeon or the land
+around it, told apart on the client's navigation mesh by how open the floor is. A
+room is floor that opens out away from its edges and narrows at its doorways, a
+passage is floor that stays narrow, given in stretches of about 20 m, and open
+ground is a room too large to call one. Outdoors it also gives the buildings in
+the character's landblock and those beside it, at their origins with their
+doorways, and the landblocks beside the character's own, at their middles with
+their direction and whether they lie under water. Places the character has not stood near
+since the plugin started come first, then those it has, marked `visited`, each
+nearest walk first from where the character stands, so the order follows it
+deeper in. Each place is given at its most open point with its kind, notes such
+as `dead end`, `junction`, `stairs or ramp`, `above` or `below`, its floor area,
+width, rise and exits, the walk's length, the straight distance and bearing, and a
+`go` line to send through `act`. The first `explore` maps the ground, which takes
+a moment in a large dungeon, and answers `mapping`; an answer found from where the
+character stood before answers `refreshing`. Ask again in a few seconds for either.
+
 Client
 commands that close the client, kill the character, or change its player-killer
 status are refused, and `logout` is how a model leaves the world. Any other line is handed to the client as chat or a
@@ -192,12 +227,18 @@ client command, so a model can make the character speak.
 MossTank shares all of its own: whether its macro runs and what it is doing,
 every option by name, the advanced ones included, its monster rules in order
 with each rule's priority, actions, damage types and weapons, the items and
-consumables it uses, its extra and blacklisted buffs, and which profiles are
-loaded. `settings mosstank` answers with all of it and with `howToChange`, and
-`settings mosstank options` with one section. `configure mosstank <change>`
-takes one JSON object, such as
+consumables it uses, its extra and blacklisted buffs, its route with every
+waypoint, and which profiles are loaded. `settings mosstank` answers with all of
+it and with `howToChange`, and `settings mosstank options` with one section.
+`configure mosstank <change>` takes one JSON object, such as
 `{"options":{"EnableCombat":true},"macro":{"running":true}}`, and saves the
-change to the loaded profile as MossTank's own panel does. A change wrong in any
+change to the loaded profile as MossTank's own panel does. A route is replaced
+whole, its points in map coordinates, the way VTank's route files keep them, with
+pauses in seconds and chat lines between them, such as
+`{"route":{"waypoints":[{"point":{"northSouth":42.12345,"eastWest":33.61234,"elevation":0.39169}},{"pause":5},{"chat":"/say hi"}],"mode":"Circular","walkLegs":true,"enabled":true}}`.
+A position the agent reports, the character's own or an object's, can be given as
+a point as it is, so a model can build a route from where it has stood.
+A change wrong in any
 part changes nothing and is refused with every reason. An applied change answers
 with the parts it touched as MossTank now holds them, so a range MossTank kept
 within its limits shows the value it kept.

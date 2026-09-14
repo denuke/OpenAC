@@ -130,6 +130,68 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
+    public void APlaceKnownOnlyByItsMapCoordinatesLiesWhereItsCellPlacesIt()
+    {
+        var here = new Vector3(15.259f, -39.938f, 0.005f);
+        Vector3 byCell = RuntimeNavigationGoalSource.PlaceOffset(0x019E0114u, new Vector3(10f, -40f, 0.005f), 0x019E0123u, here);
+        Vector3 byMap = RuntimeNavigationGoalSource.PlaceOffset(0u, new Vector3(202f, 30296f, 0.005f), 0x019E0123u, here);
+
+        Assert.Equal(-5.259d, byCell.X, 3);
+        Assert.Equal(-0.062d, byCell.Y, 3);
+        Assert.Equal(byCell.X, byMap.X, 2);
+        Assert.Equal(byCell.Y, byMap.Y, 2);
+        Assert.Equal(byCell.Z, byMap.Z, 3);
+    }
+
+    [Fact]
+    public void AWalkToAPlaceArrivesThereWithoutTurningToFaceIt()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
+        var walk = new NavigationWalkController(FlatWorld(), body, new Goals());
+
+        walk.WalkToPlace(0xA9B40001u, new Vector3(60f, 75f, 0f), 2f);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.Equal(0u, report.ObjectId);
+        Assert.InRange(Vector2.Distance(body.Flat, new Vector2(60f, 75f)), 0f, 2.05f);
+        Assert.False(body.Travelling);
+    }
+
+    [Fact]
+    public void PlacesAreFoundOnceTheGroundAroundTheCharacterIsMapped()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
+        var walk = new NavigationWalkController(FlatWorld(), body, new Goals());
+
+        walk.WantPlaces();
+        Assert.Equal(NavigationPlacesState.Mapping, walk.Places.State);
+        NavigationPlacesReport report = RunUntilPlaces(walk);
+
+        Assert.Equal(NavigationPlacesState.Ready, report.State);
+        Assert.False(report.InDungeon);
+        Assert.Contains(report.Places, place => place.Kind == NavigationPlaceKind.Open);
+        Assert.Equal(report.Places.OrderBy(place => place.WalkMeters), report.Places);
+        Assert.Equal(new Vector3(40f, 40f, 0f), report.FromGlobal);
+        Assert.Equal(0, body.MovesBegun);
+    }
+
+    [Fact]
+    public void PlacesOutdoorsNameTheLoadedLandblocksBesideTheCharacters()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
+        var walk = new NavigationWalkController(FlatWorld(landblocksNorth: 2), body, new Goals());
+
+        NavigationPlacesReport report = RunUntilPlaces(walk);
+
+        NavigationPlace north = Assert.Single(report.Places, place => place.Kind == NavigationPlaceKind.Landblock);
+        Assert.Equal(0xA9B5FFFFu, north.LandblockId);
+        Assert.Equal(new Vector3(96f, 288f, 0f), north.Global);
+        Assert.True(float.IsNaN(north.WalkMeters));
+        Assert.False(north.IsWater);
+    }
+
+    [Fact]
     public void ARouteAskedForAloneIsFoundWithoutMovingTheCharacter()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
@@ -873,6 +935,21 @@ public sealed class NavigationWalkControllerTests
         return walk.Report;
     }
 
+    private static NavigationPlacesReport RunUntilPlaces(NavigationWalkController walk)
+    {
+        walk.WantPlaces();
+        NavigationPlacesReport report = walk.Places;
+        var wall = Stopwatch.StartNew();
+        while (report.State != NavigationPlacesState.Ready && wall.Elapsed < TimeSpan.FromSeconds(60))
+        {
+            walk.WantPlaces();
+            walk.Tick(Frame);
+            report = walk.Places;
+            Thread.Sleep(1);
+        }
+        return report;
+    }
+
     private static void Run(NavigationWalkController walk, SimulatedBody body, float seconds)
     {
         for (float simulated = 0f; simulated < seconds; simulated += Frame)
@@ -884,6 +961,12 @@ public sealed class NavigationWalkControllerTests
 
     private sealed class Goals : Dictionary<uint, Vector3>, INavigationGoalSource
     {
+        public bool TryGlobalOf(Vector3 world, out Vector3 global)
+        {
+            global = world;
+            return true;
+        }
+
         public NavigationBlocker? Blocker { get; init; }
 
         /// <summary>The objects the server placed, as a walk asks for them.</summary>
@@ -897,6 +980,13 @@ public sealed class NavigationWalkControllerTests
         public Func<IReadOnlyList<NavAvoidance>>? CrowdNow { get; init; }
 
         public IReadOnlyList<NavAvoidance> FindCrowd(Vector3 around, float radius, uint goalObjectId) => CrowdNow?.Invoke() ?? [];
+
+        /// <summary>Places stand where their landblock-local point says, the test world having one landblock at its origin.</summary>
+        public bool TryLocatePlace(uint cellId, Vector3 local, out Vector3 position)
+        {
+            position = local;
+            return true;
+        }
 
         public bool TryFindBlocker(Vector3 position, float radius, out NavigationBlocker blocker)
         {

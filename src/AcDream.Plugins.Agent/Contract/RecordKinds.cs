@@ -17,6 +17,8 @@ internal static class RecordKinds
     internal const string Spells = "spells";
     internal const string Nearby = "nearby";
     internal const string NearbyRefused = "nearby-refused";
+    internal const string Explore = "explore";
+    internal const string ExploreRefused = "explore-refused";
     internal const string EntityInspected = "entity-inspected";
     internal const string EntityRefused = "entity-refused";
     internal const string TargetSent = "target-sent";

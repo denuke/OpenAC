@@ -19,6 +19,18 @@ public sealed class BodyProjectionTests
     }
 
     [Fact]
+    public void APositionIsStatedPreciselyEnoughToStandWhereItWasRead()
+    {
+        var position = new PluginNavigationPosition(0x019E0114u, -101.1083333d, 24.3053712d, 0.0000208d, 0f, false);
+
+        var described = Coordinates.Describe(position);
+
+        Assert.Equal(24.30537d, described["northSouth"]!.GetValue<double>());
+        Assert.Equal(-101.10833d, described["eastWest"]!.GetValue<double>());
+        Assert.Equal(0.00002d, described["elevation"]!.GetValue<double>());
+    }
+
+    [Fact]
     public void TheSimulatedPositionIsStatedInMapCoordinates()
     {
         var host = new FakePluginHost();

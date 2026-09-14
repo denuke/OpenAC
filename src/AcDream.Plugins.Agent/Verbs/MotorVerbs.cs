@@ -15,7 +15,7 @@ namespace AcDream.Plugins.Agent.Verbs;
 /// <c>face &lt;guid&gt;</c>, <c>go to &lt;object&gt;</c>, <c>jump</c>,
 /// <c>stance combat|peace</c> and <c>cancel</c>. Walking or running, strafing and
 /// turning combine the way held movement keys do, and a new move replaces only
-/// a move of its own kind. <c>go to</c> walks to an object along a route the
+/// a move of its own kind. <c>go to</c> walks to an object or a place along a route the
 /// client plans. The client carries out each move and ends it; these verbs ask
 /// for it and report how it ended.
 /// </summary>
@@ -213,7 +213,7 @@ internal sealed class MotorVerbs : IVerbFamily
     /// </summary>
     private VerbResult GoTo(CommandLine line)
     {
-        const string usage = "usage: go to <object id, name, or 'target'> [within <meters>]";
+        const string usage = "usage: go to <object id, name, or 'target'> [within <meters>], or go to <north-south> <east-west> [<elevation>] [within <meters>]";
         string[] words = Words(line);
         int first = 0;
         if (line.Verb == "go")
@@ -246,6 +246,8 @@ internal sealed class MotorVerbs : IVerbFamily
             return Refuse(line, NoOwnPosition);
         if (self.IsPortalSpace)
             return Refuse(line, InPortalSpace);
+        if (TryReadPlace(words[first..end], self.Position, out PluginNavigationPosition place))
+            return GoToPlace(line, automation.Navigation, self.Position, place, arrival);
         if (!TryFindGoal(automation, self, named, out PluginWorldObject goal, out string problem))
             return Refuse(line, problem);
         if (GoToProblem(self, goal) is { } refusal)
@@ -270,6 +272,114 @@ internal sealed class MotorVerbs : IVerbFamily
             ["within"] = Math.Round(arrival, 1),
             ["from"] = Coordinates.Describe(self.Position),
         });
+        WatchWalk(line, navigation, sequence, distance);
+        return VerbResult.Handled;
+    }
+
+    /// <summary>Walks to a place given in map coordinates, the way <c>go to</c> walks to an object.</summary>
+    private VerbResult GoToPlace(
+        CommandLine line,
+        INavigationAutomation navigation,
+        PluginNavigationPosition from,
+        PluginNavigationPosition place,
+        float arrival)
+    {
+        double distance = Geometry.DistanceMeters(from, place);
+        if (distance > MaximumGoToMeters)
+            return Refuse(line, $"that place is {distance:0} m away, and a walk is planned to at most {MaximumGoToMeters:0} m");
+        PluginNavigationCommandStatus status = navigation.GoTo(place, arrival);
+        if (status != PluginNavigationCommandStatus.Accepted)
+        {
+            return Refuse(line, status == PluginNavigationCommandStatus.Unavailable
+                ? "this client cannot plan a walk for a plugin"
+                : "the client did not accept the walk");
+        }
+
+        long sequence = navigation.GoToReport.Sequence;
+        Accepted(line, new JsonObject
+        {
+            ["place"] = Coordinates.DescribePlace(place),
+            ["meters"] = Math.Round(distance, 1),
+            ["within"] = Math.Round(arrival, 1),
+            ["from"] = Coordinates.Describe(from),
+        });
+        WatchWalk(line, navigation, sequence, distance);
+        return VerbResult.Handled;
+    }
+
+    /// <summary>
+    /// A place written in map coordinates: north-south then east-west as signed numbers, or
+    /// as numbers ending N, S, E or W in either order, then an optional elevation in map
+    /// units; with no elevation, the character's own.
+    /// </summary>
+    internal static bool TryReadPlace(IReadOnlyList<string> words, in PluginNavigationPosition self, out PluginNavigationPosition place)
+    {
+        place = default;
+        if (words.Count is < 2 or > 3)
+            return false;
+        double? northSouth = null;
+        double? eastWest = null;
+        var plain = new List<double>(3);
+        foreach (string word in words)
+        {
+            string token = word.TrimEnd(',');
+            if (token.Length == 0)
+                return false;
+            char compass = char.ToUpperInvariant(token[^1]);
+            if (compass is 'N' or 'S' or 'E' or 'W')
+            {
+                if (!double.TryParse(token[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out double amount)
+                    || !double.IsFinite(amount)
+                    || amount < 0d)
+                {
+                    return false;
+                }
+                double signed = compass is 'S' or 'W' ? -amount : amount;
+                if (compass is 'N' or 'S')
+                {
+                    if (northSouth is not null)
+                        return false;
+                    northSouth = signed;
+                }
+                else
+                {
+                    if (eastWest is not null)
+                        return false;
+                    eastWest = signed;
+                }
+            }
+            else if (double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out double number)
+                && double.IsFinite(number))
+            {
+                plain.Add(number);
+            }
+            else
+            {
+                return false;
+            }
+        }
+        double? elevation;
+        if (northSouth is null && eastWest is null)
+        {
+            if (plain.Count < 2)
+                return false;
+            northSouth = plain[0];
+            eastWest = plain[1];
+            elevation = plain.Count == 3 ? plain[2] : null;
+        }
+        else
+        {
+            if (northSouth is null || eastWest is null || plain.Count > 1)
+                return false;
+            elevation = plain.Count == 1 ? plain[0] : null;
+        }
+        place = new PluginNavigationPosition(0u, eastWest.Value, northSouth.Value, elevation ?? self.Elevation, 0f, IsOutdoor: true);
+        return true;
+    }
+
+    /// <summary>Resolves a walk from the client's own report of how it ended.</summary>
+    private void WatchWalk(CommandLine line, INavigationAutomation navigation, long sequence, double distance)
+    {
         double window = Math.Min(
             MaximumMoveSeconds * 2d,
             GoToPlanningSeconds + (distance / GoToSlowestMetersPerSecond));
@@ -300,7 +410,6 @@ internal sealed class MotorVerbs : IVerbFamily
             };
         },
         waiting: () => navigation.GoToReport is { State: PluginGoToState.Waiting } waiting && waiting.Sequence == sequence);
-        return VerbResult.Handled;
     }
 
     /// <summary>

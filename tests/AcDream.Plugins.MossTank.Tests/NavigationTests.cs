@@ -73,6 +73,24 @@ public sealed class NavigationTests
     }
 
     [Fact]
+    public void PointSteeringDoesNotReachAPointOnTheFloorAbove()
+    {
+        var automation = new FakeAutomation
+        {
+            NavigationSnapshot = Snapshot(Position(0d, 0d, heading: 0f)),
+        };
+        NavigationController controller = Controller(
+            automation,
+            RouteMode.Circular,
+            Waypoint(RouteWaypointType.Point, Position(0d, 0.001d) with { Elevation = 6d / 240d }),
+            Waypoint(RouteWaypointType.Point, Position(1d, 0d)));
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+
+        Assert.Equal(0, controller.CurrentWaypointIndex);
+    }
+
+    [Fact]
     public void PointSteeringRunsForwardInsideTheFourDegreeBand()
     {
         var automation = new FakeAutomation
@@ -311,6 +329,59 @@ public sealed class NavigationTests
         };
         Assert.True(controller.Tick(0.05d, canAct: true));
         Assert.True(Assert.Single(automation.Intents).Forward);
+    }
+
+    [Fact]
+    public void AnUnappraisedDoorIsAppraisedAsAWorldObjectAndOpenedOnceItsLockIsKnown()
+    {
+        var automation = new FakeAutomation
+        {
+            NavigationSnapshot = Snapshot(Position(0d, 0d, heading: 90f)),
+        };
+        automation.WorldObjects.Add(new PluginNavigationObject(55u, "Dungeon Door", Position(0.01d, 0d))
+        {
+            IsDoor = true,
+            IsOpen = false,
+            HasLockState = false,
+        });
+        var settings = new NavigationSettings { Enabled = true, OpenDoors = true, Mode = RouteMode.Circular };
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Position(1d, 0d)));
+        var controller = new NavigationController(new FakeHost(automation), settings);
+
+        Assert.True(controller.Tick(0.5d, canAct: true));
+        Assert.True(controller.Tick(0.5d, canAct: true));
+        Assert.Equal([55u], automation.IdentifiedObjects);
+        Assert.Equal("Identifying door: Dungeon Door.", controller.Status);
+        Assert.Empty(automation.UsedObjects);
+
+        automation.WorldObjects[0] = automation.WorldObjects[0] with { HasLockState = true };
+        Assert.True(controller.Tick(0.5d, canAct: true));
+        Assert.Equal([55u], automation.UsedObjects);
+        Assert.Equal([55u], automation.UsedWorldObjects);
+    }
+
+    [Fact]
+    public void ADoorWhoseAppraisalGoesUnansweredIsOpenedAnyway()
+    {
+        var automation = new FakeAutomation
+        {
+            NavigationSnapshot = Snapshot(Position(0d, 0d, heading: 90f)),
+        };
+        automation.WorldObjects.Add(new PluginNavigationObject(55u, "Dungeon Door", Position(0.01d, 0d))
+        {
+            IsDoor = true,
+            IsOpen = false,
+            HasLockState = false,
+        });
+        var settings = new NavigationSettings { Enabled = true, OpenDoors = true, Mode = RouteMode.Circular };
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Position(1d, 0d)));
+        var controller = new NavigationController(new FakeHost(automation), settings);
+
+        for (int pass = 0; pass < 6; pass++)
+            Assert.True(controller.Tick(1d, canAct: true));
+
+        Assert.Equal([55u, 55u, 55u], automation.IdentifiedObjects);
+        Assert.Equal([55u], automation.UsedObjects);
     }
 
     [Fact]
@@ -1079,6 +1150,309 @@ public sealed class NavigationTests
         Assert.Empty(automation.ModeRequests);
     }
 
+    [Fact]
+    public void AClientWalkedLegIsAskedForOnceAndHoldsThePassWhileTheWalkGoesOn()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        (NavigationController controller, _) = ClientLegs(automation, RouteMode.Circular, Meters(0d, 20d), Meters(20d, 20d));
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        (PluginNavigationPosition asked, float arrival) = Assert.Single(automation.GoTos);
+        Assert.Equal(Meters(0d, 20d), asked);
+        Assert.Equal(2f, arrival);
+
+        automation.WalkIs(PluginGoToState.Walking);
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        automation.WalkIs(PluginGoToState.Waiting, "waiting: MossTank is running Attack");
+        Assert.True(controller.Tick(0.05d, canAct: true));
+
+        Assert.Single(automation.GoTos);
+        Assert.Empty(automation.Intents);
+        Assert.Empty(automation.FacedHeadings);
+        Assert.Equal(0, controller.CurrentWaypointIndex);
+        Assert.Contains("walked by the client", controller.Status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void APointAboveTheCharacterIsNotReachedFromTheFloorBelowIt()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        PluginNavigationPosition above = Meters(0d, 0.5d) with { Elevation = 6d / 240d };
+        (NavigationController controller, _) = ClientLegs(automation, RouteMode.Circular, above, Meters(20d, 0d));
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+
+        Assert.Equal(0, controller.CurrentWaypointIndex);
+        Assert.Equal(above, Assert.Single(automation.GoTos).Position);
+    }
+
+    [Fact]
+    public void AClientWalkThatArrivesMovesTheRouteOnToTheNextLeg()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        (NavigationController controller, _) = ClientLegs(automation, RouteMode.Circular, Meters(0d, 20d), Meters(20d, 20d));
+        Assert.True(controller.Tick(0.05d, canAct: true));
+
+        automation.NavigationSnapshot = Snapshot(Meters(0d, 17d));
+        automation.WalkIs(PluginGoToState.Arrived, "arrived");
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.Equal(1, controller.CurrentWaypointIndex);
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.Equal([Meters(0d, 20d), Meters(20d, 20d)], automation.GoTos.Select(static walk => walk.Position));
+    }
+
+    [Fact]
+    public void PointsAlongALineAreWalkedInOneWalkAndPassedOnTheWay()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        (NavigationController controller, _) = ClientLegs(
+            automation,
+            RouteMode.Circular,
+            Meters(0d, 10d),
+            Meters(1d, 20d),
+            Meters(0d, 30d),
+            Meters(15d, 30d));
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.Equal(Meters(0d, 30d), Assert.Single(automation.GoTos).Position);
+
+        automation.WalkIs(PluginGoToState.Walking);
+        automation.NavigationSnapshot = Snapshot(Meters(-3d, 12d));
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.Equal(1, controller.CurrentWaypointIndex);
+
+        automation.NavigationSnapshot = Snapshot(Meters(0d, 19d));
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.Equal(2, controller.CurrentWaypointIndex);
+
+        automation.NavigationSnapshot = Snapshot(Meters(0d, 29d));
+        automation.WalkIs(PluginGoToState.Arrived, "arrived");
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.Equal(3, controller.CurrentWaypointIndex);
+        Assert.True(controller.Tick(0.05d, canAct: true));
+
+        Assert.Equal([Meters(0d, 30d), Meters(15d, 30d)], automation.GoTos.Select(static walk => walk.Position));
+        Assert.Equal(0, automation.StopGoToCount);
+    }
+
+    [Fact]
+    public void AWalkThatArrivesBeforeTheRouteSawItPassPointsMovesTheRouteOnToItsGoal()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        (NavigationController controller, _) = ClientLegs(automation, RouteMode.Once, Meters(0d, 10d), Meters(0d, 20d), Meters(0d, 30d));
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.Equal(Meters(0d, 30d), Assert.Single(automation.GoTos).Position);
+
+        automation.NavigationSnapshot = Snapshot(Meters(0d, 28.5d));
+        automation.WalkIs(PluginGoToState.Arrived, "arrived");
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.True(controller.Tick(0.05d, canAct: true));
+
+        Assert.False(controller.Tick(0.05d, canAct: true));
+        Assert.Equal("Once route complete.", controller.Status);
+        Assert.Single(automation.GoTos);
+    }
+
+    [Fact]
+    public void APointAboveOrBelowAStraightWalkOrOutOfOrderIsNotWalkedPast()
+    {
+        PluginNavigationPosition from = Meters(0d, 0d);
+        PluginNavigationPosition to = Meters(0d, 30d);
+        PluginNavigationPosition level = Meters(1d, 15d);
+        PluginNavigationPosition above = level with { Elevation = 3d / 240d };
+
+        Assert.True(NavigationController.RunLiesAlongLine([level], from, to, 2d));
+        Assert.False(NavigationController.RunLiesAlongLine([above], from, to, 2d));
+        Assert.False(NavigationController.RunLiesAlongLine([Meters(3d, 15d)], from, to, 2d));
+        Assert.False(NavigationController.RunLiesAlongLine([Meters(0d, 20d), Meters(0d, 10d)], from, to, 2d));
+    }
+
+    [Fact]
+    public void ALegTheClientCannotWalkIsSkippedAndARouteWithNoWalkableLegStopsAsking()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        (NavigationController controller, _) = ClientLegs(automation, RouteMode.Circular, Meters(0d, 20d), Meters(20d, 20d));
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        automation.WalkIs(PluginGoToState.NoRoute, "no route joins the character to it");
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.Equal(1, controller.CurrentWaypointIndex);
+        Assert.Equal(
+            "[MossTank] Waypoint 1 could not be walked (no route joins the character to it); moving on to the next.",
+            Assert.Single(automation.PostedSystemMessages));
+        Assert.Equal("Waypoint 1 could not be walked (no route joins the character to it)", controller.LastSkippedLeg);
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        automation.WalkIs(PluginGoToState.Blocked, "stuck");
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.Equal(0, controller.CurrentWaypointIndex);
+
+        Assert.False(controller.Tick(0.05d, canAct: true));
+        Assert.Equal(2, automation.GoTos.Count);
+        Assert.Contains("No leg of the route could be walked", controller.Status, StringComparison.Ordinal);
+
+        controller.Reset();
+        Assert.Empty(controller.LastSkippedLeg);
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.Equal(3, automation.GoTos.Count);
+    }
+
+    [Fact]
+    public void AnUnwalkablePointBesideOneTheCharacterStandsAtIsNotAskedForForever()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        (NavigationController controller, _) = ClientLegs(automation, RouteMode.Circular, Meters(0d, 1d), Meters(0d, 45d));
+
+        for (int pass = 0; pass < 12; pass++)
+        {
+            controller.Tick(0.05d, canAct: true);
+            if (automation.GoToReport.State == PluginGoToState.Planning)
+                automation.WalkIs(PluginGoToState.NoRoute, "no spot within 10 m of the goal that the start can reach can see it");
+        }
+
+        Assert.Equal(2, automation.GoTos.Count);
+        Assert.Equal(2, automation.PostedSystemMessages.Count);
+        Assert.Contains("No leg of the route could be walked", controller.Status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AFailedWalkPastPointsAlongALineIsAskedAgainOnePointAtATime()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        (NavigationController controller, _) = ClientLegs(automation, RouteMode.Circular, Meters(0d, 10d), Meters(0d, 20d), Meters(20d, 20d));
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        automation.WalkIs(PluginGoToState.Blocked, "stuck");
+        Assert.True(controller.Tick(0.05d, canAct: true));
+
+        Assert.Equal([Meters(0d, 20d), Meters(0d, 10d)], automation.GoTos.Select(static walk => walk.Position));
+        Assert.Equal(0, controller.CurrentWaypointIndex);
+        Assert.Empty(automation.PostedSystemMessages);
+    }
+
+    [Fact]
+    public void AWalkTheRouteDidNotAskForIsLeftToFinishFirst()
+    {
+        var automation = new FakeAutomation
+        {
+            NavigationSnapshot = Snapshot(Meters(0d, 0d)),
+            GoToReport = new PluginGoToReport(7, PluginGoToState.Walking, 0x50000001u, 12f, 0, "walking"),
+        };
+        (NavigationController controller, _) = ClientLegs(automation, RouteMode.Circular, Meters(0d, 20d), Meters(20d, 20d));
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.Empty(automation.GoTos);
+        Assert.Equal("Waiting for a walk the route did not ask for to end.", controller.Status);
+
+        automation.WalkIs(PluginGoToState.Arrived, "arrived");
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.Equal(Meters(0d, 20d), Assert.Single(automation.GoTos).Position);
+    }
+
+    [Fact]
+    public void TurningNavigationOffStopsTheWalkTheRouteAskedFor()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        (NavigationController controller, NavigationSettings settings) =
+            ClientLegs(automation, RouteMode.Circular, Meters(0d, 20d), Meters(20d, 20d));
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        automation.WalkIs(PluginGoToState.Walking);
+
+        settings.Enabled = false;
+        Assert.False(controller.Tick(0.05d, canAct: true));
+        Assert.False(controller.Tick(0.05d, canAct: true));
+
+        Assert.Equal(1, automation.StopGoToCount);
+    }
+
+    [Fact]
+    public void DoorsOnALegTheClientWalksAreLeftToTheWalk()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        automation.WorldObjects.Add(new PluginNavigationObject(55u, "Door", Meters(0d, 0.1d))
+        {
+            IsDoor = true,
+            IsOpen = false,
+            HasLockState = false,
+        });
+        automation.WorldObjects.Add(new PluginNavigationObject(56u, "Door", Meters(0d, 3d))
+        {
+            IsDoor = true,
+            IsOpen = false,
+            HasLockState = true,
+        });
+        (NavigationController controller, NavigationSettings settings) =
+            ClientLegs(automation, RouteMode.Circular, Meters(0d, 20d), Meters(20d, 20d));
+        settings.OpenDoors = true;
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        automation.WalkIs(PluginGoToState.Walking);
+        Assert.True(controller.Tick(0.05d, canAct: true));
+
+        Assert.Empty(automation.UsedObjects);
+        Assert.Single(automation.GoTos);
+        Assert.DoesNotContain("door", controller.Status, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AFinishedRouteWalkedByTheClientStillLeavesDoorsAlone()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        automation.WorldObjects.Add(new PluginNavigationObject(55u, "Door", Meters(0d, 0.1d))
+        {
+            IsDoor = true,
+            IsOpen = false,
+            HasLockState = false,
+        });
+        (NavigationController controller, NavigationSettings settings) =
+            ClientLegs(automation, RouteMode.Once, Meters(0d, 1d));
+        settings.OpenDoors = true;
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+        Assert.False(controller.Tick(0.05d, canAct: true));
+
+        Assert.Equal("Once route complete.", controller.Status);
+        Assert.Empty(automation.UsedObjects);
+        Assert.Empty(automation.GoTos);
+    }
+
+    [Fact]
+    public void AClientThatCannotWalkLegsLeavesThePassToTheRulesBelow()
+    {
+        var automation = new FakeAutomation
+        {
+            NavigationSnapshot = Snapshot(Meters(0d, 0d)),
+            GoToAnswer = PluginNavigationCommandStatus.Unavailable,
+        };
+        (NavigationController controller, _) = ClientLegs(automation, RouteMode.Circular, Meters(0d, 20d));
+
+        Assert.False(controller.Tick(0.05d, canAct: true));
+        Assert.Contains("cannot walk route legs", controller.Status, StringComparison.Ordinal);
+        Assert.Empty(automation.Intents);
+    }
+
+    private static (NavigationController Controller, NavigationSettings Settings) ClientLegs(
+        FakeAutomation automation,
+        RouteMode mode,
+        params PluginNavigationPosition[] points)
+    {
+        var settings = new NavigationSettings
+        {
+            Enabled = true,
+            Mode = mode,
+            MinimumDistanceMeters = 2d,
+            WalkLegsWithClient = true,
+        };
+        foreach (PluginNavigationPosition point in points)
+            settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, point));
+        return (new NavigationController(new FakeHost(automation), settings), settings);
+    }
+
+    private static PluginNavigationPosition Meters(double east, double north) =>
+        Position(east / 240d, north / 240d);
+
     private static NavigationController Controller(
         FakeAutomation automation,
         RouteMode mode,
@@ -1141,8 +1515,25 @@ public sealed class NavigationTests
 
     private sealed class FakeAutomation
         : IAutomationSurface, INavigationAutomation, IPluginChat, IItemAutomation,
-          ICombatAutomation, IEquipmentAutomation
+          ICombatAutomation, IEquipmentAutomation, IWorldObjectAutomation
     {
+        IWorldObjectAutomation IAutomationSurface.Objects => this;
+        public List<uint> IdentifiedObjects { get; } = [];
+
+        PluginItemCommandResult IWorldObjectAutomation.Identify(uint objectId)
+        {
+            IdentifiedObjects.Add(objectId);
+            return new PluginItemCommandResult(PluginItemCommandStatus.Started);
+        }
+
+        public List<uint> UsedWorldObjects { get; } = [];
+
+        PluginItemCommandResult IWorldObjectAutomation.Use(uint objectId)
+        {
+            UsedWorldObjects.Add(objectId);
+            return Use(objectId);
+        }
+
         public bool IsAvailable => true;
         public ICombatAutomation Combat => this;
         public IEquipmentAutomation Equipment => this;
@@ -1196,6 +1587,28 @@ public sealed class NavigationTests
         public List<PluginChatMessage> ChatMessages { get; } = [];
         public List<uint> UsedObjects { get; } = [];
         public int ClearCount { get; private set; }
+        public List<(PluginNavigationPosition Position, float ArrivalMeters)> GoTos { get; } = [];
+        public PluginNavigationCommandStatus GoToAnswer { get; set; } = PluginNavigationCommandStatus.Accepted;
+        public PluginGoToReport GoToReport { get; set; }
+        public int StopGoToCount { get; private set; }
+
+        public PluginNavigationCommandStatus GoTo(PluginNavigationPosition position, float arrivalMeters)
+        {
+            GoTos.Add((position, arrivalMeters));
+            if (GoToAnswer == PluginNavigationCommandStatus.Accepted)
+                GoToReport = new PluginGoToReport(GoToReport.Sequence + 1, PluginGoToState.Planning, 0u, float.NaN, 0, "planning");
+            return GoToAnswer;
+        }
+
+        public PluginNavigationCommandStatus StopGoTo()
+        {
+            StopGoToCount++;
+            GoToReport = GoToReport with { State = PluginGoToState.Stopped, Reason = "stopped" };
+            return PluginNavigationCommandStatus.Accepted;
+        }
+
+        public void WalkIs(PluginGoToState state, string reason = "") =>
+            GoToReport = GoToReport with { State = state, Reason = reason };
         public PluginItemUseCompletion ItemCompletion { get; set; }
         public PluginItemUseCompletion LastCompletion => ItemCompletion;
         public PluginNavigationObject? FoundObject { get; set; }
