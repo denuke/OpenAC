@@ -212,6 +212,103 @@ public sealed class MossTankPanelTests
     }
 
     [Fact]
+    public void ASharedChangeReplacesTheRouteAndHasTheClientWalkItsLegs()
+    {
+        var automation = new FakeAutomation();
+        var storage = new MemoryStorage();
+        var panel = new MossTankPanel(new FakeHost(automation, storage));
+
+        PluginSettingsChangeResult result = panel.ChangeSharedSettings("""
+            {
+              "route": {
+                "enabled": true,
+                "mode": "linear",
+                "walkLegs": true,
+                "waypoints": [
+                  { "point": "0xA9B40019 [84.000000 7.100000 94.005005] 0.998351 0.000000 0.000000 -0.057340" },
+                  { "pause": 2.5 },
+                  { "chat": "/say onward" },
+                  { "point": "0x00190105 [10 -20.5 -6]" }
+                ]
+              }
+            }
+            """);
+
+        Assert.True(result.Applied, result.Message);
+        Assert.Equal(
+            "Replaced the route with 4 waypoints, set the route to Linear, had the client walk the route's legs, turned route navigation on.",
+            result.Message);
+        using JsonDocument changed = JsonDocument.Parse(result.SettingsJson!);
+        JsonElement route = changed.RootElement.GetProperty("route");
+        Assert.True(route.GetProperty("enabled").GetBoolean());
+        Assert.Equal("Linear", route.GetProperty("mode").GetString());
+        Assert.True(route.GetProperty("walkLegs").GetBoolean());
+        Assert.Equal("Route ready.", route.GetProperty("status").GetString());
+        JsonElement[] waypoints = [.. route.GetProperty("waypoints").EnumerateArray()];
+        Assert.Equal(4, waypoints.Length);
+        Assert.Equal("0xA9B40019 [84 7.1 94.005]", waypoints[0].GetProperty("point").GetString());
+        Assert.Equal(2.5d, waypoints[1].GetProperty("pause").GetDouble());
+        Assert.Equal("/say onward", waypoints[2].GetProperty("chat").GetString());
+        Assert.Equal("0x00190105 [10 -20.5 -6]", waypoints[3].GetProperty("point").GetString());
+        Assert.True(panel.WalkLegsWithClientEnabled);
+
+        var reloaded = new MossTankPanel(new FakeHost(automation, storage));
+        using JsonDocument saved = JsonDocument.Parse(reloaded.ReadSharedSettings("route")!);
+        Assert.True(saved.RootElement.GetProperty("route").GetProperty("walkLegs").GetBoolean());
+        Assert.Equal(4, saved.RootElement.GetProperty("route").GetProperty("waypoints").GetArrayLength());
+    }
+
+    [Fact]
+    public void ASharedRouteChangeWrongInAnyWaypointChangesNothing()
+    {
+        var panel = new MossTankPanel(new FakeHost(new FakeAutomation()));
+        string before = panel.ReadSharedSettings(null)!;
+
+        PluginSettingsChangeResult result = panel.ChangeSharedSettings("""
+            {"route": {"mode": "Target", "walkLegs": "yes", "speed": 3,
+              "waypoints": [{"point": "somewhere"}, {"pause": -1}, {"jump": 1}, {"point": "0x7F7F0001 [1 2 3]"}]}}
+            """);
+
+        Assert.False(result.Applied);
+        foreach (string reason in new[]
+        {
+            "route.mode takes Circular, Linear or Once",
+            "route.walkLegs takes true or false",
+            "route.speed is not known",
+            "route.waypoints[1] must be",
+            "route.waypoints[2] must be",
+            "route.waypoints[3] must be",
+        })
+        {
+            Assert.Contains(reason, result.Message, StringComparison.Ordinal);
+        }
+        Assert.DoesNotContain("route.waypoints[4]", result.Message, StringComparison.Ordinal);
+        Assert.Equal(before, panel.ReadSharedSettings(null));
+    }
+
+    [Theory]
+    [InlineData("0xA9B40019 [84.000000 7.100000 94.005005] 0.998351 0.000000 0.000000 -0.057340", "0xA9B40019 [84 7.1 94.005]", true)]
+    [InlineData("0x00190105 [10 -20.5 -6]", "0x00190105 [10 -20.5 -6]", false)]
+    [InlineData(" 7f7f0001 [0.5, 191.25, 12] ", "0x7F7F0001 [0.5 191.25 12]", true)]
+    public void APlaceWrittenTheWayLocWritesItIsReadAndWrittenBackTheSame(string text, string written, bool outdoor)
+    {
+        Assert.True(MossTankPanel.TryParseSharedPlace(text, out PluginNavigationPosition position));
+
+        Assert.Equal(written, MossTankPanel.SharedPlace(position));
+        Assert.Equal(outdoor, position.IsOutdoor);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("0x00000000 [1 2 3]")]
+    [InlineData("0xZZ [1 2 3]")]
+    [InlineData("0x7F7F0001 [1 2]")]
+    [InlineData("0x7F7F0001 1 2 3")]
+    [InlineData("0x7F7F0001 [1 NaN 3]")]
+    public void APlaceNotWrittenTheWayLocWritesItIsRefused(string text) =>
+        Assert.False(MossTankPanel.TryParseSharedPlace(text, out _));
+
+    [Fact]
     public void PanelFillsEveryPositionOfVtanksRuleList()
     {
         var panel = new MossTankPanel(new FakeHost(new FakeAutomation()));
