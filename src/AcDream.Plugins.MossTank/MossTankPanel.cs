@@ -2698,6 +2698,16 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
             _profileNotice = "Select an owned inventory item first.";
             return;
         }
+        AddProfileItem(item, noBuffs);
+        _profileNotice = noBuffs
+            ? $"Added {item.Name} (no buffs)."
+            : $"Added {item.Name}.";
+        RefreshItemEditors();
+        SaveProfile();
+    }
+
+    private void AddProfileItem(in PluginInventoryItem item, bool noBuffs)
+    {
         _combatSettings.CombatItemObjectIds.Add(item.ObjectId);
         if (_combatSettings.CombatItemNames.Add(item.Name))
             _combatSettings.CombatItemOrder.Add(item.Name);
@@ -2706,11 +2716,6 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
         else
             _noBuffItemNames.Remove(item.Name);
         PopulateItemEnchantRows(item, noBuffs);
-        _profileNotice = noBuffs
-            ? $"Added {item.Name} (no buffs)."
-            : $"Added {item.Name}.";
-        RefreshItemEditors();
-        SaveProfile();
     }
 
     private void PopulateItemEnchantRows(in PluginInventoryItem item, bool noBuffs)

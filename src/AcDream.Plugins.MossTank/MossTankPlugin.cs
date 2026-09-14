@@ -10,6 +10,7 @@ public sealed class MossTankPlugin : IAcDreamPlugin
     private Action<double>? _autostartTick;
     private IDisposable? _commandRegistration;
     private IDisposable? _goToPause;
+    private IDisposable? _sharedSettings;
 
     public void Initialize(IPluginHost host)
     {
@@ -86,6 +87,10 @@ public sealed class MossTankPlugin : IAcDreamPlugin
 
         MossTankPanel panel = _panel;
         _goToPause = _host.Automation.Navigation.PauseGoToWhile(() => panel.WalkPauseReason);
+        _sharedSettings = _host.SharedSettings.Register(
+            "settings",
+            "MossTank",
+            new MossTankSharedSettings(panel));
 
         _autostartTick = _ => _panel.TickAutostart();
         _host.Events.Tick += _autostartTick;
@@ -107,6 +112,8 @@ public sealed class MossTankPlugin : IAcDreamPlugin
         _commandRegistration = null;
         _goToPause?.Dispose();
         _goToPause = null;
+        _sharedSettings?.Dispose();
+        _sharedSettings = null;
         _tick = null;
         _autostartTick = null;
         _panel?.Disable();
