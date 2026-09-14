@@ -16,6 +16,9 @@ public enum RuntimeRouteDriveState
 
     /// <summary>The character entered portal space or left the world.</summary>
     Lost,
+
+    /// <summary>A leap came down on its landing's level but away from where it was planned; plan on from where the body stands.</summary>
+    LandedElsewhere,
 }
 
 /// <summary>The body as a route driver sees it on one frame.</summary>
@@ -53,7 +56,10 @@ public readonly record struct RuntimeRouteLeap(int LegIndex, float Power, bool R
 /// drive as blocked, so the route can be planned again from where it stands.
 /// A leap is taken as a standing long jump: the body walks up to the takeoff,
 /// stops, faces the landing, charges the jump, and presses forward at the leap's
-/// pace while the jump charges, so it leaves the ground at that pace.
+/// pace while the jump charges, so it leaves the ground at that pace. A leap that
+/// comes down on its landing's level goes on along the route, or asks for a new
+/// plan from where it came down when that is far from the landing; one that comes
+/// down on another level ends the drive blocked.
 /// </summary>
 public sealed class RuntimeRouteDriver
 {
@@ -67,11 +73,11 @@ public sealed class RuntimeRouteDriver
 
     /// <summary>
     /// A leap starts once the body stands this near its takeoff, facing its
-    /// landing to within <see cref="LeapFacingDegrees"/>. It has landed where it
-    /// should within <see cref="LandingRadius"/> of the landing, measured flat, and
-    /// <see cref="LandingHeight"/> of its height. A jump still on the ground this
-    /// long after its charge, or still in the air this long after it, ends the drive
-    /// blocked, as does a landing anywhere else.
+    /// landing to within <see cref="LeapFacingDegrees"/>. It has come down on its
+    /// landing's level within <see cref="LandingHeight"/> of the landing's height,
+    /// and where it was planned within <see cref="LandingRadius"/> of the landing,
+    /// measured flat. A jump still on the ground this long after its charge, or still
+    /// in the air this long after it, ends the drive blocked.
     /// </summary>
     public const float TakeoffRadius = 0.35f;
     public const float LeapFacingDegrees = 2f;
@@ -120,6 +126,9 @@ public sealed class RuntimeRouteDriver
 
     /// <summary>Whether the body is facing, charging or flying a leap.</summary>
     public bool IsLeaping => _phase != LeapPhase.None;
+
+    /// <summary>How far from its planned landing, measured flat, the last leap came down.</summary>
+    public float LandingError { get; private set; }
 
     public RuntimeRouteDriveStep Advance(in RuntimeRouteDriveSample sample)
     {
@@ -250,11 +259,11 @@ public sealed class RuntimeRouteDriver
                         : default;
                 }
                 _phase = LeapPhase.None;
-                if (Vector2.Distance(position, Flat(landing)) > LandingRadius
-                    || MathF.Abs(sample.Position.Z - landing.Z) > LandingHeight)
-                {
+                if (MathF.Abs(sample.Position.Z - landing.Z) > LandingHeight)
                     return Finish(RuntimeRouteDriveState.Blocked, travelling, turning);
-                }
+                LandingError = Vector2.Distance(position, Flat(landing));
+                if (LandingError > LandingRadius)
+                    return Finish(RuntimeRouteDriveState.LandedElsewhere, travelling, turning);
                 LegIndex++;
                 return default;
         }

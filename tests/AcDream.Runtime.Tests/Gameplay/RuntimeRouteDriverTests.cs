@@ -164,11 +164,26 @@ public sealed class RuntimeRouteDriverTests
     }
 
     [Fact]
-    public void ALeapThatLandsFarFromItsLandingEndsTheDriveBlocked()
+    public void ALeapThatLandsAwayFromItsLandingOnTheSameLevelAsksForANewPlan()
     {
         var body = new SimulatedBody { Floor = at => at.Y < 5.5f ? 3f : 0f };
         var driver = new RuntimeRouteDriver(
             [new Vector3(0f, 0f, 3f), new Vector3(0f, 5f, 3f), new Vector3(0f, 12f, 0f), new Vector3(0f, 15f, 0f)],
+            [new RuntimeRouteLeap(2, 0.1f, Run: false)]);
+
+        Drive(driver, body, seconds: 30f);
+
+        Assert.Equal(RuntimeRouteDriveState.LandedElsewhere, driver.State);
+        Assert.Equal(1, body.Jumps);
+        Assert.True(driver.LandingError > RuntimeRouteDriver.LandingRadius);
+    }
+
+    [Fact]
+    public void ALeapThatLandsOnAnotherLevelEndsTheDriveBlocked()
+    {
+        var body = new SimulatedBody { Floor = at => at.Y < 5.5f ? 3f : 0f };
+        var driver = new RuntimeRouteDriver(
+            [new Vector3(0f, 0f, 3f), new Vector3(0f, 5f, 3f), new Vector3(0f, 6.7f, 3f), new Vector3(0f, 10f, 3f)],
             [new RuntimeRouteLeap(2, 0.1f, Run: false)]);
 
         Drive(driver, body, seconds: 30f);
