@@ -547,8 +547,8 @@ internal sealed class NavigationController
                 return false;
             }
             if (_settings.WalkLegsWithClient)
-                return WalkLegWithClient(navigation, snapshot.Position, waypoint, distance);
-            if (distance <= BoundedMinimumDistance())
+                return WalkLegWithClient(navigation, snapshot.Position, waypoint, ReachMeters(snapshot.Position, waypoint.Position));
+            if (ReachMeters(snapshot.Position, waypoint.Position) <= BoundedMinimumDistance())
             {
                 if (!TryRegisterArrival())
                     return true;
@@ -819,7 +819,7 @@ internal sealed class NavigationController
             _status = $"Checkpoint is outside NavFarStopRange ({liveDistance:0.0}m).";
             return false;
         }
-        if (liveDistance > BoundedMinimumDistance())
+        if (ReachMeters(snapshot.Position, waypoint.Position) > BoundedMinimumDistance())
         {
             _checkpointElapsed = 0d;
             _status = string.Create(CultureInfo.InvariantCulture, $"Checkpoint {_index + 1}/{_settings.Waypoints.Count}: {liveDistance:0.0}m");
@@ -834,8 +834,7 @@ internal sealed class NavigationController
         PluginNavigationPosition confirmed = snapshot.ConfirmedPositionRevision == 0UL
             ? snapshot.Position
             : snapshot.ConfirmedPosition;
-        double confirmedDistance = confirmed.HorizontalDistanceMeters(
-            waypoint.Position);
+        double confirmedDistance = ReachMeters(confirmed, waypoint.Position);
         if (confirmedDistance <= BoundedMinimumDistance())
         {
             _checkpointElapsed = 0d;
@@ -1372,7 +1371,7 @@ internal sealed class NavigationController
                 {
                     RouteWaypoint passing = _settings.Waypoints[_index];
                     if (!arrived
-                        && position.HorizontalDistanceMeters(passing.Position) > BoundedMinimumDistance()
+                        && ReachMeters(position, passing.Position) > BoundedMinimumDistance()
                         && !HasPassed(position, passing.Position, goal.Position))
                     {
                         break;
@@ -1455,6 +1454,17 @@ internal sealed class NavigationController
         PluginGoToReport report = navigation.GoToReport;
         if (report.Sequence == _clientWalkSequence && IsUnderWay(report.State))
             _ = navigation.StopGoTo();
+    }
+
+    /// <summary>
+    /// How far apart two positions are, height included, so a point or checkpoint is reached
+    /// within Nav Min of it, not from a floor above or below it, as on stairs and ramps.
+    /// </summary>
+    internal static double ReachMeters(in PluginNavigationPosition from, in PluginNavigationPosition to)
+    {
+        double across = from.HorizontalDistanceMeters(to);
+        double rise = (to.Elevation - from.Elevation) * 240d;
+        return Math.Sqrt((across * across) + (rise * rise));
     }
 
     private static bool IsUnderWay(PluginGoToState state) =>

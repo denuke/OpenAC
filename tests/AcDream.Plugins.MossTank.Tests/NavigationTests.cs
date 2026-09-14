@@ -73,6 +73,24 @@ public sealed class NavigationTests
     }
 
     [Fact]
+    public void PointSteeringDoesNotReachAPointOnTheFloorAbove()
+    {
+        var automation = new FakeAutomation
+        {
+            NavigationSnapshot = Snapshot(Position(0d, 0d, heading: 0f)),
+        };
+        NavigationController controller = Controller(
+            automation,
+            RouteMode.Circular,
+            Waypoint(RouteWaypointType.Point, Position(0d, 0.001d) with { Elevation = 6d / 240d }),
+            Waypoint(RouteWaypointType.Point, Position(1d, 0d)));
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+
+        Assert.Equal(0, controller.CurrentWaypointIndex);
+    }
+
+    [Fact]
     public void PointSteeringRunsForwardInsideTheFourDegreeBand()
     {
         var automation = new FakeAutomation
@@ -1152,6 +1170,19 @@ public sealed class NavigationTests
         Assert.Empty(automation.FacedHeadings);
         Assert.Equal(0, controller.CurrentWaypointIndex);
         Assert.Contains("walked by the client", controller.Status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void APointAboveTheCharacterIsNotReachedFromTheFloorBelowIt()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        PluginNavigationPosition above = Meters(0d, 0.5d) with { Elevation = 6d / 240d };
+        (NavigationController controller, _) = ClientLegs(automation, RouteMode.Circular, above, Meters(20d, 0d));
+
+        Assert.True(controller.Tick(0.05d, canAct: true));
+
+        Assert.Equal(0, controller.CurrentWaypointIndex);
+        Assert.Equal(above, Assert.Single(automation.GoTos).Position);
     }
 
     [Fact]
