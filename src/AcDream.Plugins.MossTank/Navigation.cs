@@ -727,7 +727,7 @@ internal sealed class NavigationController
         if (_doorRetryElapsed == elapsedSeconds || _doorRetryElapsed >= UseRetrySeconds)
         {
             PluginItemCommandResult result = _activeLockpickObjectId == 0u
-                ? _host.Automation.Items.Use(door.ObjectId)
+                ? _host.Automation.Objects.Use(door.ObjectId)
                 : _host.Automation.Items.Apply(
                     _activeLockpickObjectId,
                     door.ObjectId);
@@ -1092,7 +1092,7 @@ internal sealed class NavigationController
         if (!_actionSent || _retryElapsed >= UseRetrySeconds)
         {
             PluginItemCommandResult result =
-                _host.Automation.Items.Use(waypoint.ObjectId);
+                _host.Automation.Objects.Use(waypoint.ObjectId);
             _actionSent |= result.Accepted;
             if (result.Accepted && !_hasPortalOrigin)
             {

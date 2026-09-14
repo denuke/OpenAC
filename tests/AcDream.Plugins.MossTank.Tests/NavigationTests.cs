@@ -357,6 +357,7 @@ public sealed class NavigationTests
         automation.WorldObjects[0] = automation.WorldObjects[0] with { HasLockState = true };
         Assert.True(controller.Tick(0.5d, canAct: true));
         Assert.Equal([55u], automation.UsedObjects);
+        Assert.Equal([55u], automation.UsedWorldObjects);
     }
 
     [Fact]
@@ -1523,6 +1524,14 @@ public sealed class NavigationTests
         {
             IdentifiedObjects.Add(objectId);
             return new PluginItemCommandResult(PluginItemCommandStatus.Started);
+        }
+
+        public List<uint> UsedWorldObjects { get; } = [];
+
+        PluginItemCommandResult IWorldObjectAutomation.Use(uint objectId)
+        {
+            UsedWorldObjects.Add(objectId);
+            return Use(objectId);
         }
 
         public bool IsAvailable => true;
