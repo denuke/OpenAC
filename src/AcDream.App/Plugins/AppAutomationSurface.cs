@@ -2075,8 +2075,23 @@ internal sealed class AppAutomationSurface
         return true;
     }
 
-    PluginItemCommandResult IWorldObjectAutomation.Identify(uint objectId) =>
-        ((ILootAutomation)this).Identify(objectId);
+    PluginItemCommandResult IWorldObjectAutomation.Identify(uint objectId)
+    {
+        GameRuntime? runtime;
+        Func<uint, bool>? identify;
+        lock (_gate)
+        {
+            runtime = _runtime;
+            identify = _identifyItem;
+        }
+        if (runtime is null || identify is null || !IsAvailable)
+            return new(PluginItemCommandStatus.Unavailable);
+        if (objectId == 0u || runtime.InventoryOwner.Objects.Get(objectId) is null)
+            return new(PluginItemCommandStatus.InvalidItem);
+        return identify(objectId)
+            ? new(PluginItemCommandStatus.Started)
+            : new(PluginItemCommandStatus.Refused);
+    }
 
     PluginItemCommandResult IWorldObjectAutomation.Use(uint objectId)
     {

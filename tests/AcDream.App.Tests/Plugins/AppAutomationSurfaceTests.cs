@@ -658,6 +658,16 @@ public sealed class AppAutomationSurfaceTests
             NoOpAutomationSurface.Instance.Items.CheckSell(0x70000021u).Status);
     }
 
+    [Fact]
+    public void WorldIdentifyIsUnavailableWithoutALiveSession()
+    {
+        using var surface = new AppAutomationSurface();
+
+        Assert.Equal(
+            PluginItemCommandStatus.Unavailable,
+            ((IWorldObjectAutomation)surface).Identify(0x70000021u).Status);
+    }
+
     private const uint VendorId = 0x70000010u;
 
     private static VendorShopProfile Profile(float sellRate) => new(
