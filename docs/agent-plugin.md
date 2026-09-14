@@ -53,7 +53,7 @@ another plugin's settings. Every other tool only reads.
 | `outcome` | How the line with a handle ended: its outcome word, its shared class, and every record it produced. |
 | `events` | Records after a cursor. With `waitSeconds` it waits for the next one, and `until` wakes it on a condition. |
 | `nearby` | Objects around the character, nearest first, with distance, bearing, kind and sight. |
-| `explore` | Rooms, passages and open ground the character can walk to, from the client's navigation mesh, unvisited first and nearest walk first, each with a line that walks there. |
+| `explore` | Rooms, passages and open ground the character can walk to, from the client's navigation mesh, and outdoors nearby buildings and the landblocks beside its own, unvisited first and nearest first, each with a line that walks there. |
 | `inspect` | Everything the client holds about one object, with its sight. |
 | `spells` | Known spells, narrowed by `search`, including whether their components are carried. |
 | `skills` | Skills with their training and values. |
@@ -205,7 +205,10 @@ a walk reaches from where the character stands, over the whole dungeon or the la
 around it, told apart on the client's navigation mesh by how open the floor is. A
 room is floor that opens out away from its edges and narrows at its doorways, a
 passage is floor that stays narrow, given in stretches of about 20 m, and open
-ground is a room too large to call one. Places the character has not stood near
+ground is a room too large to call one. Outdoors it also gives the buildings in
+the character's landblock and those beside it, at their origins with their
+doorways, and the landblocks beside the character's own, at their middles with
+their direction and whether they lie under water. Places the character has not stood near
 since the plugin started come first, then those it has, marked `visited`, each
 nearest walk first from where the character stands, so the order follows it
 deeper in. Each place is given at its most open point with its kind, notes such
