@@ -998,7 +998,16 @@ internal static class MetafSerializer
     private static uint ParseHexAsUInt(string text) =>
         uint.Parse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
 
-    private static string FormatNumber(double value) => value.ToString(CultureInfo.InvariantCulture);
+    /// <summary>
+    /// A number as the file's grammar reads it: the shortest text that reads back the same,
+    /// with a decimal point before any exponent, since the grammar takes 2.0E-05 but not 2E-05.
+    /// </summary>
+    private static string FormatNumber(double value)
+    {
+        string text = value.ToString(CultureInfo.InvariantCulture);
+        int exponent = text.IndexOfAny(['E', 'e']);
+        return exponent < 0 || text.AsSpan(0, exponent).Contains('.') ? text : text.Insert(exponent, ".0");
+    }
 
     private static string FormatHex(double value) => unchecked((uint)checked((int)value))
         .ToString("X8", CultureInfo.InvariantCulture);
