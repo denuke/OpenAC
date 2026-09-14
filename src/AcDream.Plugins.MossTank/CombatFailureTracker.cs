@@ -9,6 +9,9 @@ internal enum CombatSuppressionReason
     Ghost,
 
     Dead,
+
+    /// <summary>Every shot at it would meet a wall, so it is set aside for a while.</summary>
+    Walled,
 }
 
 internal sealed class CombatFailureTracker
@@ -150,6 +153,15 @@ internal sealed class CombatFailureTracker
         entry.SuccessfulMisses = 0;
     }
 
+    /// <summary>Keeps a monster out of target choice until <paramref name="until"/>.</summary>
+    public void SetAside(uint objectId, double until)
+    {
+        if (objectId == 0u)
+            return;
+        Entry entry = Get(objectId);
+        entry.SetAsideUntil = Math.Max(entry.SetAsideUntil, until);
+    }
+
     public void ClearBlacklist(uint objectId)
     {
         if (objectId == 0u || !_entries.TryGetValue(objectId, out Entry? entry))
@@ -173,8 +185,10 @@ internal sealed class CombatFailureTracker
             return CombatSuppressionReason.Dead;
         if (entry.IsGhost)
             return CombatSuppressionReason.Ghost;
-        return entry.BlacklistedUntil > now
-            ? CombatSuppressionReason.Blacklisted
+        if (entry.BlacklistedUntil > now)
+            return CombatSuppressionReason.Blacklisted;
+        return entry.SetAsideUntil > now
+            ? CombatSuppressionReason.Walled
             : CombatSuppressionReason.None;
     }
 
@@ -197,6 +211,7 @@ internal sealed class CombatFailureTracker
         public long AttackHealthRevision;
         public double? EngagedAt;
         public double BlacklistedUntil;
+        public double SetAsideUntil;
         public bool IsGhost;
         public bool IsDead;
     }
