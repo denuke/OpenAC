@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AcDream.Plugin.Abstractions;
 
 namespace AcDream.Plugins.MossTank.Tests;
@@ -225,10 +226,10 @@ public sealed class MossTankPanelTests
                 "mode": "linear",
                 "walkLegs": true,
                 "waypoints": [
-                  { "point": "0xA9B40019 [84.000000 7.100000 94.005005] 0.998351 0.000000 0.000000 -0.057340" },
+                  { "point": { "cell": "0xA9B40019", "northSouth": 42.12345, "eastWest": 33.61234, "elevation": 0.39169, "indoor": false, "text": "42.1N, 33.6E" } },
                   { "pause": 2.5 },
                   { "chat": "/say onward" },
-                  { "point": "0x00190105 [10 -20.5 -6]" }
+                  { "point": { "northSouth": 24.30537, "eastWest": -101.10833, "elevation": -0.025 } }
                 ]
               }
             }
@@ -247,10 +248,14 @@ public sealed class MossTankPanelTests
         Assert.Equal(JsonValueKind.Null, route.GetProperty("skipped").ValueKind);
         JsonElement[] waypoints = [.. route.GetProperty("waypoints").EnumerateArray()];
         Assert.Equal(4, waypoints.Length);
-        Assert.Equal("0xA9B40019 [84 7.1 94.005]", waypoints[0].GetProperty("point").GetString());
+        JsonElement first = waypoints[0].GetProperty("point");
+        Assert.Equal(["northSouth", "eastWest", "elevation"], first.EnumerateObject().Select(static field => field.Name));
+        Assert.Equal(42.12345d, first.GetProperty("northSouth").GetDouble());
+        Assert.Equal(33.61234d, first.GetProperty("eastWest").GetDouble());
+        Assert.Equal(0.39169d, first.GetProperty("elevation").GetDouble());
         Assert.Equal(2.5d, waypoints[1].GetProperty("pause").GetDouble());
         Assert.Equal("/say onward", waypoints[2].GetProperty("chat").GetString());
-        Assert.Equal("0x00190105 [10 -20.5 -6]", waypoints[3].GetProperty("point").GetString());
+        Assert.Equal(-101.10833d, waypoints[3].GetProperty("point").GetProperty("eastWest").GetDouble());
         Assert.True(panel.WalkLegsWithClientEnabled);
 
         var reloaded = new MossTankPanel(new FakeHost(automation, storage));
@@ -267,7 +272,8 @@ public sealed class MossTankPanelTests
 
         PluginSettingsChangeResult result = panel.ChangeSharedSettings("""
             {"route": {"mode": "Target", "walkLegs": "yes", "speed": 3,
-              "waypoints": [{"point": "somewhere"}, {"pause": -1}, {"jump": 1}, {"point": "0x7F7F0001 [1 2 3]"}]}}
+              "waypoints": [{"point": "somewhere"}, {"pause": -1}, {"jump": 1}, {"point": {"northSouth": 1, "eastWest": 2, "elevation": 0}},
+                {"point": {"northSouth": 1, "eastWest": "far", "elevation": 0}}]}}
             """);
 
         Assert.False(result.Applied);
@@ -279,6 +285,7 @@ public sealed class MossTankPanelTests
             "route.waypoints[1] must be",
             "route.waypoints[2] must be",
             "route.waypoints[3] must be",
+            "route.waypoints[5] must be",
         })
         {
             Assert.Contains(reason, result.Message, StringComparison.Ordinal);
@@ -288,26 +295,27 @@ public sealed class MossTankPanelTests
     }
 
     [Theory]
-    [InlineData("0xA9B40019 [84.000000 7.100000 94.005005] 0.998351 0.000000 0.000000 -0.057340", "0xA9B40019 [84 7.1 94.005]", true)]
-    [InlineData("0x00190105 [10 -20.5 -6]", "0x00190105 [10 -20.5 -6]", false)]
-    [InlineData(" 7f7f0001 [0.5, 191.25, 12] ", "0x7F7F0001 [0.5 191.25 12]", true)]
-    [InlineData("0x00000000 [202 30296 0.005]", "0x00000000 [202 30296 0.005]", false)]
-    public void APlaceWrittenTheWayLocWritesItIsReadAndWrittenBackTheSame(string text, string written, bool outdoor)
+    [InlineData("""{"northSouth": 24.30537, "eastWest": -101.10833, "elevation": 0.00002}""", 24.30537d, -101.10833d, 0.00002d)]
+    [InlineData("""{"cell": "0x019E0114", "northSouth": -3.5, "eastWest": 12, "elevation": -0.025, "indoor": true, "text": "3.5S, 12.0E"}""", -3.5d, 12d, -0.025d)]
+    public void APointInMapCoordinatesIsReadAndWrittenBackTheSame(string json, double northSouth, double eastWest, double elevation)
     {
-        Assert.True(MossTankPanel.TryParseSharedPlace(text, out PluginNavigationPosition position));
+        Assert.True(MossTankPanel.TryReadSharedPoint(JsonNode.Parse(json), out PluginNavigationPosition position));
 
-        Assert.Equal(written, MossTankPanel.SharedPlace(position));
-        Assert.Equal(outdoor, position.IsOutdoor);
+        Assert.Equal(0u, position.CellId);
+        JsonObject written = MossTankPanel.SharedPoint(position);
+        Assert.Equal(northSouth, written["northSouth"]!.GetValue<double>());
+        Assert.Equal(eastWest, written["eastWest"]!.GetValue<double>());
+        Assert.Equal(elevation, written["elevation"]!.GetValue<double>());
     }
 
     [Theory]
-    [InlineData("")]
-    [InlineData("0xZZ [1 2 3]")]
-    [InlineData("0x7F7F0001 [1 2]")]
-    [InlineData("0x7F7F0001 1 2 3")]
-    [InlineData("0x7F7F0001 [1 NaN 3]")]
-    public void APlaceNotWrittenTheWayLocWritesItIsRefused(string text) =>
-        Assert.False(MossTankPanel.TryParseSharedPlace(text, out _));
+    [InlineData("\"0x7F7F0001 [1 2 3]\"")]
+    [InlineData("""{"northSouth": 1, "eastWest": 2}""")]
+    [InlineData("""{"northSouth": "1", "eastWest": 2, "elevation": 0}""")]
+    [InlineData("""{"northSouth": 1, "eastWest": 2, "elevation": 5000}""")]
+    [InlineData("[1, 2, 3]")]
+    public void APointNotInMapCoordinatesIsRefused(string json) =>
+        Assert.False(MossTankPanel.TryReadSharedPoint(JsonNode.Parse(json), out _));
 
     [Fact]
     public void PanelFillsEveryPositionOfVtanksRuleList()

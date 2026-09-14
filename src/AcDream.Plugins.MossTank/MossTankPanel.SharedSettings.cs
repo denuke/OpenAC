@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AcDream.Plugin.Abstractions;
@@ -45,9 +44,8 @@ internal sealed partial class MossTankPanel
         + "\"buffs\": {\"addSpells\": [\"<spell name>\"], \"removeSpells\": [...], \"addBlacklistedFamilies\": [...], "
         + "\"removeBlacklistedFamilies\": [...]}. "
         + "\"route\": {\"enabled\": true or false, \"mode\": \"Circular\", \"Linear\" or \"Once\", \"walkLegs\": true or false, "
-        + "\"waypoints\": [{\"point\": \"0x<cell> [x y z]\"}, {\"pause\": <seconds>}, {\"chat\": \"<text>\"}]} replaces the "
-        + "route, with points as the client's /loc writes them. A route loaded from a VTank file keeps no cells, so its points "
-        + "read as 0x00000000 with the point measured from the corner of the map, and walk and write back as they read. "
+        + "\"waypoints\": [{\"point\": {\"northSouth\": <n>, \"eastWest\": <e>, \"elevation\": <z>}}, {\"pause\": <seconds>}, "
+        + "{\"chat\": \"<text>\"}]} replaces the route, with points in map coordinates, the way VTank's route files keep them. "
         + "With walkLegs the client's own route planning walks each leg "
         + "to a point, around walls, creatures and doors, and back from wherever a fight left the character, and points "
         + "along a straight stretch are walked in one walk.";
@@ -558,10 +556,10 @@ internal sealed partial class MossTankPanel
     {
         var node = waypoint.Type switch
         {
-            RouteWaypointType.Point => new JsonObject { ["point"] = SharedPlace(waypoint.Position) },
+            RouteWaypointType.Point => new JsonObject { ["point"] = SharedPoint(waypoint.Position) },
             RouteWaypointType.Pause => new JsonObject { ["pause"] = waypoint.DurationMilliseconds / 1000d },
             RouteWaypointType.ChatCommand => new JsonObject { ["chat"] = waypoint.Text },
-            _ => new JsonObject { ["type"] = waypoint.Type.ToString(), ["at"] = SharedPlace(waypoint.Position) },
+            _ => new JsonObject { ["type"] = waypoint.Type.ToString(), ["at"] = SharedPoint(waypoint.Position) },
         };
         if (waypoint.Type is not (RouteWaypointType.Point or RouteWaypointType.Pause or RouteWaypointType.ChatCommand))
         {
@@ -573,54 +571,46 @@ internal sealed partial class MossTankPanel
         return node;
     }
 
-    /// <summary>A position as the client's /loc writes it: its cell, and its point in that cell's landblock frame.</summary>
-    internal static string SharedPlace(in PluginNavigationPosition position)
-    {
-        uint blockX = (position.CellId >> 24) & 0xFFu;
-        uint blockY = (position.CellId >> 16) & 0xFFu;
-        double x = (position.EastWest * 240d) + 84d - ((blockX - 127d) * 192d);
-        double y = (position.NorthSouth * 240d) + 84d - ((blockY - 127d) * 192d);
-        double z = position.Elevation * 240d;
-        return string.Create(CultureInfo.InvariantCulture, $"0x{position.CellId:X8} [{x:0.###} {y:0.###} {z:0.###}]");
-    }
+    /// <summary>Decimal places a route point's coordinates are stated to, in map units of 240 m: about 2.4 mm.</summary>
+    private const int SharedPointDecimals = 5;
 
-    /// <summary>A position from a cell and a point in its landblock frame, as the client's /loc writes them.</summary>
-    internal static bool TryParseSharedPlace(string? text, out PluginNavigationPosition position)
+    /// <summary>
+    /// A position in map coordinates, the way VTank's route files keep it: north-south,
+    /// east-west and elevation, each in map units of 240 m.
+    /// </summary>
+    internal static JsonObject SharedPoint(in PluginNavigationPosition position) => new()
+    {
+        ["northSouth"] = Math.Round(position.NorthSouth, SharedPointDecimals),
+        ["eastWest"] = Math.Round(position.EastWest, SharedPointDecimals),
+        ["elevation"] = Math.Round(position.Elevation, SharedPointDecimals),
+    };
+
+    /// <summary>
+    /// A position from map coordinates: northSouth, eastWest and elevation, each a number.
+    /// Other fields, such as the cell and text reported with a position, are ignored, since a
+    /// route keeps no cells.
+    /// </summary>
+    internal static bool TryReadSharedPoint(JsonNode? node, out PluginNavigationPosition position)
     {
         position = default;
-        if (text is null)
-            return false;
-        string trimmed = text.Trim();
-        int open = trimmed.IndexOf('[');
-        int close = trimmed.LastIndexOf(']');
-        if (open < 0 || close < open)
-            return false;
-        string cellText = trimmed[..open].Trim();
-        if (cellText.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-            cellText = cellText[2..];
-        if (!uint.TryParse(cellText, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint cell))
-            return false;
-        string[] parts = trimmed[(open + 1)..close].Split([' ', ','], StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 3
-            || !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double x)
-            || !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double y)
-            || !double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double z)
-            || !double.IsFinite(x)
-            || !double.IsFinite(y)
-            || !double.IsFinite(z))
+        if (node is not JsonObject point
+            || !TryReadCoordinate(point, "northSouth", out double northSouth)
+            || !TryReadCoordinate(point, "eastWest", out double eastWest)
+            || !TryReadCoordinate(point, "elevation", out double elevation))
         {
             return false;
         }
-        uint blockX = (cell >> 24) & 0xFFu;
-        uint blockY = (cell >> 16) & 0xFFu;
-        position = new PluginNavigationPosition(
-            cell,
-            (((blockX - 127d) * 192d) + x - 84d) / 240d,
-            (((blockY - 127d) * 192d) + y - 84d) / 240d,
-            z / 240d,
-            0f,
-            IsOutdoor: (cell & 0xFFFFu) is >= 1u and <= 0x40u);
+        position = new PluginNavigationPosition(0u, eastWest, northSouth, elevation, 0f, IsOutdoor: true);
         return true;
+    }
+
+    private static bool TryReadCoordinate(JsonObject point, string name, out double value)
+    {
+        value = 0d;
+        return point[name] is JsonValue number
+            && number.TryGetValue(out value)
+            && double.IsFinite(value)
+            && Math.Abs(value) <= 1000d;
     }
 
     private static void PlanSharedRoute(JsonNode? node, SharedChange plan, List<string> problems)
@@ -673,7 +663,7 @@ internal sealed partial class MossTankPanel
                         index++;
                         if (SharedWaypointFrom(item, last) is not { } waypoint)
                         {
-                            problems.Add($"route.waypoints[{index}] must be {{\"point\": \"0x<cell> [x y z]\"}}, {{\"pause\": <seconds up to 3600>}} or {{\"chat\": \"<text>\"}}");
+                            problems.Add($"route.waypoints[{index}] must be {{\"point\": {{\"northSouth\": <n>, \"eastWest\": <e>, \"elevation\": <z>}}}}, {{\"pause\": <seconds up to 3600>}} or {{\"chat\": \"<text>\"}}");
                             continue;
                         }
                         if (waypoint.Type == RouteWaypointType.Point)
@@ -697,7 +687,7 @@ internal sealed partial class MossTankPanel
         switch (kind)
         {
             case "point":
-                return TryParseSharedPlace(SharedText(value), out PluginNavigationPosition at)
+                return TryReadSharedPoint(value, out PluginNavigationPosition at)
                     ? new RouteWaypoint { Type = RouteWaypointType.Point, Position = at }
                     : null;
             case "pause":
