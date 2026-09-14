@@ -1951,14 +1951,20 @@ internal sealed class AppAutomationSurface
                 place.WalkMeters,
                 place.Kind switch
                 {
-                    AcDream.Core.Navigation.NavPlaceKind.Passage => PluginPlaceKind.Passage,
-                    AcDream.Core.Navigation.NavPlaceKind.Open => PluginPlaceKind.Open,
+                    AcDream.App.Navigation.NavigationPlaceKind.Passage => PluginPlaceKind.Passage,
+                    AcDream.App.Navigation.NavigationPlaceKind.Open => PluginPlaceKind.Open,
+                    AcDream.App.Navigation.NavigationPlaceKind.Building => PluginPlaceKind.Building,
+                    AcDream.App.Navigation.NavigationPlaceKind.Landblock => PluginPlaceKind.Landblock,
                     _ => PluginPlaceKind.Room,
                 },
                 place.AreaSquareMeters,
                 place.WidthMeters,
                 place.RiseMeters,
-                place.Exits);
+                place.Exits)
+            {
+                LandblockId = place.LandblockId,
+                IsWater = place.IsWater,
+            };
         }
         PluginPlacesState state = report.State switch
         {

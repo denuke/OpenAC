@@ -226,11 +226,18 @@ public enum PluginPlaceKind
 
     /// <summary>Open floor too large to call a room, such as land outdoors or a great cavern.</summary>
     Open,
+
+    /// <summary>A building outdoors, given at its origin, with its doorways as exits.</summary>
+    Building,
+
+    /// <summary>A landblock beside the character's own, given at its middle on the ground.</summary>
+    Landblock,
 }
 
 /// <summary>
 /// A place the character can walk to: where to stand in it, at its most open point; about
-/// how far a walk there goes; what kind of place it is; how much floor it holds; about how
+/// how far a walk there goes, or NaN for a building or landblock no walk has measured; what
+/// kind of place it is; how much floor it holds; about how
 /// wide it is at its widest; how far its floor rises from lowest to highest, as on a stair
 /// or ramp; and how many other places it opens onto, so one is a dead end and three or more
 /// a junction.
@@ -242,7 +249,14 @@ public readonly record struct PluginNavigationPlace(
     float AreaSquareMeters,
     float WidthMeters,
     float RiseMeters,
-    int Exits);
+    int Exits)
+{
+    /// <summary>For a building or a landblock, the landblock it stands in, such as 0xA9B5FFFF; otherwise zero.</summary>
+    public uint LandblockId { get; init; }
+
+    /// <summary>Whether a landblock's middle lies under water.</summary>
+    public bool IsWater { get; init; }
+}
 
 public enum PluginPlacesState
 {
@@ -374,7 +388,9 @@ public interface INavigationAutomation
     /// next, told apart on the client's navigation mesh by how open the floor is: rooms,
     /// passages in stretches of about 20 m, and open ground, each at its most open point,
     /// nearest walk first, over the whole sealed dungeon the character is in, or the land
-    /// around it. The first ask maps the ground, which takes a moment in a large dungeon,
+    /// around it; and outdoors, the buildings in the character's landblock and those beside
+    /// it, and the landblocks beside its own. The first ask maps the ground, which takes a
+    /// moment in a large dungeon,
     /// and reports <see cref="PluginPlacesState.Mapping"/> until the places are found; ask
     /// again to read them, and again once the character has moved on, since walks are
     /// measured from <see cref="PluginPlacesReport.From"/>. A place carries no cell; walk to

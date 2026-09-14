@@ -166,22 +166,29 @@ public sealed class NavigationWalkControllerTests
 
         walk.WantPlaces();
         Assert.Equal(NavigationPlacesState.Mapping, walk.Places.State);
-        NavigationPlacesReport report = walk.Places;
-        var wall = Stopwatch.StartNew();
-        while (report.State != NavigationPlacesState.Ready && wall.Elapsed < TimeSpan.FromSeconds(60))
-        {
-            walk.WantPlaces();
-            walk.Tick(Frame);
-            report = walk.Places;
-            Thread.Sleep(1);
-        }
+        NavigationPlacesReport report = RunUntilPlaces(walk);
 
         Assert.Equal(NavigationPlacesState.Ready, report.State);
         Assert.False(report.InDungeon);
-        Assert.Contains(report.Places, place => place.Kind == NavPlaceKind.Open);
+        Assert.Contains(report.Places, place => place.Kind == NavigationPlaceKind.Open);
         Assert.Equal(report.Places.OrderBy(place => place.WalkMeters), report.Places);
         Assert.Equal(new Vector3(40f, 40f, 0f), report.FromGlobal);
         Assert.Equal(0, body.MovesBegun);
+    }
+
+    [Fact]
+    public void PlacesOutdoorsNameTheLoadedLandblocksBesideTheCharacters()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
+        var walk = new NavigationWalkController(FlatWorld(landblocksNorth: 2), body, new Goals());
+
+        NavigationPlacesReport report = RunUntilPlaces(walk);
+
+        NavigationPlace north = Assert.Single(report.Places, place => place.Kind == NavigationPlaceKind.Landblock);
+        Assert.Equal(0xA9B5FFFFu, north.LandblockId);
+        Assert.Equal(new Vector3(96f, 288f, 0f), north.Global);
+        Assert.True(float.IsNaN(north.WalkMeters));
+        Assert.False(north.IsWater);
     }
 
     [Fact]
@@ -926,6 +933,21 @@ public sealed class NavigationWalkControllerTests
             simulated += Frame;
         }
         return walk.Report;
+    }
+
+    private static NavigationPlacesReport RunUntilPlaces(NavigationWalkController walk)
+    {
+        walk.WantPlaces();
+        NavigationPlacesReport report = walk.Places;
+        var wall = Stopwatch.StartNew();
+        while (report.State != NavigationPlacesState.Ready && wall.Elapsed < TimeSpan.FromSeconds(60))
+        {
+            walk.WantPlaces();
+            walk.Tick(Frame);
+            report = walk.Places;
+            Thread.Sleep(1);
+        }
+        return report;
     }
 
     private static void Run(NavigationWalkController walk, SimulatedBody body, float seconds)

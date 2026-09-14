@@ -1486,13 +1486,15 @@ internal sealed class NavigationWalkController
                 places.Add(new NavigationPlace(
                     global,
                     place.WalkMeters,
-                    place.Kind,
+                    NavigationPlace.KindOf(place.Kind),
                     place.AreaSquareMeters,
                     place.WidthMeters,
                     place.RiseMeters,
                     place.Exits));
             }
         }
+        if (!_placingInDungeon)
+            AddGroundAround(_placingFrom, places);
         _placesGrid = grid;
         _placesFrom = _placingFrom;
         _placesAt = _seconds;
@@ -1507,6 +1509,68 @@ internal sealed class NavigationWalkController
                 FromGlobal = from,
             },
             wanted: false);
+    }
+
+    /// <summary>A landblock whose middle lies at least this deep under water is given as water.</summary>
+    private const float PlacesWaterMeters = 0.5f;
+
+    /// <summary>
+    /// Outdoors, the loaded landblocks beside the character's own, at their middles on the
+    /// ground, and the buildings in its landblock and those beside it, at their origins, for
+    /// going farther than the ground one grid covers.
+    /// </summary>
+    private void AddGroundAround(Vector3 from, List<NavigationPlace> places)
+    {
+        if (!_physics.TryGetLandblockContext(from.X, from.Y, out uint landblockId, out float offsetX, out float offsetY))
+            return;
+        int blockX = (int)((landblockId >> 24) & 0xFFu);
+        int blockY = (int)((landblockId >> 16) & 0xFFu);
+        float half = NavGeometry.LandblockSize * 0.5f;
+        for (int north = -1; north <= 1; north++)
+        {
+            for (int east = -1; east <= 1; east++)
+            {
+                int x = blockX + east;
+                int y = blockY + north;
+                if ((east == 0 && north == 0) || x is < 0 or > 255 || y is < 0 or > 255)
+                    continue;
+                float middleX = offsetX + (east * NavGeometry.LandblockSize) + half;
+                float middleY = offsetY + (north * NavGeometry.LandblockSize) + half;
+                if (_physics.SampleTerrainZ(middleX, middleY) is not { } ground
+                    || !_goals.TryGlobalOf(new Vector3(middleX, middleY, ground), out Vector3 middle))
+                {
+                    continue;
+                }
+                places.Add(new NavigationPlace(
+                    middle,
+                    float.NaN,
+                    NavigationPlaceKind.Landblock,
+                    NavGeometry.LandblockSize * NavGeometry.LandblockSize,
+                    NavGeometry.LandblockSize,
+                    0f,
+                    0)
+                {
+                    LandblockId = ((uint)x << 24) | ((uint)y << 16) | 0xFFFFu,
+                    IsWater = _physics.SampleWaterDepth(middleX, middleY) >= PlacesWaterMeters,
+                });
+            }
+        }
+        if (_physics.DataCache is not { } cache)
+            return;
+        foreach (uint cellId in cache.BuildingIds)
+        {
+            if (Math.Abs((int)((cellId >> 24) & 0xFFu) - blockX) > 1
+                || Math.Abs((int)((cellId >> 16) & 0xFFu) - blockY) > 1
+                || cache.GetBuilding(cellId) is not { } building
+                || !_goals.TryGlobalOf(building.WorldTransform.Translation, out Vector3 origin))
+            {
+                continue;
+            }
+            places.Add(new NavigationPlace(origin, float.NaN, NavigationPlaceKind.Building, 0f, 0f, 0f, building.Portals.Count)
+            {
+                LandblockId = (cellId & 0xFFFF0000u) | 0xFFFFu,
+            });
+        }
     }
 
     private void PublishPlaces(NavigationPlacesReport report, bool wanted)

@@ -56,8 +56,16 @@ public sealed class AppAutomationSurfaceTests
     {
         PluginPlacesReport report = AppAutomationSurface.ProjectPlacesReport(new AcDream.App.Navigation.NavigationPlacesReport(
             AcDream.App.Navigation.NavigationPlacesState.Ready,
-            [new AcDream.App.Navigation.NavigationPlace(
-                new Vector3(202f, 30296f, 0.005f), 12.5f, AcDream.Core.Navigation.NavPlaceKind.Passage, 30f, 2f, 2.5f, 3)],
+            [
+                new AcDream.App.Navigation.NavigationPlace(
+                    new Vector3(202f, 30296f, 0.005f), 12.5f, AcDream.App.Navigation.NavigationPlaceKind.Passage, 30f, 2f, 2.5f, 3),
+                new AcDream.App.Navigation.NavigationPlace(
+                    new Vector3(24480f, 30432f, 12f), float.NaN, AcDream.App.Navigation.NavigationPlaceKind.Landblock, 36864f, 192f, 0f, 0)
+                {
+                    LandblockId = 0x7F9EFFFFu,
+                    IsWater = true,
+                },
+            ],
             InDungeon: true,
             "found")
         {
@@ -66,7 +74,11 @@ public sealed class AppAutomationSurfaceTests
 
         Assert.Equal(PluginPlacesState.Ready, report.State);
         Assert.True(report.InDungeon);
-        PluginNavigationPlace place = Assert.Single(report.Places);
+        Assert.Equal(2, report.Places.Count);
+        PluginNavigationPlace place = report.Places[0];
+        Assert.Equal(PluginPlaceKind.Landblock, report.Places[1].Kind);
+        Assert.Equal(0x7F9EFFFFu, report.Places[1].LandblockId);
+        Assert.True(report.Places[1].IsWater);
         Assert.Equal(0u, place.Position.CellId);
         Assert.Equal(-101.10833d, place.Position.EastWest, 4);
         Assert.Equal(24.28333d, place.Position.NorthSouth, 4);

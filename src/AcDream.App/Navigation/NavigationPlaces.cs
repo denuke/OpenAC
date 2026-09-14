@@ -3,19 +3,46 @@ using AcDream.Core.Navigation;
 
 namespace AcDream.App.Navigation;
 
+internal enum NavigationPlaceKind
+{
+    Room = 0,
+    Passage,
+    Open,
+
+    /// <summary>A building, given at its origin, with its doorways as exits.</summary>
+    Building,
+
+    /// <summary>A landblock beside the character's own, given at its middle.</summary>
+    Landblock,
+}
+
 /// <summary>
-/// A place the character can walk to: its most open point measured from the corner of the
-/// first landblock, the way a place with no cell is given, with the rest of what
-/// <see cref="NavPlace"/> tells of it.
+/// A place the character can walk to: where it stands measured from the corner of the first
+/// landblock, the way a place with no cell is given, with what <see cref="NavPlace"/> tells of
+/// a room, passage or open ground. A building or landblock has no walk measured.
 /// </summary>
 internal readonly record struct NavigationPlace(
     Vector3 Global,
     float WalkMeters,
-    NavPlaceKind Kind,
+    NavigationPlaceKind Kind,
     float AreaSquareMeters,
     float WidthMeters,
     float RiseMeters,
-    int Exits);
+    int Exits)
+{
+    /// <summary>For a building or a landblock, the landblock it stands in, such as 0xA9B5FFFF; otherwise zero.</summary>
+    public uint LandblockId { get; init; }
+
+    /// <summary>Whether a landblock's middle lies under water.</summary>
+    public bool IsWater { get; init; }
+
+    internal static NavigationPlaceKind KindOf(NavPlaceKind kind) => kind switch
+    {
+        NavPlaceKind.Passage => NavigationPlaceKind.Passage,
+        NavPlaceKind.Open => NavigationPlaceKind.Open,
+        _ => NavigationPlaceKind.Room,
+    };
+}
 
 internal enum NavigationPlacesState
 {
