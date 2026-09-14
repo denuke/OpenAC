@@ -96,14 +96,15 @@ internal sealed class WorldSceneDiagnosticsController : IWorldSceneDiagnostics
     {
         bool wireframes = _state.CollisionWireframesVisible;
         bool navMesh = _navMesh is not null && _state.NavMeshVisible;
-        if ((!wireframes && !navMesh) || _lines is null)
+        bool route = _navMesh is not null && _navMesh.HasRouteToShow;
+        if ((!wireframes && !navMesh && !route) || _lines is null)
             return;
 
         _lines.Begin();
         if (wireframes)
             AddCollisionWireframes(_lines);
-        if (navMesh)
-            _navMesh!.Draw(_lines, _player.Controller);
+        if (navMesh || route)
+            _navMesh!.Draw(_lines, _player.Controller, showGrid: navMesh);
         _lines.Flush(camera.Camera.View, camera.Projection);
     }
 
