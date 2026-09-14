@@ -53,6 +53,7 @@ another plugin's settings. Every other tool only reads.
 | `outcome` | How the line with a handle ended: its outcome word, its shared class, and every record it produced. |
 | `events` | Records after a cursor. With `waitSeconds` it waits for the next one, and `until` wakes it on a condition. |
 | `nearby` | Objects around the character, nearest first, with distance, bearing, kind and sight. |
+| `explore` | Rooms, passages and open ground the character can walk to, from the client's navigation mesh, unvisited first and nearest walk first, each with a line that walks there. |
 | `inspect` | Everything the client holds about one object, with its sight. |
 | `spells` | Known spells, narrowed by `search`, including whether their components are carried. |
 | `skills` | Skills with their training and values. |
@@ -106,10 +107,10 @@ the read tools print, such as `0x70000001`.
 | Family | Lines |
 |---|---|
 | Session | `characters`, `login <name or id>`, `logout` |
-| Read | `vitals`, `stats`, `location`, `snapshot`, `capabilities [id]`, `skills`, `buffs`, `spells [search] [limit <n>]`, `nearby [kind] [range]`, `inspect <id>`, `inventory [search] [limit <n>]`, `equipment`, `vendor [limit <n>]`, `loot list [limit <n>]`, `loot corpses [range]` |
+| Read | `vitals`, `stats`, `location`, `snapshot`, `capabilities [id]`, `skills`, `buffs`, `spells [search] [limit <n>]`, `nearby [kind] [range]`, `explore [limit <n>]`, `inspect <id>`, `inventory [search] [limit <n>]`, `equipment`, `vendor [limit <n>]`, `loot list [limit <n>]`, `loot corpses [range]` |
 | Chat | `say <text>`, `tell <name>, <message>`, `emote <text>` |
 | Target | `target <id>`, `target nearest [kind]`, `untarget` |
-| Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `go to <id, name or target> [within <meters>]`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance combat\|peace`, `cancel` |
+| Motion | `walk [forward\|backward] [amount]`, `run [forward\|backward] [amount]`, `strafe left\|right [amount]`, `turn left\|right [amount]`, `turn to <degrees>`, `face <id>`, `go to <id, name or target> [within <meters>]`, `go to <north-south> <east-west> [elevation] [within <meters>]`, `jump [power]`, `stop [walking\|running\|strafing\|turning]`, `stance combat\|peace`, `cancel` |
 | Magic | `cast <spell name or id> [on <id>]` |
 | Objects | `use <id>`, `use <item id> on <id>`, `open <id>` |
 | Items | `loot <item id>`, `drop <item id> [amount]`, `give <item id> to <id> [amount]`, `move <item id> to <container id> [amount]`, `equip <item id>`, `unequip <item id>` |
@@ -193,6 +194,26 @@ does not pass through portals. While a walk is under way the client
 draws its route as a magenta line. Ctrl+F4 also shows the grid, Ctrl+F5 plans
 a route to the selected object, and Ctrl+F6 walks to it or stops the walk;
 without Ctrl on the acdream keymap, where F4 to F6 are free.
+
+`go to` also walks to a place, given in map coordinates the way positions are
+reported: `go to 24.30537 -101.10833 0.00002` gives north-south, east-west and
+elevation, and `go to 24.305N, 101.108W` keeps the character's own elevation. A
+place is walked to the same way in a dungeon, on open land and inside buildings,
+and the walk turns to face nothing when it arrives. `explore` offers places to go
+when nothing nearer calls, such as a dungeon with no monsters in sight: the places
+a walk reaches from where the character stands, over the whole dungeon or the land
+around it, told apart on the client's navigation mesh by how open the floor is. A
+room is floor that opens out away from its edges and narrows at its doorways, a
+passage is floor that stays narrow, given in stretches of about 20 m, and open
+ground is a room too large to call one. Places the character has not stood near
+since the plugin started come first, then those it has, marked `visited`, each
+nearest walk first from where the character stands, so the order follows it
+deeper in. Each place is given at its most open point with its kind, notes such
+as `dead end`, `junction`, `stairs or ramp`, `above` or `below`, its floor area,
+width, rise and exits, the walk's length, the straight distance and bearing, and a
+`go` line to send through `act`. The first `explore` maps the ground, which takes
+a moment in a large dungeon, and answers `mapping`; an answer found from where the
+character stood before answers `refreshing`. Ask again in a few seconds for either.
 
 Client
 commands that close the client, kill the character, or change its player-killer
