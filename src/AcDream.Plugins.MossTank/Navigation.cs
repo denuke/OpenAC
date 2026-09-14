@@ -281,6 +281,16 @@ internal sealed class NavigationSettings
     public double DoorIdentifyRangeMeters { get; set; } = 20d;
     public double DoorOpenRangeMeters { get; set; } = 4d;
     public int DoorLockpickExcessThreshold { get; set; } = -50;
+
+    /// <summary>
+    /// Whether the legs to point waypoints are walked by the client's own route
+    /// planning instead of steered straight at each point: around walls and creatures,
+    /// through doors, over drops and gaps, and on from wherever the character was
+    /// pushed. Points along a straight stretch are walked in one walk. Other waypoints
+    /// run as before.
+    /// </summary>
+    public bool WalkLegsWithClient { get; set; }
+
     public List<RouteWaypoint> Waypoints { get; } = [];
 }
 
@@ -342,6 +352,27 @@ internal sealed class NavigationController
 
     /// <summary>VTank <c>fd</c>'s <c>p</c> field (fd.cs:336-345).</summary>
     private double _faceHeadingStamp = NoFaceHeadingStamp;
+
+    /// <summary>How far ahead a walk the client plans may reach past points along a line.</summary>
+    internal const double ClientLegLookAheadMeters = 100d;
+
+    /// <summary>How far off a straight walk a point may lie and still be walked past, when that is more than the arrival distance.</summary>
+    internal const double ClientLegLineToleranceMeters = 2d;
+
+    /// <summary>How far above or below a straight walk a point may lie and still be walked past.</summary>
+    internal const double ClientLegRiseToleranceMeters = 2d;
+
+    /// <summary>
+    /// The waypoint the walk the route last asked the client for goes to, and that
+    /// walk's sequence; how many legs in a row the client could not walk; and whether a
+    /// walk past points along a line failed, so that points are walked to one at a time
+    /// until the next arrival.
+    /// </summary>
+    private RouteWaypoint? _clientWalkGoal;
+    private long _clientWalkSequence;
+    private int _clientLegFailures;
+    private bool _clientWalksOnePointAtATime;
+
     private string _status = "Navigation disabled.";
 
     public NavigationController(IPluginHost host, NavigationSettings settings)
@@ -410,6 +441,9 @@ internal sealed class NavigationController
     {
         ResetOncePerRunWarnings();
         StopMovement();
+        StopClientWalk();
+        _clientLegFailures = 0;
+        _clientWalksOnePointAtATime = false;
         _index = 0;
         _reverse = false;
         _onceComplete = false;
@@ -444,6 +478,8 @@ internal sealed class NavigationController
         if (!_settings.Enabled || !snapshot.IsAvailable)
         {
             StopMovement();
+            if (!_settings.Enabled)
+                StopClientWalk();
             _status = _settings.Enabled
                 ? "Waiting for the world."
                 : "Navigation disabled.";
@@ -468,7 +504,11 @@ internal sealed class NavigationController
             return false;
         }
 
-        if (TickDoor(navigation, snapshot, elapsedSeconds))
+        // A walk the client plans opens the doors on its way itself, and a second use
+        // would close a door again.
+        if (_settings.WalkLegsWithClient && IsUnderWay(navigation.GoToReport.State))
+            ClearDoor();
+        else if (TickDoor(navigation, snapshot, elapsedSeconds))
             return true;
 
         if (_settings.Mode == RouteMode.Target)
@@ -489,9 +529,12 @@ internal sealed class NavigationController
             if (distance > BoundedMaximumDistance())
             {
                 StopMovement();
+                StopClientWalk();
                 _status = $"Waypoint is outside NavFarStopRange ({distance:0.0}m).";
                 return false;
             }
+            if (_settings.WalkLegsWithClient)
+                return WalkLegWithClient(navigation, snapshot.Position, waypoint, distance);
             if (distance <= BoundedMinimumDistance())
             {
                 if (!TryRegisterArrival())
@@ -1260,6 +1303,242 @@ internal sealed class NavigationController
     /// as <c>onLostTurn</c> for both navigate tiers.
     /// </summary>
     internal void StopForLostTurn() => StopMovement();
+
+    /// <summary>
+    /// Walks the route's legs to point waypoints with the client's own route planning.
+    /// The client is asked for one walk at a time, to the farthest point of the run of
+    /// points ahead that lie along a line, and the route moves on past each point of
+    /// the run as the walk goes by it. The pass is claimed while the walk goes on or
+    /// waits, and while a walk the route did not ask for goes on. A leg the client
+    /// cannot walk is skipped, and once no leg of a whole lap could be walked the route
+    /// stops asking until it is reset.
+    /// </summary>
+    private bool WalkLegWithClient(
+        INavigationAutomation navigation,
+        in PluginNavigationPosition position,
+        RouteWaypoint waypoint,
+        double distance)
+    {
+        int count = _settings.Waypoints.Count;
+        PluginGoToReport report = navigation.GoToReport;
+        bool underWay = IsUnderWay(report.State);
+        RouteWaypoint? goal = report.Sequence == _clientWalkSequence ? _clientWalkGoal : null;
+        if (goal is null && underWay)
+        {
+            _status = "Waiting for a walk the route did not ask for to end.";
+            return true;
+        }
+
+        if (goal is not null && !ReferenceEquals(goal, waypoint))
+        {
+            int ahead = StepsAhead(goal);
+            if (ahead > 0 && (underWay || report.State == PluginGoToState.Arrived))
+            {
+                bool arrived = report.State == PluginGoToState.Arrived;
+                for (int step = 0; step < ahead; step++)
+                {
+                    RouteWaypoint passing = _settings.Waypoints[_index];
+                    if (!arrived
+                        && position.HorizontalDistanceMeters(passing.Position) > BoundedMinimumDistance()
+                        && !HasPassed(position, passing.Position, goal.Position))
+                    {
+                        break;
+                    }
+                    AdvanceWaypoint();
+                }
+                _status = $"Waypoint {_index + 1}/{count}: on the way, walked by the client";
+                return true;
+            }
+            if (ahead > 0 && report.State is PluginGoToState.NoRoute or PluginGoToState.Blocked)
+                _clientWalksOnePointAtATime = true;
+            StopClientWalk();
+            goal = null;
+        }
+
+        if (distance <= BoundedMinimumDistance()
+            || (goal is not null && report.State == PluginGoToState.Arrived))
+        {
+            if (!TryRegisterArrival())
+                return true;
+            StopClientWalk();
+            _clientLegFailures = 0;
+            _clientWalksOnePointAtATime = false;
+            AdvanceWaypoint();
+            return true;
+        }
+
+        if (goal is not null)
+        {
+            if (underWay)
+            {
+                _status = string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Waypoint {_index + 1}/{count}: {distance:0.0}m, walked by the client");
+                return true;
+            }
+            _clientWalkGoal = null;
+            if (report.State is PluginGoToState.NoRoute or PluginGoToState.Blocked)
+            {
+                _clientLegFailures++;
+                _host.Automation.Chat.PostSystemMessage(
+                    $"[MossTank] Waypoint {_index + 1} could not be walked ({report.Reason ?? report.State.ToString()}); moving on to the next.");
+                AdvanceWaypoint();
+                return true;
+            }
+        }
+
+        if (_clientLegFailures >= count)
+        {
+            _status = "No leg of the route could be walked; reset the route to try again.";
+            return false;
+        }
+        RouteWaypoint target = _clientWalksOnePointAtATime ? waypoint : LegGoal(position, waypoint);
+        PluginNavigationCommandStatus asked = navigation.GoTo(target.Position, (float)BoundedMinimumDistance());
+        if (asked != PluginNavigationCommandStatus.Accepted)
+        {
+            _status = asked == PluginNavigationCommandStatus.Unavailable
+                ? "This client cannot walk route legs; turn off walking legs with the client."
+                : "The client refused the walk to the waypoint.";
+            return false;
+        }
+        _clientWalkGoal = target;
+        _clientWalkSequence = navigation.GoToReport.Sequence;
+        _status = string.Create(
+            CultureInfo.InvariantCulture,
+            $"Waypoint {_index + 1}/{count}: {distance:0.0}m, walked by the client");
+        return true;
+    }
+
+    /// <summary>Ends the walk the route asked the client for, if it is still under way.</summary>
+    private void StopClientWalk()
+    {
+        if (_clientWalkGoal is null)
+            return;
+        _clientWalkGoal = null;
+        INavigationAutomation navigation = _host.Automation.Navigation;
+        PluginGoToReport report = navigation.GoToReport;
+        if (report.Sequence == _clientWalkSequence && IsUnderWay(report.State))
+            _ = navigation.StopGoTo();
+    }
+
+    private static bool IsUnderWay(PluginGoToState state) =>
+        state is PluginGoToState.Planning or PluginGoToState.Walking or PluginGoToState.Waiting;
+
+    /// <summary>
+    /// The farthest point of the run of point waypoints from the current one on that a
+    /// straight walk from the character goes by in order, no farther away than
+    /// <see cref="ClientLegLookAheadMeters"/>. Points recorded close together along a
+    /// straight stretch are walked in one walk rather than a walk to each.
+    /// </summary>
+    private RouteWaypoint LegGoal(in PluginNavigationPosition from, RouteWaypoint first)
+    {
+        RouteWaypoint goal = first;
+        var run = new List<PluginNavigationPosition> { first.Position };
+        double tolerance = Math.Max(BoundedMinimumDistance(), ClientLegLineToleranceMeters);
+        int index = _index;
+        for (int step = 1; step < _settings.Waypoints.Count; step++)
+        {
+            index = IndexAhead(index);
+            if (index < 0)
+                break;
+            RouteWaypoint next = _settings.Waypoints[index];
+            if (next.Type != RouteWaypointType.Point
+                || from.HorizontalDistanceMeters(next.Position) > ClientLegLookAheadMeters
+                || !RunLiesAlongLine(run, from, next.Position, tolerance))
+            {
+                break;
+            }
+            run.Add(next.Position);
+            goal = next;
+        }
+        return goal;
+    }
+
+    /// <summary>
+    /// Whether a straight line from one position to another goes by every point of a
+    /// run in order, each within <paramref name="tolerance"/> meters of the line and
+    /// <see cref="ClientLegRiseToleranceMeters"/> of its height there.
+    /// </summary>
+    internal static bool RunLiesAlongLine(
+        IReadOnlyList<PluginNavigationPosition> run,
+        in PluginNavigationPosition from,
+        in PluginNavigationPosition to,
+        double tolerance)
+    {
+        double lineX = (to.EastWest - from.EastWest) * 240d;
+        double lineY = (to.NorthSouth - from.NorthSouth) * 240d;
+        double lineZ = (to.Elevation - from.Elevation) * 240d;
+        double lengthSquared = (lineX * lineX) + (lineY * lineY);
+        if (lengthSquared < 0.01d)
+            return false;
+        double reached = 0d;
+        foreach (PluginNavigationPosition point in run)
+        {
+            double pointX = (point.EastWest - from.EastWest) * 240d;
+            double pointY = (point.NorthSouth - from.NorthSouth) * 240d;
+            double along = ((pointX * lineX) + (pointY * lineY)) / lengthSquared;
+            if (along < reached || along > 1d)
+                return false;
+            double offX = pointX - (along * lineX);
+            double offY = pointY - (along * lineY);
+            double rise = ((point.Elevation - from.Elevation) * 240d) - (along * lineZ);
+            if ((offX * offX) + (offY * offY) > tolerance * tolerance
+                || Math.Abs(rise) > ClientLegRiseToleranceMeters)
+            {
+                return false;
+            }
+            reached = along;
+        }
+        return true;
+    }
+
+    /// <summary>Whether a position stands level with or beyond a point, on the way from that point to a goal.</summary>
+    internal static bool HasPassed(
+        in PluginNavigationPosition position,
+        in PluginNavigationPosition point,
+        in PluginNavigationPosition goal) =>
+        ((position.EastWest - point.EastWest) * (goal.EastWest - point.EastWest))
+        + ((position.NorthSouth - point.NorthSouth) * (goal.NorthSouth - point.NorthSouth)) >= 0d;
+
+    /// <summary>
+    /// The waypoint the route moves on to after <paramref name="index"/>, or -1 where
+    /// the route turns back or ends, and in a once route not walked from its first waypoint.
+    /// </summary>
+    private int IndexAhead(int index)
+    {
+        int count = _settings.Waypoints.Count;
+        switch (_settings.Mode)
+        {
+            case RouteMode.Circular:
+                return _reverse ? (index - 1 + count) % count : (index + 1) % count;
+            case RouteMode.Linear:
+                return _reverse ? index - 1 : (index + 1 < count ? index + 1 : -1);
+            case RouteMode.Once when _index == 0:
+                return index + 1 < count ? index + 1 : -1;
+            default:
+                return -1;
+        }
+    }
+
+    /// <summary>
+    /// How many waypoints on from the current one <paramref name="goal"/> is, over point
+    /// waypoints only, or -1 when the route does not come to it that way.
+    /// </summary>
+    private int StepsAhead(RouteWaypoint goal)
+    {
+        int index = _index;
+        for (int step = 1; step < _settings.Waypoints.Count; step++)
+        {
+            if (_settings.Waypoints[index].Type != RouteWaypointType.Point)
+                return -1;
+            index = IndexAhead(index);
+            if (index < 0)
+                return -1;
+            if (ReferenceEquals(_settings.Waypoints[index], goal))
+                return step;
+        }
+        return -1;
+    }
 
     private void StopMovement()
     {

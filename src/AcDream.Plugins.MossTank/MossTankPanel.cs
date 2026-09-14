@@ -549,15 +549,15 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
         _scheduler.IsRunning,
         _scheduler.LastExecutedRule?.Name,
         _buffRule.IsBursting,
-        _navigationSettings.Enabled,
+        _navigationSettings.Enabled && !_navigationSettings.WalkLegsWithClient,
         _inventorySettings.Loot.Enabled,
         _walkClock - _lastAttackSeconds);
 
     /// <summary>
-    /// The macro needs the character while it buffs, while its own route navigation
-    /// runs, while a rule that outranks navigation won its last pass, and, when it
-    /// loots, for <see cref="CorpseWaitSeconds"/> after it last attacked. It is idle
-    /// while stopped, and when navigation or a rule below navigation won.
+    /// The macro needs the character while it buffs, while it steers the character
+    /// along its own route, while a rule that outranks navigation won its last pass,
+    /// and, when it loots, for <see cref="CorpseWaitSeconds"/> after it last attacked.
+    /// It is idle while stopped, and when navigation or a rule below navigation won.
     /// </summary>
     internal static string? WalkPauseReasonFor(
         bool running,
@@ -899,6 +899,7 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
     public bool FollowAroundCornersEnabled =>
         _navigationSettings.FollowAroundCorners;
     public bool OpenDoorsEnabled => _navigationSettings.OpenDoors;
+    public bool WalkLegsWithClientEnabled => _navigationSettings.WalkLegsWithClient;
     public string NavigationStatus => _navigation.Status;
     public IReadOnlyList<string> RouteRows => _routeRows;
     public int SelectedRouteWaypointIndex => _selectedRouteWaypoint;
@@ -984,6 +985,12 @@ internal sealed partial class MossTankPanel : IBuffRuleHost
         _navigationSettings.OpenDoors = !_navigationSettings.OpenDoors;
         _navigation.Reset();
         SaveRouteProfile();
+    };
+    public Action ToggleWalkLegsWithClient => () =>
+    {
+        _navigationSettings.WalkLegsWithClient = !_navigationSettings.WalkLegsWithClient;
+        _navigation.Reset();
+        SaveProfile();
     };
     public Action<string> SelectRouteMode => value =>
     {
