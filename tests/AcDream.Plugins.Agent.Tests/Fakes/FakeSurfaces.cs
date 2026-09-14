@@ -159,6 +159,10 @@ internal sealed class FakeCombat : ICombatAutomation
     public PluginCombatSnapshot Snapshot { get; set; }
 
     internal List<PluginCombatTarget> Hostiles { get; } = [];
+    internal List<PluginKill> Kills { get; } = [];
+
+    public IReadOnlyList<PluginKill> CaptureKills(long afterSequence) =>
+        Kills.Where(kill => kill.Sequence > afterSequence).ToArray();
     internal List<string> Calls { get; } = [];
     internal PluginCombatCommandStatus NextStatus { get; set; } =
         PluginCombatCommandStatus.Started;

@@ -18,6 +18,11 @@ internal static class RecordKinds
     internal const string Nearby = "nearby";
     internal const string NearbyRefused = "nearby-refused";
     internal const string Explore = "explore";
+    internal const string PluginNotice = "plugin-notice";
+    internal const string Kill = "kill";
+    internal const string ItemGained = "item-gained";
+    internal const string ItemSpent = "item-spent";
+    internal const string Trends = "trends";
     internal const string ExploreRefused = "explore-refused";
     internal const string EntityInspected = "entity-inspected";
     internal const string EntityRefused = "entity-refused";

@@ -22,6 +22,7 @@ public sealed class ReadToolsTests
     [InlineData("spells", """{"search":" strength "}""", "spells strength")]
     [InlineData("skills", "{}", "skills")]
     [InlineData("buffs", "{}", "buffs")]
+    [InlineData("trends", "{}", "trends")]
     [InlineData("inventory", """{"search":"healing kit"}""", "inventory healing kit")]
     [InlineData("equipment", "{}", "equipment")]
     [InlineData("vendor", "{}", "vendor")]

@@ -45,7 +45,7 @@ internal sealed class EventsTool(AgentContext context) : IMcpTool
                 ["type"] = "number",
                 ["description"] = "Most records to return, up to 500.",
             },
-            ["waitSeconds"] = ToolDefinitions.WaitProperty(),
+            ["waitSeconds"] = ToolDefinitions.WaitProperty(McpToolHost.MaximumEventWaitSeconds),
         },
         [],
         readOnly: true);
@@ -91,7 +91,7 @@ internal sealed class EventsTool(AgentContext context) : IMcpTool
         if (cursorReset)
             cursor = lastSeq;
         int limit = (int)Math.Min(limitGiven ?? DefaultLimit, MaximumLimit);
-        double deadline = context.Clock.Now + ToolArguments.WaitSeconds(arguments);
+        double deadline = context.Clock.Now + ToolArguments.WaitSeconds(arguments, McpToolHost.MaximumEventWaitSeconds);
 
         var collected = new JsonArray();
         long missed = 0;

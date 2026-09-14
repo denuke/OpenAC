@@ -153,6 +153,16 @@ internal static class ReadTools
             () => new JsonObject(),
             [],
             _ => ReadLine.Of("buffs")),
+        new ReadTool(context, "trends", "How am I doing?",
+            "Experience, kills and items gained per hour over the last 5 and 60 minutes, items gained and "
+            + "spent per hour by name, such as spell components, and seconds since the character last gained "
+            + "experience, killed, gained an item and moved. A rate is null until a minute of its window has "
+            + "been counted. events delivers a trends record every minute, so until can wake a wait on a rate, "
+            + "such as [\"xpPerHour.60m\", \"<\", 1000000]."
+            + Nothing,
+            () => new JsonObject(),
+            [],
+            _ => ReadLine.Of("trends")),
         new ReadTool(context, "inventory", "What am I carrying?",
             "Everything the character carries: id, name, kind, stack size, value, burden, which pack "
             + "holds it and whether it is equipped, with the free main-pack slots. Pass search to narrow "

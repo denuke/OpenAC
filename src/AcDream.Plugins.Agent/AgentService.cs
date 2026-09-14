@@ -68,12 +68,18 @@ internal sealed class AgentService : IDisposable
         _state.Add(new StatsProjection(host));
         _state.Add(new TargetProjection(host));
         _state.Add(new CombatModeProjection(host));
+        _trends = new TrendTracker(host);
         _events.Add(new VitalChangeEvents(host));
         _events.Add(new ChatEvents(host));
+        _events.Add(new PluginNoticeEvents(host));
+        _events.Add(new KillEvents(host));
+        _events.Add(new InventoryChangeEvents(host, _clock));
+        _events.Add(new TrendEvents(_trends, _clock));
         Outcomes = new OutcomeCorrelator(Publisher, _clock);
         Commands = new CommandDispatcher(host, Publisher);
         Commands.Register(new ChatVerbs(host));
         Commands.Register(new CharacterReadVerbs(host, Publisher, _state, _clock));
+        Commands.Register(new TrendVerbs(Publisher, _trends, _clock));
         Commands.Register(new WorldReadVerbs(host, Publisher, _visited));
         Commands.Register(new TargetVerbs(host, Publisher, Outcomes));
         Commands.Register(new MotorVerbs(host, Publisher, Outcomes));
@@ -93,6 +99,9 @@ internal sealed class AgentService : IDisposable
 
     /// <summary>The ground the character has stood on, which explore leaves out.</summary>
     private readonly VisitedGround _visited = new();
+
+    /// <summary>How the character is doing over the last 5 and 60 minutes, sampled whether or not anyone listens.</summary>
+    private readonly TrendTracker _trends;
 
     internal RecordRing Ring { get; }
 
@@ -157,6 +166,7 @@ internal sealed class AgentService : IDisposable
         {
             _visited.Note(body.Position);
         }
+        _trends.Sample(_clock.Now);
         if (!IsActive)
             return;
         _state.Tick(_clock.Now);

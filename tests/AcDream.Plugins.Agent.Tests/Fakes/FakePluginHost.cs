@@ -19,6 +19,7 @@ internal sealed class FakePluginHost : IPluginHost
     public IPluginStorage Storage => FakeStorage;
     public IAutomationSurface Automation => FakeAutomation;
     public IPluginSettingsRegistry SharedSettings => FakeSettings;
+    public IPluginNoticeBoard Notices => FakeNotices;
 
     internal FakeLogger FakeLog { get; } = new();
     internal FakeGameState FakeState { get; } = new();
@@ -28,6 +29,7 @@ internal sealed class FakePluginHost : IPluginHost
     internal FakeStorage FakeStorage { get; } = new();
     internal FakeAutomation FakeAutomation { get; }
     internal FakeSettingsRegistry FakeSettings { get; } = new();
+    internal FakeNoticeBoard FakeNotices { get; } = new();
 }
 
 internal sealed class FakeLogger : IPluginLogger
@@ -138,4 +140,17 @@ internal sealed class FakeStorage : IPluginStorage
             .ToArray();
     public void WriteText(string key, string content) => Files[key] = content;
     public bool Delete(string key) => Files.Remove(key);
+}
+
+internal sealed class FakeNoticeBoard : IPluginNoticeBoard
+{
+    private long _sequence;
+
+    internal List<PluginNotice> Posted { get; } = [];
+
+    public void Post(string kind, PluginNoticeSeverity severity, string message, string? detailsJson = null) =>
+        Posted.Add(new PluginNotice(++_sequence, "test.plugin", kind, severity, message, detailsJson));
+
+    public IReadOnlyList<PluginNotice> Capture(long afterSequence) =>
+        Posted.Where(notice => notice.Sequence > afterSequence).ToArray();
 }
