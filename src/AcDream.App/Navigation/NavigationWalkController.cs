@@ -153,7 +153,9 @@ internal interface INavigationGoalSource
 /// A walk that meets a closed door on its way, or stops making progress beside
 /// one, has the client open it and plans again once it is open. A walk that
 /// arrives turns the character to face its goal. A route keeps out of the objects
-/// the server placed, such as ore deposits, whenever another way arrives.
+/// the server placed, such as ore deposits, whenever another way arrives. A walk
+/// that stops making progress beside an object keeps out of all of it after, and
+/// with no other way ends blocked naming it.
 /// </summary>
 internal sealed class NavigationWalkController
 {
@@ -199,6 +201,9 @@ internal sealed class NavigationWalkController
     /// through them.
     /// </summary>
     internal const float ObstacleDetourReach = 1f;
+
+    /// <summary>How far above or below a leg an object's footprint still counts as in its way.</summary>
+    private const float NavigationObstacleHeight = 2f;
 
     /// <summary>
     /// The deepest drop a walk plans. Measured live, a character took no damage from
@@ -571,6 +576,7 @@ internal sealed class NavigationWalkController
         float arrival = PlanningRadius(active.ArrivalMeters);
         NavAvoidance[] avoid = [.. active.Avoid];
         NavAvoidance[] obstacles = Obstacles(grid, sample.Body, active.ObjectId);
+        active.PlannedObstacles = obstacles;
         NavLeapAbility? leaps = sample.Leaps;
         active.Staged = staged;
         _routingFor = active;
@@ -650,6 +656,11 @@ internal sealed class NavigationWalkController
             _driver = null;
             OpenDoor(active, new NavigationDoor(door.ObjectId, door.Name, door.Position, door.Radius), sample.Body.Radius);
             return;
+        }
+        if (active.BlockedBy is { Radius: > 0f } solid)
+        {
+            active.Avoid.Add(new NavAvoidance(solid.Position, solid.Radius + sample.Body.Radius));
+            active.AvoidedObject = solid;
         }
         active.Avoid.Add(new NavAvoidance(spot, BlockedSpotRadius));
         if (active.Replans >= MaximumReplans)
@@ -1078,7 +1089,13 @@ internal sealed class NavigationWalkController
         NavRoute route = routing.Result;
         Route = route;
         if (route.Outcome == NavRouteOutcome.Routed)
+        {
             requester.AvoidedDoor = null;
+            requester.AvoidedObject = null;
+            int passed = PassedObstacles(route, requester.PlannedObstacles);
+            if (passed > 0)
+                _say?.Invoke($"Route: no way around {passed} of the objects the server placed arrives, so the route passes them");
+        }
         if (route.Outcome != NavRouteOutcome.Routed)
         {
             if (requester.AvoidedDoor is { } avoided)
@@ -1088,6 +1105,14 @@ internal sealed class NavigationWalkController
                     requester,
                     NavigationWalkState.Blocked,
                     $"{avoided.Why}: {avoided.Door.Name} (0x{avoided.Door.ObjectId:X8}), and no other way around it was found");
+            }
+            else if (requester.AvoidedObject is { } solid)
+            {
+                requester.BlockedBy = solid;
+                End(
+                    requester,
+                    NavigationWalkState.Blocked,
+                    $"{solid.Name} (0x{solid.ObjectId:X8}) stands in the way, and no other way around it was found");
             }
             else if (requester.Replans > 0)
                 End(requester, NavigationWalkState.Blocked, $"{BlockedReason(requester)}, and no other way around it was found");
@@ -1174,6 +1199,30 @@ internal sealed class NavigationWalkController
 
     private static Vector2 Flat(Vector3 point) => new(point.X, point.Y);
 
+    /// <summary>How many of the objects the server placed a route's legs pass through.</summary>
+    private static int PassedObstacles(NavRoute route, NavAvoidance[] obstacles)
+    {
+        int passed = 0;
+        foreach (NavAvoidance obstacle in obstacles)
+        {
+            var centre = Flat(obstacle.Centre);
+            for (int index = 1; index < route.Legs.Count; index++)
+            {
+                Vector2 start = Flat(route.Legs[index - 1]);
+                Vector2 along = Flat(route.Legs[index]) - start;
+                float lengthSquared = along.LengthSquared();
+                float t = lengthSquared > 1e-6f ? Math.Clamp(Vector2.Dot(centre - start, along) / lengthSquared, 0f, 1f) : 0f;
+                if (Vector2.Distance(centre, start + (along * t)) < obstacle.Radius
+                    && MathF.Abs(route.Legs[index].Z - obstacle.Centre.Z) <= NavigationObstacleHeight)
+                {
+                    passed++;
+                    break;
+                }
+            }
+        }
+        return passed;
+    }
+
     private static RuntimeRouteLeap[] LeapsOf(NavRoute route) =>
         [.. route.Leaps.Select(leap => new RuntimeRouteLeap(leap.LegIndex, leap.Power, leap.Run))];
 
@@ -1227,6 +1276,15 @@ internal sealed class NavigationWalkController
 
         /// <summary>The spots where the walk stopped making progress, which later plans keep out of.</summary>
         public List<NavAvoidance> Avoid { get; } = [];
+
+        /// <summary>
+        /// The object the walk last stopped making progress beside, whose whole
+        /// footprint later plans keep out of, named if no way around it is found.
+        /// </summary>
+        public NavigationBlocker? AvoidedObject { get; set; }
+
+        /// <summary>The objects the server placed that the latest plan was asked to keep out of.</summary>
+        public NavAvoidance[] PlannedObstacles { get; set; } = [];
 
         /// <summary>What stood beside the spot where the walk last stopped making progress.</summary>
         public NavigationBlocker? BlockedBy { get; set; }

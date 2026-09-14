@@ -156,6 +156,57 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
+    public void AWalkBlockedBesideAnObjectPlansAroundAllOfItAfterward()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f)) { Obstacle = (new Vector2(40f, 60f), 1.5f) };
+        var goals = new Goals
+        {
+            [Target] = new Vector3(40f, 80f, 0f),
+            Blocker = new NavigationBlocker(Other, "Ore Deposit", IsClosedDoor: false, new Vector3(40f, 60f, 0f), 1.5f),
+        };
+        var walk = new NavigationWalkController(FlatWorld(), body, goals);
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.Equal(1, report.Replans);
+        NavRoute route = walk.Route!;
+        Assert.All(route.Legs.Skip(1), end =>
+            Assert.True(Vector2.Distance(new Vector2(end.X, end.Y), new Vector2(40f, 60f)) >= 1.9f, "a leg ends inside the deposit"));
+        for (int leg = 2; leg < route.Legs.Count; leg++)
+        {
+            var start = new Vector2(route.Legs[leg - 1].X, route.Legs[leg - 1].Y);
+            Vector2 along = new Vector2(route.Legs[leg].X, route.Legs[leg].Y) - start;
+            float t = along.LengthSquared() > 0f
+                ? Math.Clamp(Vector2.Dot(new Vector2(40f, 60f) - start, along) / along.LengthSquared(), 0f, 1f)
+                : 0f;
+            Assert.True(Vector2.Distance(new Vector2(40f, 60f), start + (along * t)) >= 1.5f, $"leg {leg} passes through the deposit");
+        }
+    }
+
+    [Fact]
+    public void AWalkBlockedBesideAnObjectWithNoOtherWayEndsBlockedNamingItAtOnce()
+    {
+        var body = new SimulatedBody(new Vector3(5f, 5f, -30f)) { Obstacle = (new Vector2(5f, 10f), 0.8f) };
+        var goals = new Goals
+        {
+            [Target] = new Vector3(5f, 15f, -30f),
+            Blocker = new NavigationBlocker(Other, "Ore Deposit", IsClosedDoor: false, new Vector3(5f, 10f, -30f), 0.8f),
+        };
+        var walk = new NavigationWalkController(RoomWithDoorways(5f), body, goals);
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Blocked, report.State);
+        Assert.Equal(1, report.Replans);
+        Assert.Equal(Other, report.BlockedByObjectId);
+        Assert.Contains("Ore Deposit", report.Reason);
+        Assert.Contains("stands in the way, and no other way around it was found", report.Reason);
+    }
+
+    [Fact]
     public void ANewerRequestReplacesTheWalkUnderWay()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 0f));

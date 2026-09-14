@@ -116,7 +116,7 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
     {
         uint player = _runtime.PlayerIdentity.ServerGuid;
         RuntimeEntityRecord? nearestRecord = null;
-        ShadowEntry nearestEntry = default;
+        NavAvoidance nearestFootprint = default;
         float nearest = radius;
         foreach (ShadowEntry entry in _physics.ShadowObjects.AllEntriesForDebug())
         {
@@ -125,14 +125,15 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
             {
                 continue;
             }
-            float dx = entry.Position.X - position.X;
-            float dy = entry.Position.Y - position.Y;
-            float edge = MathF.Sqrt((dx * dx) + (dy * dy)) - entry.Radius;
+            NavAvoidance footprint = NavGeometry.FootprintOf(entry, _physics.DataCache);
+            float dx = footprint.Centre.X - position.X;
+            float dy = footprint.Centre.Y - position.Y;
+            float edge = MathF.Sqrt((dx * dx) + (dy * dy)) - footprint.Radius;
             if (edge < nearest)
             {
                 nearest = edge;
                 nearestRecord = record;
-                nearestEntry = entry;
+                nearestFootprint = footprint;
             }
         }
         if (nearestRecord is null)
@@ -150,8 +151,8 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
             objectId,
             item?.Name ?? nearestRecord.Snapshot.Name ?? $"0x{objectId:X8}",
             closed,
-            nearestEntry.Position,
-            nearestEntry.Radius);
+            nearestFootprint.Centre,
+            nearestFootprint.Radius);
         return true;
     }
 
@@ -179,7 +180,7 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
             {
                 continue;
             }
-            obstacles.Add(new NavAvoidance(entry.Position, entry.Radius));
+            obstacles.Add(NavGeometry.FootprintOf(entry, _physics.DataCache));
         }
         return obstacles;
     }
@@ -214,7 +215,7 @@ internal sealed class RuntimeNavigationDoors : INavigationDoors
         Vector2 along = new Vector2(to.X, to.Y) - start;
         float lengthSquared = along.LengthSquared();
         uint nearestId = 0u;
-        ShadowEntry nearestEntry = default;
+        NavAvoidance nearestFootprint = default;
         float nearestAhead = float.PositiveInfinity;
         foreach (ShadowEntry entry in _physics.ShadowObjects.AllEntriesForDebug())
         {
@@ -225,7 +226,8 @@ internal sealed class RuntimeNavigationDoors : INavigationDoors
             {
                 continue;
             }
-            var at = new Vector2(entry.Position.X, entry.Position.Y);
+            NavAvoidance footprint = NavGeometry.FootprintOf(entry, _physics.DataCache);
+            var at = new Vector2(footprint.Centre.X, footprint.Centre.Y);
             float t = lengthSquared > 1e-6f ? Vector2.Dot(at - start, along) / lengthSquared : 0f;
             if (t < 0f)
                 continue;
@@ -237,7 +239,7 @@ internal sealed class RuntimeNavigationDoors : INavigationDoors
             {
                 nearestAhead = ahead;
                 nearestId = record.ServerGuid;
-                nearestEntry = entry;
+                nearestFootprint = footprint;
             }
         }
         if (nearestId == 0u)
@@ -248,8 +250,8 @@ internal sealed class RuntimeNavigationDoors : INavigationDoors
         door = new NavigationDoor(
             nearestId,
             _runtime.InventoryOwner.Objects.Get(nearestId)?.Name ?? $"0x{nearestId:X8}",
-            nearestEntry.Position,
-            nearestEntry.Radius);
+            nearestFootprint.Centre,
+            nearestFootprint.Radius);
         return true;
     }
 
