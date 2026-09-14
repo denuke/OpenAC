@@ -186,6 +186,24 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
         return obstacles;
     }
 
+    /// <summary>A place in a cell's landblock frame, set relative to where the character stands in the physics world.</summary>
+    public bool TryLocatePlace(uint cellId, Vector3 local, out Vector3 position)
+    {
+        if (cellId == 0u || _movement.Controller is not { } controller)
+        {
+            position = default;
+            return false;
+        }
+        AcDream.Core.Physics.Position here = controller.CellPosition;
+        int blocksEast = (int)((cellId >> 24) & 0xFFu) - (int)((here.ObjCellId >> 24) & 0xFFu);
+        int blocksNorth = (int)((cellId >> 16) & 0xFFu) - (int)((here.ObjCellId >> 16) & 0xFFu);
+        position = controller.Position + new Vector3(
+            (blocksEast * NavGeometry.LandblockSize) + local.X - here.Frame.Origin.X,
+            (blocksNorth * NavGeometry.LandblockSize) + local.Y - here.Frame.Origin.Y,
+            local.Z - here.Frame.Origin.Z);
+        return true;
+    }
+
     /// <summary>
     /// The creatures and players near a point, other than the character and the
     /// goal, each as the largest footprint among its parts' collision.

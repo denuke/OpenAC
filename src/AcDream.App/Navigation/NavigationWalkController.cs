@@ -158,6 +158,17 @@ internal interface INavigationGoalSource
     /// <paramref name="goalObjectId"/> is left out.
     /// </summary>
     IReadOnlyList<NavAvoidance> FindCrowd(Vector3 around, float radius, uint goalObjectId) => [];
+
+    /// <summary>
+    /// Where a place stands in the physics world: a point in the landblock-local frame
+    /// of the cell <paramref name="cellId"/>, as the client's /loc gives it. False when
+    /// the client cannot place it relative to the character.
+    /// </summary>
+    bool TryLocatePlace(uint cellId, Vector3 local, out Vector3 position)
+    {
+        position = default;
+        return false;
+    }
 }
 
 /// <summary>
@@ -421,6 +432,14 @@ internal sealed class NavigationWalkController
     public long WalkTo(uint objectId, float arrivalMeters = DefaultArrivalMeters) =>
         Enqueue(objectId, arrivalMeters, walk: true);
 
+    /// <summary>
+    /// Asks to walk to a place, a point in the landblock-local frame of the cell
+    /// <paramref name="cellId"/> as the client's /loc gives it, and returns the request's
+    /// sequence. A walk to a place reports no object and faces nothing on arrival.
+    /// </summary>
+    public long WalkToPlace(uint cellId, Vector3 local, float arrivalMeters = DefaultArrivalMeters) =>
+        Enqueue(0u, arrivalMeters, walk: true, (cellId, local));
+
     /// <summary>Ends the request under way, stopping the moves its walk began.</summary>
     public void Stop()
     {
@@ -530,14 +549,14 @@ internal sealed class NavigationWalkController
         return true;
     }
 
-    private long Enqueue(uint objectId, float arrivalMeters, bool walk)
+    private long Enqueue(uint objectId, float arrivalMeters, bool walk, (uint CellId, Vector3 Local)? place = null)
     {
         if (!(arrivalMeters > 0f) || !float.IsFinite(arrivalMeters))
             arrivalMeters = DefaultArrivalMeters;
         lock (_gate)
         {
             long sequence = ++_sequence;
-            _incoming = new Request(sequence, objectId, arrivalMeters, walk);
+            _incoming = new Request(sequence, objectId, arrivalMeters, walk, place);
             _stopIncoming = false;
             _report = new NavigationWalkReport(
                 sequence,
@@ -557,9 +576,12 @@ internal sealed class NavigationWalkController
             End(request, NavigationWalkState.Lost, "the character is not in the world");
             return;
         }
-        if (!_goals.TryLocate(request.ObjectId, out Vector3 goal))
+        bool located = request.Place is { } place
+            ? _goals.TryLocatePlace(place.CellId, place.Local, out Vector3 goal)
+            : _goals.TryLocate(request.ObjectId, out goal);
+        if (!located)
         {
-            End(request, NavigationWalkState.NoRoute, $"the client has no position for 0x{request.ObjectId:X8}");
+            End(request, NavigationWalkState.NoRoute, $"the client has no position for {Label(request)}");
             return;
         }
 
@@ -794,13 +816,13 @@ internal sealed class NavigationWalkController
             Vector3 takeoff = driver.Legs[driver.LegIndex - 1];
             Vector3 landing = driver.Legs[driver.LegIndex];
             _say?.Invoke(
-                $"Walk to 0x{active.ObjectId:X8}: leaping from {takeoff.Z:0.0} m to {landing.Z:0.0} m, "
+                $"Walk to {Label(active)}: leaping from {takeoff.Z:0.0} m to {landing.Z:0.0} m, "
                 + $"{HorizontalDistance(takeoff, landing):0.0} m on");
         }
         else if (wasLeaping && !driver.IsLeaping && driver.State == RuntimeRouteDriveState.Driving)
         {
             _say?.Invoke(
-                $"Walk to 0x{active.ObjectId:X8}: the leap landed at {sample.Position.Z:0.0} m, "
+                $"Walk to {Label(active)}: the leap landed at {sample.Position.Z:0.0} m, "
                 + $"{driver.LandingError:0.0} m from where it was planned");
         }
 
@@ -813,7 +835,8 @@ internal sealed class NavigationWalkController
                 NextStage(active, sample);
                 break;
             case RuntimeRouteDriveState.Arrived:
-                Face(Locate(active), sample);
+                if (active.Place is null)
+                    Face(Locate(active), sample);
                 End(
                     active,
                     NavigationWalkState.Arrived,
@@ -830,7 +853,7 @@ internal sealed class NavigationWalkController
                 active.Builds = 0;
                 string elsewhere = $"the leap landed at {sample.Position.Z:0.0} m, {driver.LandingError:0.0} m from where it was planned; planning on from there";
                 Publish(active, NavigationWalkState.Planning, elsewhere, float.NaN);
-                _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {elsewhere}");
+                _say?.Invoke($"Walk to {Label(active)}: {elsewhere}");
                 break;
             default:
                 End(active, NavigationWalkState.Lost, "the character entered portal space");
@@ -868,7 +891,7 @@ internal sealed class NavigationWalkController
                 _driver = null;
                 string waiting = $"{mover.Name} (0x{mover.ObjectId:X8}) stands in the way; waiting for it to move ({active.Shuffles} of {MaximumShuffles})";
                 Publish(active, NavigationWalkState.Walking, waiting, float.NaN);
-                _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {waiting}");
+                _say?.Invoke($"Walk to {Label(active)}: {waiting}");
                 return;
             }
             if (mover.Radius > 0f)
@@ -894,7 +917,7 @@ internal sealed class NavigationWalkController
         _driver = null;
         string again = $"{BlockedReason(active)}; planning again ({active.Replans} of {MaximumReplans})";
         Publish(active, NavigationWalkState.Planning, again, float.NaN);
-        _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {again}");
+        _say?.Invoke($"Walk to {Label(active)}: {again}");
     }
 
     /// <summary>
@@ -934,7 +957,7 @@ internal sealed class NavigationWalkController
                 active.PausedFor = need;
                 string waiting = $"waiting: {need}";
                 Publish(active, NavigationWalkState.Waiting, waiting, float.NaN);
-                _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {waiting}");
+                _say?.Invoke($"Walk to {Label(active)}: {waiting}");
             }
             return true;
         }
@@ -946,7 +969,7 @@ internal sealed class NavigationWalkController
         active.Builds = 0;
         const string again = "nothing needs the character any more; planning on from where it stands";
         Publish(active, NavigationWalkState.Planning, again, float.NaN);
-        _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {again}");
+        _say?.Invoke($"Walk to {Label(active)}: {again}");
         return true;
     }
 
@@ -980,7 +1003,7 @@ internal sealed class NavigationWalkController
             active.WaitingOn = new DoorWait(door, _tick, Used: false, _seconds + DoorAppraisalWaitSeconds, Appraising: true);
             string checking = $"checking whether {door.Name} (0x{door.ObjectId:X8}) is locked";
             Publish(active, NavigationWalkState.Walking, checking, float.NaN);
-            _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {checking}");
+            _say?.Invoke($"Walk to {Label(active)}: {checking}");
             return;
         }
         if (locked == true)
@@ -998,7 +1021,7 @@ internal sealed class NavigationWalkController
         active.WaitingOn = new DoorWait(door, _tick + DoorUseSettleTicks, Used: false, DeadlineSeconds: 0d);
         string opening = $"opening {door.Name} (0x{door.ObjectId:X8})";
         Publish(active, NavigationWalkState.Walking, opening, float.NaN);
-        _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {opening}");
+        _say?.Invoke($"Walk to {Label(active)}: {opening}");
     }
 
     /// <summary>
@@ -1059,7 +1082,7 @@ internal sealed class NavigationWalkController
         _driver = null;
         string around = $"{why}: {door.Name} (0x{door.ObjectId:X8}); planning a way around it";
         Publish(active, NavigationWalkState.Planning, around, float.NaN);
-        _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {around}");
+        _say?.Invoke($"Walk to {Label(active)}: {around}");
     }
 
     private void BlockedAtDoor(Request active, NavigationDoor door, string why)
@@ -1086,7 +1109,7 @@ internal sealed class NavigationWalkController
         }
         string next = $"stage {active.Stages} walked; planning the next toward the goal, {away:0} m away";
         Publish(active, NavigationWalkState.Planning, next, float.NaN);
-        _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {next}");
+        _say?.Invoke($"Walk to {Label(active)}: {next}");
     }
 
     private void BuildGrid(
@@ -1228,7 +1251,7 @@ internal sealed class NavigationWalkController
             ? HorizontalDistance(sample.Position, Locate(request))
             : float.NaN;
         Publish(request, state, reason, remaining);
-        _say?.Invoke($"{(request.Walk ? "Walk" : "Route")} to 0x{request.ObjectId:X8}: {reason}");
+        _say?.Invoke($"{(request.Walk ? "Walk" : "Route")} to {Label(request)}: {reason}");
     }
 
     private void Publish(Request request, NavigationWalkState state, string reason, float remainingMeters)
@@ -1367,7 +1390,7 @@ internal sealed class NavigationWalkController
                 .Where(leap => leap.LegIndex - skipped >= 1)
                 .Select(leap => new RuntimeRouteLeap(leap.LegIndex - skipped, leap.Power, leap.Run))];
             _driver = new RuntimeRouteDriver(onward, leaps, takeOverMoves: true);
-            _say?.Invoke($"Walk to 0x{requester.ObjectId:X8}: planned a way around a creature or player on the route");
+            _say?.Invoke($"Walk to {Label(requester)}: planned a way around a creature or player on the route");
             return;
         }
         if (!routing.IsCompletedSuccessfully)
@@ -1446,7 +1469,7 @@ internal sealed class NavigationWalkController
         }
         if (route.Legs.Count < 2)
         {
-            if (_body.TrySample(out NavigationWalkBodySample sample))
+            if (requester.Place is null && _body.TrySample(out NavigationWalkBodySample sample))
                 Face(Locate(requester), sample);
             End(requester, NavigationWalkState.Arrived, "already there");
             return;
@@ -1471,8 +1494,19 @@ internal sealed class NavigationWalkController
         MathF.Max(arrivalMeters - RuntimeRouteDriver.ArrivalRadius, NavGrid.DefaultCellSize);
 
     /// <summary>Where a request's goal stands now, or where it stood when planned once the client has lost it.</summary>
-    private Vector3 Locate(Request request) =>
-        _goals.TryLocate(request.ObjectId, out Vector3 position) ? position : request.Goal;
+    private Vector3 Locate(Request request)
+    {
+        bool located = request.Place is { } place
+            ? _goals.TryLocatePlace(place.CellId, place.Local, out Vector3 position)
+            : _goals.TryLocate(request.ObjectId, out position);
+        return located ? position : request.Goal;
+    }
+
+    /// <summary>How a request's goal is named in what a walk says: its object's id, or its place's cell and point.</summary>
+    private static string Label(Request request) =>
+        request.Place is { } place
+            ? $"0x{place.CellId:X8} [{place.Local.X:0.0} {place.Local.Y:0.0} {place.Local.Z:0.0}]"
+            : $"0x{request.ObjectId:X8}";
 
     /// <summary>The route left to walk, and for one stage of a longer walk the straight line on from its end to the goal.</summary>
     private static float Remaining(Request request, RuntimeRouteDriver driver, Vector3 position)
@@ -1535,13 +1569,17 @@ internal sealed class NavigationWalkController
 
     private sealed class Request
     {
-        public Request(long sequence, uint objectId, float arrivalMeters, bool walk)
+        public Request(long sequence, uint objectId, float arrivalMeters, bool walk, (uint CellId, Vector3 Local)? place = null)
         {
             Sequence = sequence;
             ObjectId = objectId;
             ArrivalMeters = arrivalMeters;
             Walk = walk;
+            Place = place;
         }
+
+        /// <summary>The place walked to, as a cell and a landblock-local point, for a walk to a place rather than an object.</summary>
+        public (uint CellId, Vector3 Local)? Place { get; }
 
         public long Sequence { get; }
 

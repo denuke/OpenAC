@@ -34,6 +34,23 @@ public sealed class AppAutomationSurfaceTests
         Assert.Empty(surface.CaptureProjectileDebugSamples());
     }
 
+    [Theory]
+    [InlineData(0xA9B40032u, 144.86f, 40.19f, 94f)]
+    [InlineData(0x00190162u, 90f, -1010f, 6.005f)]
+    [InlineData(0x0101001Fu, 3.5f, 188.25f, -12.5f)]
+    public void APlacePluginsSeeInMapCoordinatesIsPlacedBackInItsLandblocksFrame(uint cell, float x, float y, float z)
+    {
+        var local = new Vector3(x, y, z);
+        PluginNavigationPosition seen = AppAutomationSurface.ProjectNavigationPosition(
+            new Position(cell, new CellFrame(local, Quaternion.Identity)));
+
+        Vector3 placed = AppAutomationSurface.LandblockLocal(seen);
+
+        Assert.Equal(local.X, placed.X, 2);
+        Assert.Equal(local.Y, placed.Y, 2);
+        Assert.Equal(local.Z, placed.Z, 2);
+    }
+
     [Fact]
     public void WalksWaitOnWhatAPluginSaysItNeedsUntilThePluginLetsGo()
     {

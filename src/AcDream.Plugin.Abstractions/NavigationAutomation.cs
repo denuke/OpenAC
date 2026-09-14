@@ -304,6 +304,16 @@ public interface INavigationAutomation
     PluginNavigationCommandStatus GoTo(uint objectId, float arrivalMeters) =>
         PluginNavigationCommandStatus.Unavailable;
 
+    /// <summary>
+    /// Walks the character to a place the way <see cref="GoTo(uint, float)"/> walks to
+    /// an object: along a route the client plans, ending within
+    /// <paramref name="arrivalMeters"/> of <paramref name="position"/>, and waiting while
+    /// something else needs the character. It does not turn the character to face
+    /// anything on arrival. <see cref="GoToReport"/> reports the walk with no object id.
+    /// </summary>
+    PluginNavigationCommandStatus GoTo(PluginNavigationPosition position, float arrivalMeters) =>
+        PluginNavigationCommandStatus.Unavailable;
+
     /// <summary>Ends the walk to an object under way, if there is one.</summary>
     PluginNavigationCommandStatus StopGoTo() =>
         PluginNavigationCommandStatus.Unavailable;

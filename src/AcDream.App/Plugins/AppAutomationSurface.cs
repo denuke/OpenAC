@@ -1892,6 +1892,37 @@ internal sealed class AppAutomationSurface
         return PluginNavigationCommandStatus.Accepted;
     }
 
+    public PluginNavigationCommandStatus GoTo(PluginNavigationPosition position, float arrivalMeters)
+    {
+        AcDream.App.Navigation.NavigationWalkController? walk;
+        lock (_gate)
+            walk = _navigationWalk;
+        if (walk is null || !IsAvailable)
+            return PluginNavigationCommandStatus.Unavailable;
+        if (position.CellId == 0u
+            || !double.IsFinite(position.EastWest)
+            || !double.IsFinite(position.NorthSouth)
+            || !double.IsFinite(position.Elevation)
+            || !(arrivalMeters > 0f)
+            || arrivalMeters > MaximumGoToArrivalMeters)
+        {
+            return PluginNavigationCommandStatus.Rejected;
+        }
+        walk.WalkToPlace(position.CellId, LandblockLocal(position), arrivalMeters);
+        return PluginNavigationCommandStatus.Accepted;
+    }
+
+    /// <summary>A plugin position's point in its landblock's own frame, the way <see cref="ProjectNavigationPosition"/> was given it.</summary>
+    internal static System.Numerics.Vector3 LandblockLocal(in PluginNavigationPosition position)
+    {
+        uint blockX = (position.CellId >> 24) & 0xFFu;
+        uint blockY = (position.CellId >> 16) & 0xFFu;
+        return new System.Numerics.Vector3(
+            (float)((position.EastWest * 240d) + 84d - (((double)blockX - 127d) * 192d)),
+            (float)((position.NorthSouth * 240d) + 84d - (((double)blockY - 127d) * 192d)),
+            (float)(position.Elevation * 240d));
+    }
+
     public PluginNavigationCommandStatus StopGoTo()
     {
         AcDream.App.Navigation.NavigationWalkController? walk;

@@ -130,6 +130,21 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
+    public void AWalkToAPlaceArrivesThereWithoutTurningToFaceIt()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
+        var walk = new NavigationWalkController(FlatWorld(), body, new Goals());
+
+        walk.WalkToPlace(0xA9B40001u, new Vector3(60f, 75f, 0f), 2f);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+        Assert.Equal(0u, report.ObjectId);
+        Assert.InRange(Vector2.Distance(body.Flat, new Vector2(60f, 75f)), 0f, 2.05f);
+        Assert.False(body.Travelling);
+    }
+
+    [Fact]
     public void ARouteAskedForAloneIsFoundWithoutMovingTheCharacter()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
@@ -897,6 +912,13 @@ public sealed class NavigationWalkControllerTests
         public Func<IReadOnlyList<NavAvoidance>>? CrowdNow { get; init; }
 
         public IReadOnlyList<NavAvoidance> FindCrowd(Vector3 around, float radius, uint goalObjectId) => CrowdNow?.Invoke() ?? [];
+
+        /// <summary>Places stand where their landblock-local point says, the test world having one landblock at its origin.</summary>
+        public bool TryLocatePlace(uint cellId, Vector3 local, out Vector3 position)
+        {
+            position = local;
+            return true;
+        }
 
         public bool TryFindBlocker(Vector3 position, float radius, out NavigationBlocker blocker)
         {
