@@ -138,6 +138,9 @@ public interface ICharacterInfo
 
     int Level => 0;
 
+    /// <summary>All the experience the character has earned, or zero before the client has heard it.</summary>
+    long TotalExperience => 0;
+
     /// <summary>Unused ordinary slots in the main pack.</summary>
     int MainPackFreeSlots => 0;
 

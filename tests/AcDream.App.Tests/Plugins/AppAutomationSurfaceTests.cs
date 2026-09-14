@@ -1,3 +1,4 @@
+using AcDream.Core.Properties;
 using AcDream.App.Plugins;
 using AcDream.Core.Chat;
 using AcDream.Core.Items;
@@ -255,6 +256,50 @@ public sealed class AppAutomationSurfaceTests
 
         surface.Dispose();
         Assert.Equal(0, second.CommunicationOwner.SubscriberCount);
+    }
+
+    [Fact]
+    public void KillsReachPluginsInOrderAndOnlyFromTheBoundSession()
+    {
+        using var first = GameRuntimeTestFactory.Create();
+        using var second = GameRuntimeTestFactory.Create();
+        using var surface = new AppAutomationSurface();
+        surface.Bind(first, first.CharacterOwner, first.ActionOwner.SpellCast);
+
+        first.ActionOwner.Combat.OnKillerNotification("Drudge Robber", 0x80000001u);
+        PluginKill one = Assert.Single(surface.CaptureKills(0));
+        Assert.Equal("Drudge Robber", one.VictimName);
+        Assert.Equal(0x80000001u, one.VictimObjectId);
+        Assert.Empty(surface.CaptureKills(one.Sequence));
+
+        surface.Bind(second, second.CharacterOwner, second.ActionOwner.SpellCast);
+        first.ActionOwner.Combat.OnKillerNotification("stale kill", 0x80000002u);
+        second.ActionOwner.Combat.OnKillerNotification("Drudge Servant", 0x80000003u);
+
+        PluginKill two = Assert.Single(surface.CaptureKills(one.Sequence));
+        Assert.True(two.Sequence > one.Sequence);
+        Assert.Equal("Drudge Servant", two.VictimName);
+
+        surface.Dispose();
+        second.ActionOwner.Combat.OnKillerNotification("after dispose", 0x80000004u);
+        Assert.Empty(surface.CaptureKills(0));
+    }
+
+    [Fact]
+    public void TotalExperienceIsReadFromThePlayersPropertiesAndIsZeroUntilTheClientHearsIt()
+    {
+        using var runtime = GameRuntimeTestFactory.Create();
+        using var surface = new AppAutomationSurface();
+        surface.Bind(runtime, runtime.CharacterOwner, runtime.ActionOwner.SpellCast);
+        const uint player = 0x50000001u;
+        runtime.PlayerIdentity.ServerGuid = player;
+        Assert.Equal(0L, surface.TotalExperience);
+
+        var character = new ClientObject { ObjectId = player, Name = "Player" };
+        character.Properties.Int64s[(uint)PropertyInt64.TotalExperience] = 1_234_567_890_123L;
+        runtime.InventoryOwner.Objects.AddOrUpdate(character);
+
+        Assert.Equal(1_234_567_890_123L, surface.TotalExperience);
     }
 
     [Fact]
