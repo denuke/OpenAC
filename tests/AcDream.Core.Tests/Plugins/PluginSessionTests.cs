@@ -420,11 +420,40 @@ public sealed class PluginSessionTests
             ?? throw new InvalidOperationException("Repository root not found.");
     }
 
+    [Fact]
+    public void ScopedHostSharesSettingsUnderItsManifestIdUntilItIsDisposed()
+    {
+        var registry = new PluginSettingsRegistry();
+        var alpha = new ScopedPluginHost(new StubHost(sharedSettings: registry), "acdream.alpha", "Alpha");
+
+        alpha.SharedSettings.Register("settings", " ", new SharedSettingsStub());
+
+        Assert.Equal(new PluginSettingsInfo("acdream.alpha/settings", "Alpha"), Assert.Single(registry.Available));
+        Assert.True(alpha.SharedSettings.TryRead("acdream.alpha/settings", null, out string? json));
+        Assert.Equal("{}", json);
+        Assert.Throws<ArgumentException>(
+            () => alpha.SharedSettings.Register("nested/settings", "Nested", new SharedSettingsStub()));
+
+        alpha.Dispose();
+
+        Assert.Empty(registry.Available);
+    }
+
+    private sealed class SharedSettingsStub : IPluginSettingsProvider
+    {
+        public string Describe() => string.Empty;
+
+        public string? Read(string? section) => "{}";
+
+        public PluginSettingsChangeResult Change(string changeJson) => new(false, "refused");
+    }
+
     private sealed class StubHost(
         IPluginStorage? storage = null,
         IPluginLootClassifierRegistry? lootClassifiers = null,
         IPluginStorage? vtankProfiles = null,
-        IReadOnlyDictionary<string, string>? sessionSettings = null) : IPluginHost
+        IReadOnlyDictionary<string, string>? sessionSettings = null,
+        IPluginSettingsRegistry? sharedSettings = null) : IPluginHost
     {
         public bool HasUi => false;
         public IPluginLogger Log { get; } = new StubLogger();
@@ -441,6 +470,8 @@ public sealed class PluginSessionTests
             vtankProfiles ?? NoOpPluginStorage.Instance;
         public IReadOnlyDictionary<string, string> SessionSettings { get; } =
             sessionSettings ?? new Dictionary<string, string>();
+        public IPluginSettingsRegistry SharedSettings { get; } =
+            sharedSettings ?? NoOpPluginSettingsRegistry.Instance;
     }
 
     private sealed class PerPluginStubHost(

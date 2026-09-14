@@ -19,6 +19,10 @@ public interface IPluginHost
     IPluginLootClassifierRegistry LootClassifiers =>
         NoOpPluginLootClassifierRegistry.Instance;
 
+    /// <summary>The settings plugins share with each other, such as a combat macro's with an agent.</summary>
+    IPluginSettingsRegistry SharedSettings =>
+        NoOpPluginSettingsRegistry.Instance;
+
     IAutomationSurface Automation { get; }
 
     IPluginStorage VtankProfiles => NoOpPluginStorage.Instance;

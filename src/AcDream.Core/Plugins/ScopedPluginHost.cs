@@ -12,6 +12,7 @@ internal sealed class ScopedPluginHost : IPluginHost, IDisposable
     private readonly ScopedPluginStorage _storage;
     private readonly ScopedPluginCommandRegistry _commands;
     private readonly ScopedLootClassifierRegistry _lootClassifiers;
+    private readonly ScopedSettingsRegistry _sharedSettings;
     private bool _disposed;
 
     internal ScopedPluginHost(
@@ -34,6 +35,10 @@ internal sealed class ScopedPluginHost : IPluginHost, IDisposable
             inner.LootClassifiers,
             pluginId,
             pluginDisplayName);
+        _sharedSettings = new ScopedSettingsRegistry(
+            inner.SharedSettings,
+            pluginId,
+            pluginDisplayName);
     }
 
     public bool HasUi => _inner.HasUi;
@@ -46,6 +51,7 @@ internal sealed class ScopedPluginHost : IPluginHost, IDisposable
     public IPluginStorage VtankProfiles => _inner.VtankProfiles;
     public IPluginCommandRegistry Commands => _commands;
     public IPluginLootClassifierRegistry LootClassifiers => _lootClassifiers;
+    public IPluginSettingsRegistry SharedSettings => _sharedSettings;
     public IReadOnlyDictionary<string, string> SessionSettings =>
         _inner is IPerPluginSessionSettings perPlugin
             ? perPlugin.SessionSettingsFor(_pluginId)
@@ -105,6 +111,81 @@ internal sealed class ScopedPluginHost : IPluginHost, IDisposable
         _ui.Dispose();
         _commands.Dispose();
         _lootClassifiers.Dispose();
+        _sharedSettings.Dispose();
+    }
+
+    private sealed class ScopedSettingsRegistry(
+        IPluginSettingsRegistry inner,
+        string pluginId,
+        string pluginDisplayName)
+        : IPluginSettingsRegistry,
+          IDisposable
+    {
+        private readonly object _gate = new();
+        private readonly List<IDisposable> _registrations = [];
+        private bool _disposed;
+
+        public IReadOnlyList<PluginSettingsInfo> Available => inner.Available;
+
+        public IDisposable Register(
+            string settingsId,
+            string displayName,
+            IPluginSettingsProvider provider)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            ArgumentException.ThrowIfNullOrWhiteSpace(settingsId);
+            string local = settingsId.Trim();
+            if (local.Contains('/') || local.Contains('\\'))
+            {
+                throw new ArgumentException(
+                    "A settings id cannot contain a path separator.",
+                    nameof(settingsId));
+            }
+            string effectiveName = string.IsNullOrWhiteSpace(displayName)
+                ? pluginDisplayName
+                : displayName.Trim();
+            IDisposable registration = inner.Register(
+                $"{pluginId}/{local}",
+                effectiveName,
+                provider);
+            lock (_gate)
+            {
+                if (!_disposed)
+                {
+                    _registrations.Add(registration);
+                    return registration;
+                }
+            }
+            registration.Dispose();
+            throw new ObjectDisposedException(nameof(ScopedSettingsRegistry));
+        }
+
+        public bool TryDescribe(string settingsId, out string description) =>
+            inner.TryDescribe(settingsId, out description);
+
+        public bool TryRead(string settingsId, string? section, out string? json) =>
+            inner.TryRead(settingsId, section, out json);
+
+        public bool TryChange(
+            string settingsId,
+            string changeJson,
+            out PluginSettingsChangeResult result) =>
+            inner.TryChange(settingsId, changeJson, out result);
+
+        public void Dispose()
+        {
+            IDisposable[] registrations;
+            lock (_gate)
+            {
+                if (_disposed)
+                    return;
+                _disposed = true;
+                registrations = _registrations.ToArray();
+                _registrations.Clear();
+            }
+            for (int index = registrations.Length - 1; index >= 0; index--)
+                registrations[index].Dispose();
+        }
     }
 
     private sealed class ScopedLootClassifierRegistry(

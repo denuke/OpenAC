@@ -152,6 +152,7 @@ using var automation = new AcDream.App.Plugins.AppAutomationSurface(
         "plugin-peers")),
     runtimeOptions.PluginTags);
 var lootClassifiers = new AcDream.Core.Plugins.PluginLootClassifierRegistry();
+var sharedPluginSettings = new AcDream.Core.Plugins.PluginSettingsRegistry();
 using var window = new GameWindow(
     runtimeOptions,
     worldGameState,
@@ -173,7 +174,8 @@ var host = new AppPluginHost(
     lootClassifiers,
     new FilePluginStorage(
         runtimeOptions.VtankProfileDirectoryOverride
-            ?? VtankProfilesDefault.Resolve(applicationPaths.DataDirectory)));
+            ?? VtankProfilesDefault.Resolve(applicationPaths.DataDirectory)),
+    sharedPluginSettings);
 GraphicalPluginSession pluginSession = GraphicalPluginSession.Create(
     applicationPaths,
     runtimeOptions.Plugins,
