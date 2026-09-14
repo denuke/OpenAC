@@ -244,6 +244,7 @@ public sealed class MossTankPanelTests
         Assert.Equal("Linear", route.GetProperty("mode").GetString());
         Assert.True(route.GetProperty("walkLegs").GetBoolean());
         Assert.Equal("Route ready.", route.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, route.GetProperty("skipped").ValueKind);
         JsonElement[] waypoints = [.. route.GetProperty("waypoints").EnumerateArray()];
         Assert.Equal(4, waypoints.Length);
         Assert.Equal("0xA9B40019 [84 7.1 94.005]", waypoints[0].GetProperty("point").GetString());

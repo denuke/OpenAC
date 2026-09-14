@@ -168,7 +168,7 @@ goes by, and moves on when the walk arrives, so a fight that shoves the
 character off the route is walked back from wherever it ended. Where the route
 turns, the character stops for a moment before the next walk, as MossTank's own
 steering does. A leg the client cannot walk is skipped with a chat message, and
-while a walk MossTank did not ask for is under way, such as one from `go to`,
+`skipped` in `settings mosstank route` names the last one skipped. While a walk MossTank did not ask for is under way, such as one from `go to`,
 the route waits for it to end. With `walkLegs` on, doors are opened by the walks,
 and MossTank's OpenDoors stands aside. A walk to an object farther away than one planning grid reaches,
 about 270 m, goes in stages, each planned to the edge of a grid toward the

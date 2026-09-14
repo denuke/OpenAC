@@ -382,6 +382,9 @@ internal sealed class NavigationController
     }
 
     public string Status => _status;
+
+    /// <summary>The last leg to a point that the client could not walk and the route skipped, and why; empty when none has been since the route was reset.</summary>
+    public string LastSkippedLeg { get; private set; } = string.Empty;
     public int CurrentWaypointIndex => _index;
     public bool Reversing => _reverse;
 
@@ -444,6 +447,7 @@ internal sealed class NavigationController
         StopClientWalk();
         _clientLegFailures = 0;
         _clientWalksOnePointAtATime = false;
+        LastSkippedLeg = string.Empty;
         _index = 0;
         _reverse = false;
         _onceComplete = false;
@@ -1380,8 +1384,8 @@ internal sealed class NavigationController
             if (report.State is PluginGoToState.NoRoute or PluginGoToState.Blocked)
             {
                 _clientLegFailures++;
-                _host.Automation.Chat.PostSystemMessage(
-                    $"[MossTank] Waypoint {_index + 1} could not be walked ({report.Reason ?? report.State.ToString()}); moving on to the next.");
+                LastSkippedLeg = $"Waypoint {_index + 1} could not be walked ({report.Reason ?? report.State.ToString()})";
+                _host.Automation.Chat.PostSystemMessage($"[MossTank] {LastSkippedLeg}; moving on to the next.");
                 AdvanceWaypoint();
                 return true;
             }

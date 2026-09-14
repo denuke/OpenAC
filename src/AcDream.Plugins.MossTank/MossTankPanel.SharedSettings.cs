@@ -180,6 +180,7 @@ internal sealed partial class MossTankPanel
             ["mode"] = _navigationSettings.Mode.ToString(),
             ["walkLegs"] = _navigationSettings.WalkLegsWithClient,
             ["status"] = _navigation.Status,
+            ["skipped"] = _navigation.LastSkippedLeg.Length == 0 ? null : _navigation.LastSkippedLeg,
             ["current"] = _navigation.CurrentWaypointIndex,
             ["waypoints"] = new JsonArray([.. _navigationSettings.Waypoints.Select(static waypoint => (JsonNode?)SharedWaypoint(waypoint))]),
         },

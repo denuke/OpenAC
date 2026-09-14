@@ -1198,6 +1198,7 @@ public sealed class NavigationTests
         Assert.Equal(
             "[MossTank] Waypoint 1 could not be walked (no route joins the character to it); moving on to the next.",
             Assert.Single(automation.PostedSystemMessages));
+        Assert.Equal("Waypoint 1 could not be walked (no route joins the character to it)", controller.LastSkippedLeg);
 
         Assert.True(controller.Tick(0.05d, canAct: true));
         automation.WalkIs(PluginGoToState.Blocked, "stuck");
@@ -1209,6 +1210,7 @@ public sealed class NavigationTests
         Assert.Contains("No leg of the route could be walked", controller.Status, StringComparison.Ordinal);
 
         controller.Reset();
+        Assert.Empty(controller.LastSkippedLeg);
         Assert.True(controller.Tick(0.05d, canAct: true));
         Assert.Equal(3, automation.GoTos.Count);
     }
