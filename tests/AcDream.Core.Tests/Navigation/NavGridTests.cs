@@ -421,6 +421,23 @@ public sealed class NavGridTests
     }
 
     [Fact]
+    public void ABodyMayBrushAWallAlongAPathButNotCrossOneOrLeaveItsFloor()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 10f, 10f, 0f),
+            .. Wall(5f, 0f, 5f, 4f, 0f, 3f)]);
+        int west = grid.FindNode(new Vector3(2.125f, 4.375f, 0f), 0.1f, 0.5f);
+        int east = grid.FindNode(new Vector3(8.125f, 4.375f, 0f), 0.1f, 0.5f);
+
+        Assert.False(grid.CanWalkStraight(west, east), "a walked leg keeps farther from the wall's end");
+        Assert.True(grid.CanBrushAlong([grid.Position(west), new Vector3(5f, 4.375f, 0f), grid.Position(east)]));
+        Assert.False(grid.CanBrushAlong([new Vector3(2.125f, 2.125f, 0f), new Vector3(8.125f, 2.125f, 0f)]), "through the wall");
+        Assert.False(grid.CanBrushAlong([new Vector3(5.125f, 1f, 0f), new Vector3(5.125f, 3f, 0f)]), "pressed against the wall");
+        Assert.False(grid.CanBrushAlong([new Vector3(8.125f, 8.125f, 0f), new Vector3(11f, 8.125f, 0f)]), "off the floor");
+        Assert.False(grid.CanBrushAlong([new Vector3(2.125f, 8.125f, 5f), new Vector3(4.125f, 8.125f, 5f)]), "far above the floor");
+    }
+
+    [Fact]
     public void ARouteKeepsOutOfAvoidedSpots()
     {
         NavGrid grid = Build([

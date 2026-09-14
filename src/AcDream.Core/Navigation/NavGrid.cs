@@ -51,6 +51,9 @@ public sealed class NavGrid
     /// <summary>A node must be at least this many steps from a node beside a ledge or a wall.</summary>
     private const int EdgeMargin = 1;
 
+    /// <summary>An edge of a floor with a wall this many columns from a node is the wall's; with none that near, it is a ledge.</summary>
+    private const float LedgeWallColumns = 2.5f;
+
     /// <summary>How near a straight walk may pass a wall's footprint before it counts as passing through it.</summary>
     private const float WalkMargin = 0.05f;
 
@@ -136,6 +139,13 @@ public sealed class NavGrid
     /// column and slides along walls.
     /// </summary>
     public float NearestWall { get; }
+
+    /// <summary>
+    /// How near a wall a body passing along a path with <see cref="CanBrushAlong"/>
+    /// keeps its centre: nearer than a walked leg keeps, since a wall the body
+    /// touches slides it along rather than stopping it.
+    /// </summary>
+    public const float BrushMargin = 0.25f;
 
     public NavGridBuildReport Report { get; }
 
@@ -434,6 +444,84 @@ public sealed class NavGrid
                 return false;
         }
         return node == to && !WallNear(Position(from), Position(to), MathF.Max(NearestWall, clearance), sight: false);
+    }
+
+    /// <summary>
+    /// Whether a body can pass along a path of points brushing walls, as it does
+    /// running around a corner: the first point stands on a node within a step of
+    /// its height, every column along the path holds a node linked to the last and
+    /// not at a ledge, and no wall comes nearer the path than <see cref="BrushMargin"/>.
+    /// </summary>
+    public bool CanBrushAlong(IReadOnlyList<Vector3> path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        if (path.Count == 0)
+            return false;
+        int node = NodeAt(path[0], Body.StepUpHeight);
+        if (node < 0 || AtLedge(node))
+            return false;
+        for (int index = 1; index < path.Count; index++)
+        {
+            int start = node;
+            (int x, int y) = ColumnOf(node);
+            int targetX = (int)MathF.Floor((path[index].X - OriginX) / CellSize);
+            int targetY = (int)MathF.Floor((path[index].Y - OriginY) / CellSize);
+            int distanceX = Math.Abs(targetX - x);
+            int distanceY = Math.Abs(targetY - y);
+            int signX = Math.Sign(targetX - x);
+            int signY = Math.Sign(targetY - y);
+            int error = distanceX - distanceY;
+            while (x != targetX || y != targetY)
+            {
+                int moveX = 0;
+                int moveY = 0;
+                int doubled = error * 2;
+                if (doubled > -distanceY)
+                {
+                    error -= distanceY;
+                    x += signX;
+                    moveX = signX;
+                }
+                if (doubled < distanceX)
+                {
+                    error += distanceX;
+                    y += signY;
+                    moveY = signY;
+                }
+                node = Link(node, DirectionOf(moveX, moveY));
+                if (node < 0 || AtLedge(node))
+                    return false;
+            }
+            if (WallNear(path[index - 1] with { Z = _nodeZ[start] }, path[index] with { Z = _nodeZ[node] }, BrushMargin, sight: false))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Whether a node stands at a ledge: on the very edge of its floor, with no wall
+    /// within <see cref="LedgeWallColumns"/> columns to account for the edge.
+    /// </summary>
+    private bool AtLedge(int node) => BorderDistance(node) < EdgeMargin && WallDistance(node) > CellSize * LedgeWallColumns;
+
+    /// <summary>The node in a point's column nearest its height, within <paramref name="heightTolerance"/>, or -1.</summary>
+    private int NodeAt(Vector3 point, float heightTolerance)
+    {
+        (int first, int count) = NodesInColumn(
+            (int)MathF.Floor((point.X - OriginX) / CellSize),
+            (int)MathF.Floor((point.Y - OriginY) / CellSize));
+        int nearest = -1;
+        float nearestRise = heightTolerance;
+        for (int node = first; node < first + count; node++)
+        {
+            float rise = MathF.Abs(_nodeZ[node] - point.Z);
+            if (rise <= nearestRise)
+            {
+                nearest = node;
+                nearestRise = rise;
+            }
+        }
+        return nearest;
     }
 
     public static NavGrid Build(NavGeometry geometry, NavBody body, float cellSize = DefaultCellSize)
