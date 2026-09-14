@@ -151,7 +151,11 @@ the character to the object. `stop`, `cancel` and the player's movement keys
 end a walk. A walk to an object farther away than one planning grid reaches,
 about 270 m, goes in stages, each planned to the edge of a grid toward the
 object, up to 1000 m. Inside a sealed dungeon one grid covers the whole
-dungeon and serves every walk there. While a walk is under way the client
+dungeon, however large, and serves every walk there; the largest take a few
+seconds to plan the first time. A route follows floors, ramps and stairs, and
+does not yet drop from a ledge deeper than a step, jump, or pass through a
+portal, so an object reached only that way ends the walk short or is
+`no-route`. While a walk is under way the client
 draws its route as a magenta line. Ctrl+F4 also shows the grid, Ctrl+F5 plans
 a route to the selected object, and Ctrl+F6 walks to it or stops the walk;
 without Ctrl on the acdream keymap, where F4 to F6 are free.

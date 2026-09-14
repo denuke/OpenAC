@@ -114,15 +114,15 @@ internal interface INavigationGoalSource
 /// Plans routes to objects over navigation grids built from the physics world,
 /// and walks the local player along them with scripted moves. A grid covers a
 /// square region around the character and its goal and is built off the update
-/// thread. Inside a sealed dungeon a grid covers every cell of the dungeon, so
-/// one grid serves every walk there. A goal too far away for one region is
-/// walked to in stages, each planned over a region reaching toward the goal. A
-/// walk that stops making progress plans again from where the
-/// character stands, keeping out of the spot where it stuck, a few times before
-/// it gives up and names what stood beside that spot. A walk that meets a closed
-/// door on its way, or stops making progress beside one, has the client open it
-/// and plans again once it is open. A walk that arrives turns the character to
-/// face its goal.
+/// thread. Inside a sealed dungeon a grid covers every cell of the dungeon and no
+/// terrain, however large the dungeon, so one grid serves every walk there. A
+/// goal too far away for one region is walked to in stages, each planned over a
+/// region reaching toward the goal. A walk that stops making progress plans
+/// again from where the character stands, keeping out of the spot where it
+/// stuck, a few times before it gives up and names what stood beside that spot.
+/// A walk that meets a closed door on its way, or stops making progress beside
+/// one, has the client open it and plans again once it is open. A walk that
+/// arrives turns the character to face its goal.
 /// </summary>
 internal sealed class NavigationWalkController
 {
@@ -146,8 +146,12 @@ internal sealed class NavigationWalkController
     internal const float MinimumStageProgress = 16f;
     internal const int MaximumStages = 12;
 
-    /// <summary>The largest region a grid covering a whole sealed dungeon may have.</summary>
-    internal const float MaximumDungeonRegion = 384f;
+    /// <summary>
+    /// The largest region a grid covering a whole sealed dungeon may have. It is
+    /// larger than every dungeon in the game data, the widest of which spans about
+    /// 1,020 m, and bounds the cost of a grid over cells placed far apart.
+    /// </summary>
+    internal const float MaximumDungeonRegion = 2048f;
 
     /// <summary>
     /// A walk that stops making progress keeps its next plans out of a spot this
@@ -196,6 +200,20 @@ internal sealed class NavigationWalkController
 
     private NavGrid? _grid;
     private Task<NavGrid>? _building;
+
+    /// <summary>
+    /// The landblock of the sealed dungeon the grid covers whole, or zero for a
+    /// grid over a region of the world; and the same for the grid being built.
+    /// </summary>
+    private uint _gridDungeon;
+    private uint _buildingDungeon;
+
+    /// <summary>
+    /// The cell last asked about whether it lies in a sealed dungeon, and the
+    /// answer, since each answer reads the game data.
+    /// </summary>
+    private uint _classifiedCellId;
+    private bool _classifiedSealed;
     private long _tick;
     private double _seconds;
     private long _viewRetryTick;
@@ -440,25 +458,48 @@ internal sealed class NavigationWalkController
             return;
         }
 
+        bool inDungeon = TryMeasureDungeon(sample.CellId, out uint dungeon, out Vector2 cellsMinimum, out Vector2 cellsMaximum);
+        uint gridDungeon = inDungeon ? dungeon : 0u;
         NavGrid? usable = _grid is { } built
             && built.Body == sample.Body
+            && _gridDungeon == gridDungeon
             && built.Contains(sample.Position, CoverMargin)
-            && !IsStale(built)
+            && !IsStale(built, gridDungeon)
                 ? built
                 : null;
         bool staged = false;
         if (usable is null || !usable.Contains(active.Goal, CoverMargin))
         {
-            if (TryChooseDungeonRegion(sample, active.Goal, out float originX, out float originY, out float size)
-                || TryChooseRegion(sample.Position, active.Goal, out originX, out originY, out size))
+            if (inDungeon)
             {
-                BuildGrid(active, sample, originX, originY, size);
+                if (TryChooseSquare(
+                        Vector2.Min(cellsMinimum, Vector2.Min(Flat(sample.Position), Flat(active.Goal))),
+                        Vector2.Max(cellsMaximum, Vector2.Max(Flat(sample.Position), Flat(active.Goal))),
+                        MaximumDungeonRegion,
+                        out float dungeonX,
+                        out float dungeonY,
+                        out float dungeonSize))
+                {
+                    BuildGrid(active, sample, dungeonX, dungeonY, dungeonSize, dungeon);
+                }
+                else
+                {
+                    End(
+                        active,
+                        NavigationWalkState.NoRoute,
+                        $"the goal lies too far outside this dungeon, {HorizontalDistance(sample.Position, active.Goal):0} m away");
+                }
+                return;
+            }
+            if (TryChooseRegion(sample.Position, active.Goal, out float originX, out float originY, out float size))
+            {
+                BuildGrid(active, sample, originX, originY, size, dungeon: 0u);
                 return;
             }
             if (usable is null || !ReachesToward(usable, sample.Position, active.Goal))
             {
                 ChooseStageRegion(sample.Position, active.Goal, out originX, out originY, out size);
-                BuildGrid(active, sample, originX, originY, size);
+                BuildGrid(active, sample, originX, originY, size, dungeon: 0u);
                 return;
             }
             staged = true;
@@ -652,7 +693,13 @@ internal sealed class NavigationWalkController
         _say?.Invoke($"Walk to 0x{active.ObjectId:X8}: {next}");
     }
 
-    private void BuildGrid(Request active, in NavigationWalkBodySample sample, float originX, float originY, float size)
+    private void BuildGrid(
+        Request active,
+        in NavigationWalkBodySample sample,
+        float originX,
+        float originY,
+        float size,
+        uint dungeon)
     {
         if (active.Builds >= MaximumBuildsPerPlan)
         {
@@ -660,39 +707,28 @@ internal sealed class NavigationWalkController
             return;
         }
         active.Builds++;
-        if (!StartBuild(originX, originY, size, sample.Body))
+        if (!StartBuild(originX, originY, size, sample.Body, dungeon))
             End(active, NavigationWalkState.NoRoute, "no collision is loaded around the character");
     }
 
     /// <summary>
-    /// Inside a sealed dungeon, a square region holding every cell of the dungeon
-    /// and both ends of the walk, so one grid serves every walk there. False
-    /// outside a sealed dungeon, or when the dungeon is too big for one grid.
+    /// The landblock holding the sealed dungeon a cell lies in, and the horizontal
+    /// extent of every cell there, or false outside a sealed dungeon or before its
+    /// cells are resident.
     /// </summary>
-    private bool TryChooseDungeonRegion(
-        in NavigationWalkBodySample sample,
-        Vector3 goal,
-        out float originX,
-        out float originY,
-        out float size)
+    private bool TryMeasureDungeon(uint cellId, out uint landblockId, out Vector2 minimum, out Vector2 maximum)
     {
-        originX = 0f;
-        originY = 0f;
-        size = 0f;
-        if (_isSealedDungeon is null || sample.CellId == 0u || !_isSealedDungeon(sample.CellId))
+        landblockId = (cellId & 0xFFFF0000u) | 0xFFFFu;
+        minimum = default;
+        maximum = default;
+        if (_isSealedDungeon is null || cellId == 0u)
             return false;
-        uint landblockId = (sample.CellId & 0xFFFF0000u) | 0xFFFFu;
-        if (!NavGeometry.TryMeasureCells(_physics, landblockId, out Vector2 minimum, out Vector2 maximum))
-            return false;
-        var from = new Vector2(sample.Position.X, sample.Position.Y);
-        var to = new Vector2(goal.X, goal.Y);
-        return TryChooseSquare(
-            Vector2.Min(minimum, Vector2.Min(from, to)),
-            Vector2.Max(maximum, Vector2.Max(from, to)),
-            MaximumDungeonRegion,
-            out originX,
-            out originY,
-            out size);
+        if (cellId != _classifiedCellId)
+        {
+            _classifiedCellId = cellId;
+            _classifiedSealed = _isSealedDungeon(cellId);
+        }
+        return _classifiedSealed && NavGeometry.TryMeasureCells(_physics, landblockId, out minimum, out maximum);
     }
 
     /// <summary>Whether a grid reaches far enough toward a goal beyond it to plan a stage over from where the character stands.</summary>
@@ -776,8 +812,14 @@ internal sealed class NavigationWalkController
         }
     }
 
-    private bool IsStale(NavGrid grid)
+    /// <summary>
+    /// Whether the resident landblocks a grid over a region was built from have
+    /// changed since, or the landblock of a grid over a whole sealed dungeon has left.
+    /// </summary>
+    private bool IsStale(NavGrid grid, uint dungeon)
     {
+        if (dungeon != 0u)
+            return !NavGeometry.TryMeasureCells(_physics, dungeon, out _, out _);
         IReadOnlyList<uint> resident = NavGeometry.OverlappingLandblocks(_physics, grid.OriginX, grid.OriginY, grid.Size);
         if (resident.Count != grid.LandblockIds.Count)
             return true;
@@ -789,23 +831,54 @@ internal sealed class NavigationWalkController
         return false;
     }
 
-    private bool StartBuild(float originX, float originY, float size, NavBody body)
+    /// <summary>
+    /// Starts building a grid over a region, or over the whole of the sealed
+    /// dungeon whose landblock <paramref name="dungeon"/> names when it is not zero.
+    /// </summary>
+    private bool StartBuild(float originX, float originY, float size, NavBody body, uint dungeon)
     {
-        NavGeometry? geometry = NavGeometry.Capture(_physics, originX, originY, size);
+        NavGeometry? geometry = dungeon == 0u
+            ? NavGeometry.Capture(_physics, originX, originY, size)
+            : NavGeometry.CaptureDungeon(_physics, dungeon, originX, originY, size);
         if (geometry is null)
             return false;
+        _buildingDungeon = dungeon;
         _building = Task.Run(() => NavGrid.Build(geometry, body));
         return true;
     }
 
+    /// <summary>Keeps a grid around the character while it is shown: the whole dungeon inside a sealed one.</summary>
     private void KeepViewGrid(in NavigationWalkBodySample sample)
     {
         if (_building is not null || _tick < _viewRetryTick)
             return;
-        if (_grid is { } grid && grid.Body == sample.Body && grid.Contains(sample.Position, ViewRegion / 8f))
+        if (TryMeasureDungeon(sample.CellId, out uint dungeon, out Vector2 minimum, out Vector2 maximum))
+        {
+            if (_grid is { } whole && whole.Body == sample.Body && _gridDungeon == dungeon && !IsStale(whole, dungeon))
+                return;
+            Vector2 at = Flat(sample.Position);
+            if (!TryChooseSquare(
+                    Vector2.Min(minimum, at),
+                    Vector2.Max(maximum, at),
+                    MaximumDungeonRegion,
+                    out float originX,
+                    out float originY,
+                    out float size)
+                || !StartBuild(originX, originY, size, sample.Body, dungeon))
+            {
+                _viewRetryTick = _tick + ViewRetryTicks;
+            }
             return;
+        }
+        if (_grid is { } grid
+            && grid.Body == sample.Body
+            && _gridDungeon == 0u
+            && grid.Contains(sample.Position, ViewRegion / 8f))
+        {
+            return;
+        }
         float half = ViewRegion * 0.5f;
-        if (!StartBuild(Snap(sample.Position.X - half), Snap(sample.Position.Y - half), ViewRegion, sample.Body))
+        if (!StartBuild(Snap(sample.Position.X - half), Snap(sample.Position.Y - half), ViewRegion, sample.Body, dungeon: 0u))
             _viewRetryTick = _tick + ViewRetryTicks;
     }
 
@@ -825,6 +898,7 @@ internal sealed class NavigationWalkController
 
         NavGrid grid = building.Result;
         _grid = grid;
+        _gridDungeon = _buildingDungeon;
         NavGridBuildReport report = grid.Report;
         _say?.Invoke(
             $"Navmesh: {report.Nodes} standing points ({report.ClearNodes} clear) over {grid.Size:0} m "
@@ -935,6 +1009,8 @@ internal sealed class NavigationWalkController
             ? remaining + Vector2.Distance(at, new Vector2(request.Goal.X, request.Goal.Y))
             : remaining;
     }
+
+    private static Vector2 Flat(Vector3 point) => new(point.X, point.Y);
 
     private static float HorizontalDistance(Vector3 from, Vector3 to) =>
         Vector2.Distance(new Vector2(from.X, from.Y), new Vector2(to.X, to.Y));

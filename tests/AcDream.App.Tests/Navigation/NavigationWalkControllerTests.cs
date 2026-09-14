@@ -262,6 +262,72 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
+    public void ADungeonWiderThanAnyOutdoorRegionGetsOneGridWithoutTerrain()
+    {
+        const uint room = 0xA9B40100u;
+        var body = new SimulatedBody(new Vector3(20f, 20f, -30f)) { CellId = room };
+        var goals = new Goals { [Target] = new Vector3(645f, 32f, -30f) };
+        var walk = new NavigationWalkController(
+            DungeonWorld(room, corridorEnd: 630f),
+            body,
+            goals,
+            isSealedDungeon: cell => cell == room);
+
+        walk.RouteTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Planned, report.State);
+        Assert.Equal("a route was found", report.Reason);
+        NavGrid grid = walk.Grid!;
+        Assert.True(grid.Size > 2f * NavigationWalkController.MaximumRegion);
+        Assert.Equal([0xA9B4FFFFu], grid.LandblockIds);
+        Assert.True(grid.FindNode(new Vector3(100f, 150f, 0f), 2f, 2f) < 0);
+    }
+
+    [Fact]
+    public void AGridShownInsideASealedDungeonCoversTheWholeDungeonAndServesItsWalks()
+    {
+        const uint room = 0xA9B40100u;
+        var body = new SimulatedBody(new Vector3(20f, 20f, -30f)) { CellId = room };
+        var goals = new Goals { [Target] = new Vector3(245f, 32f, -30f) };
+        var walk = new NavigationWalkController(DungeonWorld(room), body, goals, isSealedDungeon: cell => cell == room)
+        {
+            ShowGrid = true,
+        };
+
+        var wall = Stopwatch.StartNew();
+        while (walk.Grid is null && wall.Elapsed < TimeSpan.FromSeconds(30))
+        {
+            walk.Tick(Frame);
+            Thread.Sleep(1);
+        }
+        NavGrid? shown = walk.Grid;
+        walk.RouteTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.NotNull(shown);
+        Assert.True(shown.Contains(new Vector3(10f, 10f, -30f)) && shown.Contains(new Vector3(250f, 50f, -30f)));
+        Assert.Equal(NavigationWalkState.Planned, report.State);
+        Assert.Same(shown, walk.Grid);
+    }
+
+    [Fact]
+    public void AGoalFarOutsideTheSealedDungeonIsReportedWithoutBuildingAGrid()
+    {
+        const uint room = 0xA9B40100u;
+        var body = new SimulatedBody(new Vector3(20f, 20f, -30f)) { CellId = room };
+        var goals = new Goals { [Target] = new Vector3(5000f, 32f, -30f) };
+        var walk = new NavigationWalkController(DungeonWorld(room), body, goals, isSealedDungeon: cell => cell == room);
+
+        walk.WalkTo(Target);
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.NoRoute, report.State);
+        Assert.Contains("outside this dungeon", report.Reason);
+        Assert.Null(walk.Grid);
+    }
+
+    [Fact]
     public void APlanningRegionHoldsBothEndsWithRoomAroundThem()
     {
         var from = new Vector3(10f, 10f, 0f);
@@ -367,8 +433,11 @@ public sealed class NavigationWalkControllerTests
         return physics;
     }
 
-    /// <summary>A landblock holding a dungeon 30 m below its terrain: two rooms joined by a corridor 190 m long.</summary>
-    private static PhysicsEngine DungeonWorld(uint firstCell)
+    /// <summary>
+    /// A landblock holding a dungeon 30 m below its terrain: two rooms joined by a
+    /// corridor, 190 m long unless <paramref name="corridorEnd"/> moves the far room.
+    /// </summary>
+    private static PhysicsEngine DungeonWorld(uint firstCell, float corridorEnd = 230f)
     {
         static CellSurface Floor(uint cellId, float x0, float y0, float x1, float y1) => new(
             cellId,
@@ -387,8 +456,8 @@ public sealed class NavigationWalkControllerTests
             new TerrainSurface(new byte[81], new float[256]),
             [
                 Floor(firstCell, 10f, 10f, 40f, 50f),
-                Floor(firstCell + 1u, 40f, 28f, 230f, 36f),
-                Floor(firstCell + 2u, 230f, 20f, 250f, 50f),
+                Floor(firstCell + 1u, 40f, 28f, corridorEnd, 36f),
+                Floor(firstCell + 2u, corridorEnd, 20f, corridorEnd + 20f, 50f),
             ],
             [],
             0f,
