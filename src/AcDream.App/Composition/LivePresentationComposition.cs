@@ -905,12 +905,17 @@ internal sealed class LivePresentationCompositionPhase
                 static value => value.Dispose());
             IUiViewportRenderer? previousRenderer = viewport.Renderer;
             viewport.Renderer = paperdollLease.Resource;
+            interaction.RetainedUi.Runtime.PaperdollFigureLighting.Target =
+                new DollFigureLighting(selectionScene);
             bindings.AdoptRelease(
                 "paperdoll viewport target",
                 () =>
                 {
                     if (ReferenceEquals(viewport.Renderer, paperdollLease.Resource))
                         viewport.Renderer = previousRenderer;
+                    // The relay outlives this build, so leaving it pointed at a
+                    // released scene would flash into nothing until the next one.
+                    interaction.RetainedUi.Runtime.PaperdollFigureLighting.Target = null;
                 });
             paperdollPresenter = new PaperdollFramePresenter(
                 paperdollLease.Resource,

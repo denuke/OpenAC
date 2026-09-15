@@ -384,7 +384,11 @@ internal sealed class LiveSessionRuntimeFactory
             else
                 _interaction.ItemInteraction.AcceptAppraisalResponse(appraisal.Guid);
         },
-        Vendor: _domain.Inventory.Vendor);
+        Vendor: _domain.Inventory.Vendor,
+        Book: _domain.Runtime.BookOwner,
+        PlayerName: () =>
+            _domain.Inventory.Objects.Get(_player.Identity.ServerGuid)?.Name
+            ?? string.Empty);
 
     private LiveCharacterSessionBindings CreateCharacterBindings(
         SkillTable? skillTable)

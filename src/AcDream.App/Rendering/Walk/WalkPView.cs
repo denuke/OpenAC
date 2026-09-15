@@ -150,7 +150,11 @@ public sealed class WalkPView
                 cell.CachedNeighbors[j] = ctx.GetVisible(portal.OtherCellId);
                 if (cell.CachedNeighbors[j] is null)
                 {
-                    continue;   // not loaded: silently dead
+                    // Not loaded: the flood ends at this portal. Named in the
+                    // walk transcript so a missing room can be traced to the
+                    // cell that never registered.
+                    WalkTranscriptDump.PrintDeadPortal(cell.CellId, j, portal.OtherCellId);
+                    continue;
                 }
             }
             anyLive = true;

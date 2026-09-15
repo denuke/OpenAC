@@ -61,7 +61,8 @@ public sealed class VendorUiControllerTests
             new StackSplitQuantityState(),
             datFont: null,
             debugFont: null,
-            static _ => (0u, 0, 0));
+            static _ => (0u, 0, 0),
+            resolveAppropriateName: ItemTooltipCaptionNames.Resolve);
 
         Assert.NotNull(controller);
     }
@@ -104,7 +105,8 @@ public sealed class VendorUiControllerTests
             new StackSplitQuantityState(),
             datFont: null,
             debugFont: null,
-            static _ => (0u, 0, 0));
+            static _ => (0u, 0, 0),
+            resolveAppropriateName: ItemTooltipCaptionNames.Resolve);
         Assert.NotNull(controller);
 
         var buyingList = Assert.IsType<UiItemList>(layout.FindElement(VendorUiController.BuyingListId));
@@ -356,7 +358,8 @@ public sealed class VendorUiControllerTests
                 debugFont: null,
                 static _ => (0u, 0, 0),
                 dialogs: Dialogs,
-                systemMessage: SystemMessages.Add)!;
+                systemMessage: SystemMessages.Add,
+                resolveAppropriateName: ItemTooltipCaptionNames.Resolve)!;
             Screen.WindowManager.AttachController(WindowNames.Vendor, Controller);
         }
     }
@@ -381,6 +384,30 @@ public sealed class VendorUiControllerTests
 
         Assert.True(h.ItemScrollbar.Horizontal);
         Assert.Same(h.ItemList.Scroll, h.ItemScrollbar.Model);
+    }
+
+    // #87: the hover caption is the same name flavour the selection caption
+    // shows - the composed name, material prefix included.
+    [Fact]
+    public void HoverCaption_carriesTheMaterialPrefix_andStaysPlainWithoutOne()
+    {
+        var h = new Harness();
+        h.Objects.AddOrUpdate(ItemTooltipCaptionNames.Material(ArmorItemGuid));
+        h.Objects.AddOrUpdate(ItemTooltipCaptionNames.Plain(FoodItemGuid));
+
+        h.State.Apply(VendorGuid, Profile(), new[]
+        {
+            new VendorShopItem(ArmorItemGuid, -1, 2u, "Chainmail", (uint)ItemType.Armor, 200u, 500),
+        });
+
+        Assert.Equal("Pyreal Scarab", h.ItemList.GetItem(0)!.GetTooltipText());
+
+        h.State.Apply(VendorGuid + 1u, Profile(), new[]
+        {
+            new VendorShopItem(FoodItemGuid, -1, 1u, "Bread", (uint)ItemType.Food, 100u, 5),
+        });
+
+        Assert.Equal("Bread Loaf", h.ItemList.GetItem(0)!.GetTooltipText());
     }
 
     [Fact]

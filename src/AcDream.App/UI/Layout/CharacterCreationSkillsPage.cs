@@ -194,7 +194,7 @@ internal sealed class CharacterCreationSkillsPage : IDisposable
             uint minLevel = view.Options.TryGetSkillDetail(skillId, out ChargenSkillDetail detail)
                 ? detail.MinLevel
                 : 1u;
-            string name = ItemAppraisalTextFormatter.SkillName((int)skillId);
+            string name = ChargenSkillNames.Resolve(view.Options, skillId);
             byBucket[ComputeBucket(level, minLevel)].Add((skillId, name));
         }
         foreach (List<(uint SkillId, string Name)> bucketSkills in byBucket.Values)
@@ -208,8 +208,8 @@ internal sealed class CharacterCreationSkillsPage : IDisposable
         foreach ((SkillBucket bucket, string stringKey) in BucketOrder)
         {
             BuildHeaderRow(headerTemplate, stringKey);
-            foreach ((uint skillId, _) in byBucket[bucket])
-                BuildSkillRow(rowTemplate, skillId, bucket);
+            foreach ((uint skillId, string name) in byBucket[bucket])
+                BuildSkillRow(rowTemplate, skillId, name, bucket);
         }
     }
 
@@ -225,7 +225,11 @@ internal sealed class CharacterCreationSkillsPage : IDisposable
         }
     }
 
-    private void BuildSkillRow(UiTemplateListEntry template, uint skillId, SkillBucket bucket)
+    private void BuildSkillRow(
+        UiTemplateListEntry template,
+        uint skillId,
+        string skillName,
+        SkillBucket bucket)
     {
         if (_list!.TemplateResolver!(template.TemplateLayoutId, template.TemplateElementId) is not { } rowRoot)
             return;
@@ -234,7 +238,7 @@ internal sealed class CharacterCreationSkillsPage : IDisposable
 
         UiText? nameText = UiElement.FindDescendant(rowRoot, RowNameTextId) as UiText;
         if (nameText is not null)
-            SetLine(nameText, ItemAppraisalTextFormatter.SkillName((int)skillId));
+            SetLine(nameText, skillName);
         Vector4 unselectedColor = nameText?.DefaultColor ?? Vector4.One;
         UiText? levelText = UiElement.FindDescendant(rowRoot, RowLevelTextId) as UiText;
         UiText? upCostText = UiElement.FindDescendant(rowRoot, RowUpCostTextId) as UiText;
@@ -389,7 +393,7 @@ internal sealed class CharacterCreationSkillsPage : IDisposable
 
         ChargenSkillAdvancementClass level = view.GetSkillLevel(skillId);
         uint score = _bindings.GetSkillScore?.Invoke(skillId, snapshot.Attributes, level) ?? 0u;
-        string name = ItemAppraisalTextFormatter.SkillName((int)skillId);
+        string name = ChargenSkillNames.Resolve(view.Options, skillId);
 
         if (_infoTitle is { } title)
             SetLine(title, $"{name} ({score.ToString(CultureInfo.InvariantCulture)})");

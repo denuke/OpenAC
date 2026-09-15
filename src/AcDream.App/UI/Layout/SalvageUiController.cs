@@ -20,6 +20,10 @@ public sealed class SalvageUiController : IRetainedPanelController, IItemListDra
         Func<ItemType, uint, uint, uint, uint, uint> ResolveIcon,
         Action<bool> SetWindowVisible,
         Action<string> Report,
+        /// <summary>Composes an item's displayed name, material prefix
+        /// included. Required: without it a cell would quietly caption the
+        /// plain name and disagree with the selection caption.</summary>
+        Func<ClientObject, string> ResolveAppropriateName,
         uint EmptySlotSprite = 0u);
 
     private readonly Bindings _bindings;
@@ -34,6 +38,7 @@ public sealed class SalvageUiController : IRetainedPanelController, IItemListDra
 
     private SalvageUiController(ImportedLayout layout, Bindings bindings)
     {
+        ArgumentNullException.ThrowIfNull(bindings.ResolveAppropriateName);
         _bindings = bindings;
         _list = (UiItemList)layout.FindElement(ItemListId)!;
         _salvageButton = (UiButton)layout.FindElement(SalvageButtonId)!;
@@ -210,7 +215,8 @@ public sealed class SalvageUiController : IRetainedPanelController, IItemListDra
                     SourceKind = ItemDragSource.Inventory,
                     ShowTradeOverlay = true,
                     TradeOverlaySprite = TradeOverlaySprite,
-                    TooltipTextResolve = id => _bindings.Objects.Get(id)?.GetTooltipDisplayName(),
+                    TooltipTextResolve = id => ItemTooltipCaption.Resolve(
+                        _bindings.Objects, id, _bindings.ResolveAppropriateName),
                 };
                 slot.SetItem(item.ObjectId, _bindings.ResolveIcon(
                     item.Type, item.IconId, item.IconUnderlayId, item.IconOverlayId, item.Effects));

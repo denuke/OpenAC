@@ -441,7 +441,13 @@ public sealed class UiField : UiElement
         return 0f;
     }
 
-    private void DrawMultiLine(UiRenderContext ctx)
+    /// <summary>
+    /// Wraps the text to the current width and tells <see cref="Scroll"/>
+    /// how far it now runs. Drawing does this anyway; call it after
+    /// replacing the text so a bar bound to the same model is right
+    /// straight away rather than one frame behind.
+    /// </summary>
+    public void RefreshScrollExtents()
     {
         float lineHeight = DatFont?.LineHeight ?? Font?.LineHeight ?? 14f;
         float visibleWidth = MathF.Max(1f, Width - (2f * Padding));
@@ -457,6 +463,14 @@ public sealed class UiField : UiElement
             Math.Max(1, (int)MathF.Ceiling(lines.Count * lineHeight)),
             Math.Max(1, (int)MathF.Floor(visibleHeight)),
             preserveEnd: false);
+    }
+
+    private void DrawMultiLine(UiRenderContext ctx)
+    {
+        RefreshScrollExtents();
+        float lineHeight = _wrappedLineHeight;
+        float visibleHeight = MathF.Max(1f, Height - (2f * Padding));
+        IReadOnlyList<WrappedLine> lines = _wrappedLines;
 
         int caretLine = FindCaretLine(lines, _caret);
         if (_focused)

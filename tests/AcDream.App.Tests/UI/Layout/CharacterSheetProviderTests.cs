@@ -151,7 +151,9 @@ public sealed class CharacterSheetProviderTests
 
         var skill = Assert.Single(sheet.Skills);
         Assert.Equal(6u, skill.Id);
-        Assert.Equal("Skill 6", skill.Name);    // no SkillTable → id fallback name
+        // No authored skill data here, so the panel falls back to the built-in
+        // list; only a skill neither list names comes out numbered.
+        Assert.Equal("Melee Defense", skill.Name);
         Assert.Equal(CharacterSkillAdvancementClass.Trained, skill.AdvancementClass);
         Assert.Equal(10L, skill.RaiseCost);
         Assert.Equal(25L, skill.Raise10Cost);

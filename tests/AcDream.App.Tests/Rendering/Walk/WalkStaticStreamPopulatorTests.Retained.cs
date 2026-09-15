@@ -94,6 +94,29 @@ public sealed partial class WalkStaticStreamPopulatorTests
             lighting = Value;
             return true;
         }
+
+        public uint PartLitEntityId { get; set; }
+        public uint PartLitServerGuid { get; set; }
+        public uint PartMask { get; set; }
+        public RetailSelectionLighting PartValue = new(0.99f, 1f);
+
+        public bool HasPartLighting(uint serverGuid, uint localEntityId)
+            => PartMask != 0u
+               && localEntityId == PartLitEntityId
+               && serverGuid == PartLitServerGuid;
+
+        public bool TryGetPartLighting(uint serverGuid, uint localEntityId, int partIndex, out RetailSelectionLighting lighting)
+        {
+            if (HasPartLighting(serverGuid, localEntityId)
+                && (uint)partIndex < 32u
+                && (PartMask & (1u << partIndex)) != 0u)
+            {
+                lighting = PartValue;
+                return true;
+            }
+            lighting = default;
+            return false;
+        }
     }
 
     private static RenderProjectionRecord RetainedRecord(uint id, uint mesh = RetainedMesh) =>

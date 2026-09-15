@@ -387,7 +387,7 @@ public sealed class CharacterSheetProvider
 
             string? name = skillBase?.Name.Value;
             if (string.IsNullOrWhiteSpace(name))
-                name = $"Skill {snapshot.SkillId}";
+                name = RetailSkillNames.Describe((int)snapshot.SkillId);
 
             uint icon = skillBase?.IconId.DataId ?? 0u;
             int trainedCost = skillBase?.TrainedCost ?? 0;

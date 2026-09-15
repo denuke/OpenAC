@@ -181,7 +181,8 @@ public sealed class UiWindowDrawCaptureSweepTests
             new StackSplitQuantityState(),
             datFont: null,
             debugFont: null,
-            id => (id, 8, 8));
+            id => (id, 8, 8),
+            resolveAppropriateName: ItemTooltipCaptionNames.Resolve);
         Assert.NotNull(controller);
 
         var typeMenu = Assert.IsType<UiMenu>(layout.FindElement(VendorUiController.TypeFilterMenuId));

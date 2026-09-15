@@ -249,4 +249,62 @@ public class UiDatElementTests
 
         Assert.Equal("", child.ActiveState);
     }
+
+    // ── The press point never consumes the press ────────────────────────────
+
+    [Fact]
+    public void ClickOnlyElement_leavesThePressToBubble()
+    {
+        var e = new UiDatElement(new ElementInfo(), _ => (0, 0, 0)) { OnClickAt = (_, _) => { } };
+
+        Assert.False(e.OnEvent(new UiEvent(0u, e, UiEventType.MouseDown)));
+        Assert.False(e.OnEvent(new UiEvent(0u, e, UiEventType.RightDown)));
+    }
+
+    [Fact]
+    public void DragSource_recordsThePressPoint_andStillLeavesThePressToBubble()
+    {
+        var e = new UiDatElement(new ElementInfo(), _ => (0, 0, 0))
+        {
+            PointerRegion = new UiPointerRegion { DragPayloadAt = (x, y) => (x, y) },
+        };
+
+        Assert.False(e.OnEvent(new UiEvent(0u, e, UiEventType.MouseDown, Data1: 7, Data2: 9)));
+
+        Assert.Equal((7, 9), e.GetDragPayload());
+    }
+
+    [Fact]
+    public void PressPoint_ignoresAPressThatTargetedAnotherElement()
+    {
+        var e = new UiDatElement(new ElementInfo(), _ => (0, 0, 0))
+        {
+            PointerRegion = new UiPointerRegion { DragPayloadAt = (x, y) => (x, y) },
+        };
+        var child = new UiDatElement(new ElementInfo(), _ => (0, 0, 0));
+        e.AddChild(child);
+        e.OnEvent(new UiEvent(0u, e, UiEventType.MouseDown, Data1: 7, Data2: 9));
+
+        // A bubbled press keeps the child's own coordinates; they are not this
+        // element's, so they must not overwrite what it recorded.
+        e.OnEvent(new UiEvent(0u, child, UiEventType.MouseDown, Data1: 1, Data2: 2));
+
+        Assert.Equal((7, 9), e.GetDragPayload());
+    }
+
+    [Fact]
+    public void RightClick_thatTargetedAnotherElement_isNotHandled()
+    {
+        var handled = 0;
+        var e = new UiDatElement(new ElementInfo(), _ => (0, 0, 0))
+        {
+            PointerRegion = new UiPointerRegion { RightClicked = (_, _) => handled++ },
+        };
+        var child = new UiDatElement(new ElementInfo(), _ => (0, 0, 0));
+        e.AddChild(child);
+
+        Assert.False(e.OnEvent(new UiEvent(0u, child, UiEventType.RightClick)));
+
+        Assert.Equal(0, handled);
+    }
 }

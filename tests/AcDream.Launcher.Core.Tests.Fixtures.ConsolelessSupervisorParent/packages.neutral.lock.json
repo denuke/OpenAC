@@ -5,7 +5,7 @@
       "acdream.launcher.core": {
         "type": "Project",
         "dependencies": {
-          "AcDream.Platform": "[0.1.6, )"
+          "AcDream.Platform": "[0.1.7, )"
         }
       },
       "acdream.platform": {

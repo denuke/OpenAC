@@ -268,7 +268,7 @@ internal sealed class CharacterCreationSummaryPage : IDisposable
             if (view.GetSkillLevel(skillId) != targetClass)
                 continue;
             uint score = _bindings.GetSkillScore?.Invoke(skillId, snapshot.Attributes, targetClass) ?? 0u;
-            AddPair(pairTemplate, ItemAppraisalTextFormatter.SkillName((int)skillId), (int)score);
+            AddPair(pairTemplate, ChargenSkillNames.Resolve(view.Options, skillId), (int)score);
         }
     }
 

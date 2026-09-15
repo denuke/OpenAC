@@ -181,7 +181,8 @@ public sealed class RetailUiInteractionFlowTests
                 strength: () => 100,
                 selection: Selection,
                 datFont: null,
-                itemInteraction: interaction);
+                itemInteraction: interaction,
+            resolveAppropriateName: ItemTooltipCaptionNames.Resolve);
 
             Root.DragReleasedOutsideUi += (payload, _, _) =>
             {
@@ -215,7 +216,8 @@ public sealed class RetailUiInteractionFlowTests
                 selection: Selection,
                 itemInteraction: itemInteraction,
                 emptySlotSprite: 0x06004D20u,
-                clickMap: clickMap ?? SolidClickMap(0x00, 0x00, 0xFF));
+                clickMap: clickMap ?? SolidClickMap(0x00, 0x00, 0xFF),
+            resolveAppropriateName: ItemTooltipCaptionNames.Resolve);
         }
 
         public static PaperdollClickMap SolidClickMap(byte r, byte g, byte b)

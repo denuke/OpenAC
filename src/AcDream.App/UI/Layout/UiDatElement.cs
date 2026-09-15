@@ -112,10 +112,12 @@ public class UiDatElement : UiElement, IUiDatStateful
     public Action? OnClick { get; set; }
     public Action<int, int>? OnClickAt { get; set; }
 
-    public override bool HandlesClick => OnClick is not null || OnClickAt is not null;
+    public override bool HandlesClick
+        => OnClick is not null || OnClickAt is not null || PointerRegion?.Clicked is not null;
 
     public override bool OnEvent(in UiEvent e)
     {
+        if (DispatchToPointerRegion(in e)) return true;
         if (e.Type == UiEventType.Click && (OnClick is not null || OnClickAt is not null))
         {
             OnClick?.Invoke();

@@ -99,7 +99,8 @@ public class InventoryFrameImportProbe
             strength: static () => 100,
             selection: new AcDream.Core.Selection.SelectionState(),
             datFont: null,
-            onClose: () => closes++);
+            onClose: () => closes++,
+            resolveAppropriateName: ItemTooltipCaptionNames.Resolve);
 
         close!.OnEvent(new UiEvent(0u, close, UiEventType.Click));
 

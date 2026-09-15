@@ -1078,7 +1078,12 @@ internal sealed class HeadlessSessionHost : IDisposable
                 appraisal =>
                     Runtime.ActionOwner.Transactions
                         .AcceptAppraisalResponse(appraisal.Guid),
-                Vendor: Runtime.InventoryOwner.Vendor),
+                Vendor: Runtime.InventoryOwner.Vendor,
+                Book: Runtime.BookOwner,
+                PlayerName: () =>
+                    Runtime.InventoryOwner.Objects
+                        .Get(Runtime.PlayerIdentity.ServerGuid)?.Name
+                    ?? string.Empty),
             new LiveCharacterSessionBindings(
                 Runtime.ActionOwner.Combat,
                 Runtime.CharacterOwner,

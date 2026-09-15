@@ -735,7 +735,8 @@ public sealed class UiRoot : UiElement
                 && Math.Abs(y - _pressY) <= DragDistanceThreshold)
             {
                 var click = new UiEvent(target.EventId, target, UiEventType.RightClick,
-                                        Data0: (int)flags);
+                                        Data0: (int)flags,
+                                        Data1: (int)(x - sp.X), Data2: (int)(y - sp.Y));
                 BubbleEvent(target, in click);
             }
 

@@ -1033,4 +1033,62 @@ public class UiRootInputTests
     {
         public void OnGlobalUiTime(double nowSeconds) => action();
     }
+
+    [Fact]
+    public void RightClickAndDragBegin_reachADatElement_inElementLocalCoordinates()
+    {
+        var root = new UiRoot { Width = 800, Height = 600 };
+        var el = new AcDream.App.UI.Layout.UiDatElement(
+            new AcDream.App.UI.Layout.ElementInfo(), static _ => (0u, 0, 0))
+        {
+            Left = 100, Top = 50, Width = 40, Height = 40, ClickThrough = false,
+        };
+        (int x, int y) rightClick = (-1, -1);
+        (int x, int y) lift = (-1, -1);
+        el.PointerRegion = new UiPointerRegion
+        {
+            RightClicked = (x, y) => rightClick = (x, y),
+            DragPayloadAt = (x, y) => { lift = (x, y); return "lifted"; },
+        };
+        root.AddChild(el);
+
+        root.OnMouseDown(UiMouseButton.Right, 110, 60);
+        root.OnMouseUp(UiMouseButton.Right, 110, 60);
+        Assert.Equal((10, 10), rightClick);
+
+        root.OnMouseDown(UiMouseButton.Left, 130, 70);
+        root.OnMouseMove(130, 90);                       // past the drag threshold
+        Assert.Equal("lifted", root.DragPayload);
+        Assert.Equal((30, 20), lift);                    // the press point, not the move point
+    }
+
+    [Fact]
+    public void AButtonWithAPointerRegion_isADragSourceAndTakesTheRightClick()
+    {
+        // The paperdoll mask imports as a button, so a region on a button has to
+        // behave exactly as it does on a plain element.
+        var root = new UiRoot { Width = 800, Height = 600 };
+        var el = new UiButton(new AcDream.App.UI.Layout.ElementInfo(), static _ => (0u, 0, 0))
+        {
+            Left = 100, Top = 50, Width = 40, Height = 40,
+        };
+        (int x, int y) rightClick = (-1, -1);
+        (int x, int y) lift = (-1, -1);
+        el.PointerRegion = new UiPointerRegion
+        {
+            RightClicked = (x, y) => rightClick = (x, y),
+            DragPayloadAt = (x, y) => { lift = (x, y); return "lifted"; },
+        };
+        root.AddChild(el);
+
+        root.OnMouseDown(UiMouseButton.Right, 110, 60);
+        root.OnMouseUp(UiMouseButton.Right, 110, 60);
+        Assert.Equal((10, 10), rightClick);
+
+        Assert.True(el.IsDragSource);
+        root.OnMouseDown(UiMouseButton.Left, 130, 70);
+        root.OnMouseMove(130, 90);
+        Assert.Equal("lifted", root.DragPayload);
+        Assert.Equal((30, 20), lift);
+    }
 }

@@ -136,7 +136,8 @@ public sealed class ExternalContainerControllerTests
                 (item, container, placement, amount) =>
                     Splits.Add((item, container, placement, amount)),
                 _ => InRange,
-                Window);
+                Window,
+                resolveAppropriateName: ItemTooltipCaptionNames.Resolve);
             Screen.WindowManager.AttachController(WindowNames.ExternalContainer, Controller);
         }
 
@@ -160,6 +161,22 @@ public sealed class ExternalContainerControllerTests
             Interaction.Dispose();
             Screen.WindowManager.Dispose();
         }
+    }
+
+    // #87: the hover caption is the same name flavour the selection caption
+    // shows - the composed name, material prefix included.
+    [Fact]
+    public void HoverCaption_carriesTheMaterialPrefix_andStaysPlainWithoutOne()
+    {
+        using var h = new Harness();
+        h.Objects.AddOrUpdate(ItemTooltipCaptionNames.Material(Item));
+        h.Objects.AddOrUpdate(ItemTooltipCaptionNames.Plain(Item + 1u));
+        h.Open(Chest,
+            new ContainerContentEntry(Item, 0u),
+            new ContainerContentEntry(Item + 1u, 0u));
+
+        Assert.Equal("Pyreal Scarab", h.Contents.GetItem(0)!.GetTooltipText());
+        Assert.Equal("Bread Loaf", h.Contents.GetItem(1)!.GetTooltipText());
     }
 
     [Fact]
