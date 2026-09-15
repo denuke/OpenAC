@@ -2637,6 +2637,21 @@ public sealed class RuntimeInitialCreateResidenceStateTests
         Assert.Contains(secondKey, lateBoundKeys);
     }
 
+    [Fact]
+    public void OnlyACreateStandingOnItsOwnAtAnInvalidFrameHasAnInvalidTopLevelPosition()
+    {
+        Assert.True(RuntimeInitialCreateResidenceState.HasInvalidTopLevelPosition(
+            Spawn(0x70003101u, 1, positionX: float.NaN)));
+        Assert.True(RuntimeInitialCreateResidenceState.HasInvalidTopLevelPosition(
+            Spawn(0x70003102u, 1, positionCell: Landblock)));
+        Assert.False(RuntimeInitialCreateResidenceState.HasInvalidTopLevelPosition(
+            Spawn(0x70003103u, 1)));
+        Assert.False(RuntimeInitialCreateResidenceState.HasInvalidTopLevelPosition(
+            Spawn(0x70003104u, 1, positionX: float.NaN, parentGuid: 0x50000001u)));
+        Assert.False(RuntimeInitialCreateResidenceState.HasInvalidTopLevelPosition(
+            Spawn(0x70003105u, 1, includePosition: false)));
+    }
+
     private static void Bind(
         RuntimeEntityObjectLifetime lifetime,
         ulong generation)

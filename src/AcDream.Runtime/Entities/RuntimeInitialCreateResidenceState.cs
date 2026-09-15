@@ -456,6 +456,17 @@ internal sealed class RuntimeInitialCreateResidenceState
                             incoming.Position!.Value));
     }
 
+    internal static bool HasInvalidTopLevelPosition(WorldSession.EntitySpawn incoming)
+    {
+        bool parented = (incoming.ParentGuid
+                ?? incoming.Physics?.Parent?.Guid)
+            is not null and not 0u;
+        return !parented
+            && incoming.Position is { LandblockId: not 0u } position
+            && !RuntimeAuthoritativePositionRouteClassifier
+                .IsValidCreateWirePosition(position);
+    }
+
     internal RuntimeInitialCreateResidenceLease Begin(
         RuntimeEntityRecord record,
         in InboundCreateResult accepted,
