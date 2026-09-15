@@ -80,7 +80,7 @@ internal sealed class AgentService : IDisposable
         Commands.Register(new ChatVerbs(host));
         Commands.Register(new CharacterReadVerbs(host, Publisher, _state, _clock));
         Commands.Register(new TrendVerbs(Publisher, _trends, _clock));
-        Commands.Register(new WorldReadVerbs(host, Publisher, _visited));
+        Commands.Register(new WorldReadVerbs(host, Publisher, _visited, _entrances, _portals));
         Commands.Register(new TargetVerbs(host, Publisher, Outcomes));
         Commands.Register(new MotorVerbs(host, Publisher, Outcomes));
         Commands.Register(new CastVerbs(host, Publisher, Outcomes));
@@ -99,6 +99,17 @@ internal sealed class AgentService : IDisposable
 
     /// <summary>The ground the character has stood on, which explore leaves out.</summary>
     private readonly VisitedGround _visited = new();
+
+    /// <summary>Where the character came into each dungeon, which a tour starts from.</summary>
+    private readonly DungeonEntrances _entrances = new();
+
+    /// <summary>The portals seen in each dungeon, the farthest of which a tour ends at.</summary>
+    private readonly SeenPortals _portals = new();
+
+    /// <summary>How often the portals the client shows are looked over while the character is indoors.</summary>
+    internal const double PortalLookSeconds = 2d;
+
+    private double _portalsLookedAt = double.NegativeInfinity;
 
     /// <summary>How the character is doing over the last 5 and 60 minutes, sampled whether or not anyone listens.</summary>
     private readonly TrendTracker _trends;
@@ -165,6 +176,12 @@ internal sealed class AgentService : IDisposable
             && automation.Navigation.Snapshot is { IsAvailable: true, IsPortalSpace: false } body)
         {
             _visited.Note(body.Position);
+            _entrances.Note(body.Position);
+            if (!body.Position.IsOutdoor && _clock.Now - _portalsLookedAt >= PortalLookSeconds)
+            {
+                _portalsLookedAt = _clock.Now;
+                _portals.Note(automation.Objects.CaptureObjects());
+            }
         }
         _trends.Sample(_clock.Now);
         if (!IsActive)

@@ -293,6 +293,63 @@ public sealed class WorldReadVerbsTests
         Assert.Equal("refused", verbs.Handle(Line("explore tour to nowhere")).Outcome);
     }
 
+    [Fact]
+    public void ATourOfADungeonTheCharacterCameIntoStartsAtTheEntranceAndEndsAtTheFarthestPortalSeen()
+    {
+        var entrances = new DungeonEntrances();
+        entrances.Note(new PluginNavigationPosition(0xA9B40021u, 0d, 0d, 0d, 0f, true));
+        entrances.Note(new PluginNavigationPosition(0x01560100u, 0d, 0d, 0d, 0f, false));
+        var (host, verbs, ring) = Build(entrances: entrances, portals: new SeenPortals());
+        var here = new PluginNavigationPosition(0x01560124u, 0.3d, 0d, 0d, 0f, false);
+        host.FakeAutomation.FakeNavigation.Snapshot = new PluginNavigationSnapshot(
+            IsAvailable: true,
+            IsPortalSpace: false,
+            LocalObjectId: Self,
+            Position: here,
+            IsMoving: false,
+            IsAirborne: false);
+        host.FakeAutomation.FakeNavigation.PlacesReport = new PluginPlacesReport(
+            PluginPlacesState.Ready,
+            [
+                TourPlace(0d, 0d, 50f, 1),
+                TourPlace(0.1d, 0d, 30f, 0, 2, 3),
+                TourPlace(0.1d, 0.4d, 90f, 1),
+                TourPlace(0.3d, 0d, 5f, 1),
+            ],
+            InDungeon: true,
+            "found")
+        {
+            From = here,
+        };
+        host.FakeAutomation.FakeObjects.Add(DungeonPortal(1u, 0.005d));
+        host.FakeAutomation.FakeObjects.Add(DungeonPortal(2u, 0.31d));
+
+        Assert.Equal("handled", verbs.Handle(Line("explore tour")).Outcome);
+
+        JsonElement tour = Latest(ring, RecordKinds.ExploreTour);
+        Assert.Equal("where the character came into this dungeon", tour.GetProperty("start").GetProperty("why").GetString());
+        Assert.Equal("nearest the portal seen farthest from the start", tour.GetProperty("end").GetProperty("why").GetString());
+        Assert.Equal(
+            [0d, 0.1d, 0.1d, 0.3d],
+            tour.GetProperty("route").GetProperty("waypoints").EnumerateArray().Select(waypoint => waypoint.GetProperty("point").GetProperty("eastWest").GetDouble()));
+
+        Assert.Equal("handled", verbs.Handle(Line("explore tour to 0.4 0.1")).Outcome);
+
+        JsonElement toward = Latest(ring, RecordKinds.ExploreTour);
+        Assert.Equal("where the character came into this dungeon", toward.GetProperty("start").GetProperty("why").GetString());
+        Assert.Equal("nearest the end asked for", toward.GetProperty("end").GetProperty("why").GetString());
+        Assert.Equal(
+            [0d, 0.1d, 0.3d, 0.1d],
+            toward.GetProperty("route").GetProperty("waypoints").EnumerateArray().Select(waypoint => waypoint.GetProperty("point").GetProperty("eastWest").GetDouble()));
+    }
+
+    private static PluginWorldObject DungeonPortal(uint objectId, double eastWest) =>
+        new(objectId, 0u, "Portal", PluginObjectClass.Portal, 0u, 0u, 0u)
+        {
+            HasPosition = true,
+            Position = new PluginNavigationPosition(0x01560105u, eastWest, 0d, 0d, 0f, false),
+        };
+
     private static PluginNavigationPlace TourPlace(double eastWest, double northSouth, float walkMeters, params int[] neighbours) =>
         new(new PluginNavigationPosition(0u, eastWest, northSouth, 0d, 0f, false), walkMeters, PluginPlaceKind.Room, 60f, 6f, 0f, neighbours.Length)
         {
@@ -383,7 +440,10 @@ public sealed class WorldReadVerbsTests
     private static JsonElement Latest(RecordRing ring, string kind) =>
         JsonDocument.Parse(ring.Read(-1, new HashSet<string> { kind }).Records.Last().Json).RootElement;
 
-    private static (FakePluginHost Host, WorldReadVerbs Verbs, RecordRing Ring) Build(VisitedGround? visited = null)
+    private static (FakePluginHost Host, WorldReadVerbs Verbs, RecordRing Ring) Build(
+        VisitedGround? visited = null,
+        DungeonEntrances? entrances = null,
+        SeenPortals? portals = null)
     {
         var host = new FakePluginHost();
         host.FakeAutomation.FakeNavigation.Snapshot = new PluginNavigationSnapshot(
@@ -394,6 +454,6 @@ public sealed class WorldReadVerbsTests
             IsMoving: false,
             IsAirborne: false);
         var ring = new RecordRing(32);
-        return (host, new WorldReadVerbs(host, new Publisher(new AgentClock(), ring), visited), ring);
+        return (host, new WorldReadVerbs(host, new Publisher(new AgentClock(), ring), visited, entrances, portals), ring);
     }
 }

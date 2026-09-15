@@ -29,14 +29,23 @@ internal sealed class WorldReadVerbs : IVerbFamily
     private readonly IPluginHost _host;
     private readonly Publisher _publisher;
     private readonly VisitedGround _visited;
+    private readonly DungeonEntrances _entrances;
+    private readonly SeenPortals _portals;
 
-    internal WorldReadVerbs(IPluginHost host, Publisher publisher, VisitedGround? visited = null)
+    internal WorldReadVerbs(
+        IPluginHost host,
+        Publisher publisher,
+        VisitedGround? visited = null,
+        DungeonEntrances? entrances = null,
+        SeenPortals? portals = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(publisher);
         _host = host;
         _publisher = publisher;
         _visited = visited ?? new VisitedGround();
+        _entrances = entrances ?? new DungeonEntrances();
+        _portals = portals ?? new SeenPortals();
     }
 
     public IReadOnlyCollection<string> ReservedWords { get; } = ["nearby", "inspect", "explore"];
@@ -196,8 +205,23 @@ internal sealed class WorldReadVerbs : IVerbFamily
         string state = report.State == PluginPlacesState.Mapping
             ? "mapping"
             : Geometry.DistanceMeters(here, report.From) > StalePlacesMeters ? "refreshing" : "ready";
+        int? startAt = report.InDungeon && _entrances.TryGet(here, out PluginNavigationPosition entrance)
+            ? NearestWalkablePlace(places, entrance)
+            : null;
+        int start = PlaceTour.Start(places, startAt);
+        bool fromEntrance = startAt is { } entered && entered == start;
+        string? endWhy = endAt is null ? null : "nearest the end asked for";
+        if (endAt is null && report.InDungeon && start >= 0)
+        {
+            _portals.Note(_host.Automation.Objects.CaptureObjects());
+            if (FarthestPortal(_portals.In(here), places[start].Position) is { } portal)
+            {
+                endAt = NearestWalkablePlace(places, portal);
+                endWhy = "nearest the portal seen farthest from the start";
+            }
+        }
         int end = -1;
-        List<int> order = state == "mapping" ? [] : PlaceTour.Order(places, endAt, index => Visited(places[index]), out end);
+        List<int> order = state == "mapping" ? [] : PlaceTour.Order(places, endAt, index => Visited(places[index]), out end, startAt);
 
         var rows = new JsonArray();
         var waypoints = new JsonArray();
@@ -234,12 +258,22 @@ internal sealed class WorldReadVerbs : IVerbFamily
             ["found"] = places.Count,
             ["stops"] = order.Count,
             ["shown"] = rows.Count,
-            ["end"] = end >= 0
+            ["start"] = start >= 0 && order.Count > 0
+                ? new JsonObject
+                {
+                    ["kind"] = KindWord(places[start].Kind),
+                    ["place"] = Coordinates.DescribePlace(places[start].Position),
+                    ["why"] = fromEntrance ? "where the character came into this dungeon" : "nearest the character by walk",
+                }
+                : null,
+            ["end"] = end >= 0 && order.Count > 0
                 ? new JsonObject
                 {
                     ["kind"] = KindWord(places[end].Kind),
                     ["place"] = Coordinates.DescribePlace(places[end].Position),
-                    ["why"] = endAt == end ? "nearest the end asked for" : "farthest a walk reaches from the character",
+                    ["why"] = endAt == end
+                        ? endWhy
+                        : fromEntrance ? "farthest a walk reaches from where the character came in" : "farthest a walk reaches from the character",
                     ["visited"] = Visited(places[end]),
                 }
                 : null,
@@ -265,6 +299,25 @@ internal sealed class WorldReadVerbs : IVerbFamily
     }
 
     /// <summary>The room, passage or open ground nearest a position, or null when there is none.</summary>
+    /// <summary>How near a tour's start a portal may stand and still not end the tour, being most likely the way in.</summary>
+    internal const double PortalNearStartMeters = 20d;
+
+    private static PluginNavigationPosition? FarthestPortal(IReadOnlyCollection<PluginNavigationPosition> portals, in PluginNavigationPosition start)
+    {
+        PluginNavigationPosition? farthest = null;
+        double farthestMeters = PortalNearStartMeters;
+        foreach (PluginNavigationPosition portal in portals)
+        {
+            double meters = Geometry.DistanceMeters(start, portal);
+            if (meters > farthestMeters)
+            {
+                farthest = portal;
+                farthestMeters = meters;
+            }
+        }
+        return farthest;
+    }
+
     private static int? NearestWalkablePlace(IReadOnlyList<PluginNavigationPlace> places, in PluginNavigationPosition position)
     {
         int nearest = -1;

@@ -66,6 +66,15 @@ public sealed class PlaceTourTests
     }
 
     [Fact]
+    public void ATourAskedToStartSomewhereStartsThereAndEndsFarthestFromThere()
+    {
+        List<int> order = PlaceTour.Order(Branching, endAt: null, _ => false, out int end, startAt: 4);
+
+        Assert.Equal(6, end);
+        Assert.Equal([4, 3, 1, 2, 0, 5, 6], order);
+    }
+
+    [Fact]
     public void PlacesNoWayReachesComeAfterTheTourNearestWalkFirstAndBuildingsAreNoStops()
     {
         PluginNavigationPlace[] places =
@@ -81,6 +90,38 @@ public sealed class PlaceTourTests
 
         Assert.Equal(1, end);
         Assert.Equal([0, 1, 3, 2], order);
+    }
+
+    [Fact]
+    public void ATourStartsAtThePlaceNearestTheCharacterByWalkWhereverItIsListed()
+    {
+        PluginNavigationPlace[] places =
+        [
+            Place(20, 0, 20f, 1),
+            Place(10, 0, 10f, 0, 2),
+            Place(0, 0, 0f, 1),
+        ];
+
+        List<int> order = PlaceTour.Order(places, endAt: null, _ => false, out int end);
+
+        Assert.Equal(2, PlaceTour.Start(places, startAt: null));
+        Assert.Equal(0, end);
+        Assert.Equal([2, 1, 0], order);
+    }
+
+    [Fact]
+    public void ATourAskedToStartAtAPlaceNoWalkReachesStartsNearestTheCharacterInstead()
+    {
+        PluginNavigationPlace[] places =
+        [
+            Place(0, 0, 0f, 1),
+            Place(10, 0, 10f, 0),
+            Place(5, 5, float.NaN) with { Kind = PluginPlaceKind.Building },
+        ];
+
+        Assert.Equal(1, PlaceTour.Start(places, startAt: 1));
+        Assert.Equal(0, PlaceTour.Start(places, startAt: 2));
+        Assert.Equal(0, PlaceTour.Start(places, startAt: 7));
     }
 
     private static PluginNavigationPlace Place(double eastMeters, double northMeters, float walkMeters, params int[] neighbours) =>
