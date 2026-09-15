@@ -173,6 +173,44 @@ public sealed class NavGridTests
     }
 
     [Fact]
+    public void TheOpenSeaIsNoFloorAndTheShoreBesideItIsTight()
+    {
+        byte[] waterEverywhere = new byte[81];
+        Array.Fill(waterEverywhere, (byte)(0x10 << 2));
+        var sea = new TerrainSurface(new byte[81], new float[256], terrainTypes: waterEverywhere);
+        var land = new TerrainSurface(new byte[81], new float[256]);
+
+        NavGrid grid = NavGrid.Build(
+            new NavGeometry(176f, 0f, 32f, [new NavTerrain(land, 0f, 0f), new NavTerrain(sea, 192f, 0f)], [], [], []),
+            Body);
+
+        Assert.True(sea.IsEntirelyWater);
+        (int inland, int inlandNodes) = grid.NodesInColumn(32, 64);
+        (int shore, int shoreNodes) = grid.NodesInColumn(63, 64);
+        (_, int seaNodes) = grid.NodesInColumn(64, 64);
+        Assert.Equal(1, inlandNodes);
+        Assert.True(grid.IsClear(inland));
+        Assert.Equal(1, shoreNodes);
+        Assert.False(grid.IsClear(shore));
+        Assert.Equal(0, seaNodes);
+    }
+
+    [Fact]
+    public void GroundOverACellarIsStillFloor()
+    {
+        float[] heightTable = new float[256];
+        Array.Fill(heightTable, 10f);
+        var ground = new TerrainSurface(new byte[81], heightTable);
+
+        NavGrid grid = NavGrid.Build(
+            new NavGeometry(0f, 0f, 32f, [new NavTerrain(ground, 0f, 0f)], Floor(8f, 8f, 24f, 24f, 5f), [], []),
+            Body);
+
+        Assert.True(grid.FindNode(new Vector3(16f, 16f, 10f), 0.2f, 0.5f) >= 0);
+        Assert.True(grid.FindNode(new Vector3(16f, 16f, 5f), 0.2f, 0.5f) >= 0);
+    }
+
+    [Fact]
     public void ARouteAcrossOpenFloorIsOneStraightLeg()
     {
         NavGrid grid = Build(Floor(0f, 0f, 20f, 20f, 0f));

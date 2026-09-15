@@ -39,6 +39,9 @@ public sealed class NavGrid
     /// <summary>Terrain is a surface with this much solid ground under it.</summary>
     private const float TerrainThickness = 0.5f;
 
+    /// <summary>How far above the highest cell polygon in a column terrain stands to be ground over the cell, such as over a cellar, rather than the building's.</summary>
+    private const float TerrainAboveCells = 0.25f;
+
     /// <summary>Overlapping spans whose tops are this close share walkability.</summary>
     private const float FlagMergeHeight = 0.1f;
 
@@ -534,17 +537,17 @@ public sealed class NavGrid
         int side = (int)MathF.Ceiling((geometry.Size / cellSize) - 0.001f);
         var spans = new SpanColumns(side);
         var walls = new WallPieces(side);
-        var coveredByCells = new NavColumnTiles<bool>(side, false);
+        var highestCell = new NavColumnTiles<float>(side, float.NegativeInfinity);
         var origin = new Vector3(geometry.OriginX, geometry.OriginY, 0f);
 
         foreach (NavTriangle triangle in geometry.CellTriangles)
-            RasterizeTriangle(spans, walls, triangle, origin, cellSize, side, coveredByCells);
+            RasterizeTriangle(spans, walls, triangle, origin, cellSize, side, highestCell);
         foreach (NavTriangle triangle in geometry.ObjectTriangles)
-            RasterizeTriangle(spans, walls, triangle, origin, cellSize, side, covered: null);
+            RasterizeTriangle(spans, walls, triangle, origin, cellSize, side, highestCell: null);
         foreach (NavCylinder cylinder in geometry.Cylinders)
             RasterizeCylinder(spans, walls, cylinder, origin, cellSize, side);
         foreach (NavTerrain terrain in geometry.Terrains)
-            RasterizeTerrain(spans, terrain, origin, cellSize, side, coveredByCells);
+            RasterizeTerrain(spans, terrain, origin, cellSize, side, highestCell);
 
         var columnNodes = new NavColumnTiles<ColumnNodes>(side, default);
         var nodeColumns = new List<int>();
@@ -884,7 +887,7 @@ public sealed class NavGrid
         Vector3 origin,
         float cellSize,
         int side,
-        NavColumnTiles<bool>? covered)
+        NavColumnTiles<float>? highestCell)
     {
         Vector3 a = triangle.A - origin;
         Vector3 b = triangle.B - origin;
@@ -934,8 +937,8 @@ public sealed class NavGrid
                 spans.Add(x, y, low, high, walkable);
                 if (!walkable)
                     walls.Add(x, y, polygon[..count], low, high);
-                if (covered is not null)
-                    covered.Slot(x, y) = true;
+                if (highestCell is not null)
+                    highestCell.Slot(x, y) = MathF.Max(highestCell.Get(x, y), high);
             }
         }
     }
@@ -983,15 +986,22 @@ public sealed class NavGrid
         }
     }
 
-    /// <summary>Fills each column whose centre lies in a landblock with that landblock's terrain, unless a cell covers it.</summary>
+    /// <summary>
+    /// Fills each column whose centre lies in a landblock with that landblock's terrain where it
+    /// stands above every cell polygon in the column, as ground over a cellar does; terrain among
+    /// or under a building's polygons is the building's. The open sea, a landblock every cell of
+    /// which is under water, is no floor at all, since no body walks into it.
+    /// </summary>
     private static void RasterizeTerrain(
         SpanColumns spans,
         NavTerrain terrain,
         Vector3 origin,
         float cellSize,
         int side,
-        NavColumnTiles<bool> coveredByCells)
+        NavColumnTiles<float> highestCell)
     {
+        if (terrain.Surface.IsEntirelyWater)
+            return;
         float cornerX = terrain.OriginX - origin.X;
         float cornerY = terrain.OriginY - origin.Y;
         int x0 = Math.Max(0, (int)MathF.Ceiling((cornerX / cellSize) - 0.5f));
@@ -1003,10 +1013,10 @@ public sealed class NavGrid
             float localY = ((y + 0.5f) * cellSize) - cornerY;
             for (int x = x0; x < x1; x++)
             {
-                if (coveredByCells.Get(x, y))
-                    continue;
                 TerrainSurfacePolygon surface =
                     terrain.Surface.SampleSurfacePolygon(((x + 0.5f) * cellSize) - cornerX, localY);
+                if (surface.Z < highestCell.Get(x, y) + TerrainAboveCells)
+                    continue;
                 spans.Add(
                     x,
                     y,
