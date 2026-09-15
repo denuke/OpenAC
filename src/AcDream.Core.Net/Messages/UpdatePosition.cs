@@ -85,6 +85,8 @@ public static class UpdatePosition
                 rz = BinaryPrimitives.ReadSingleLittleEndian(body.Slice(pos));
                 pos += 4;
             }
+            if (rw == 0f && rx == 0f && ry == 0f && rz == 0f)
+                rw = 1f;
 
             System.Numerics.Vector3? velocity = null;
             if ((flags & PositionFlags.HasVelocity) != 0)

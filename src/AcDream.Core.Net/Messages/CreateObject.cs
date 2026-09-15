@@ -295,6 +295,8 @@ public static class CreateObject
                     RotationY:   BinaryPrimitives.ReadSingleLittleEndian(body.Slice(pos + 24)),
                     RotationZ:   BinaryPrimitives.ReadSingleLittleEndian(body.Slice(pos + 28)));
                 pos += 32;
+                if (position is { RotationW: 0f, RotationX: 0f, RotationY: 0f, RotationZ: 0f } unrotated)
+                    position = unrotated with { RotationW = 1f };
             }
 
             if ((physicsFlags & PhysicsDescriptionFlag.MTable) != 0)

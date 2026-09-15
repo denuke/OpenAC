@@ -134,6 +134,33 @@ public class UpdatePositionTests
         Assert.Equal(42u, result.Value.PlacementId);
     }
 
+    [Fact]
+    public void ReadsARotationOfAllZerosAsFacingNorth()
+    {
+        byte[] omitted = BuildBodyPartial(
+            guid: 0xDEADBEEF,
+            flags: 0x08 | 0x10 | 0x20 | 0x40,
+            cellId: 0x01BB0001,
+            px: 1f, py: 2f, pz: 3f,
+            rotationComponents: []);
+        byte[] written = BuildBody(
+            guid: 0xDEADBEEF,
+            flags: 0,
+            cellId: 0x01BB0001,
+            px: 1f, py: 2f, pz: 3f,
+            rw: 0f, rx: 0f, ry: 0f, rz: 0f);
+
+        foreach (byte[] body in new[] { omitted, written })
+        {
+            var result = UpdatePosition.TryParse(body);
+            Assert.NotNull(result);
+            Assert.Equal(1f, result!.Value.Position.RotationW);
+            Assert.Equal(0f, result.Value.Position.RotationX);
+            Assert.Equal(0f, result.Value.Position.RotationY);
+            Assert.Equal(0f, result.Value.Position.RotationZ);
+        }
+    }
+
     // ---- helpers ----
 
     private static byte[] BuildBody(
