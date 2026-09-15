@@ -52,13 +52,13 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
-    public void AWalkAskedForInTheAirWaitsForTheLandingAndPlansFromWhereItLands()
+    public void AWalkAskedForInTheAirWaitsHoweverLongTheCharacterIsAloftAndPlansFromWhereItLands()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 3f)) { Airborne = true };
         var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(60f, 75f, 0f) });
 
         walk.WalkTo(Target);
-        TickFor(walk, 1.5f);
+        TickFor(walk, 12f);
 
         Assert.Equal(NavigationWalkState.Planning, walk.Report.State);
         Assert.Equal("waiting for the character to land", walk.Report.Reason);
@@ -69,24 +69,6 @@ public sealed class NavigationWalkControllerTests
         NavigationWalkReport report = RunUntilSettled(walk, body);
 
         Assert.Equal(NavigationWalkState.Arrived, report.State);
-    }
-
-    [Fact]
-    public void AWalkAskedForInTheAirPlansAnywayWhenTheCharacterDoesNotLand()
-    {
-        var body = new SimulatedBody(new Vector3(40f, 40f, 3f)) { Airborne = true };
-        var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(60f, 75f, 0f) });
-
-        walk.WalkTo(Target);
-        var wall = Stopwatch.StartNew();
-        while (walk.Report.State == NavigationWalkState.Planning && wall.Elapsed < TimeSpan.FromSeconds(10))
-        {
-            walk.Tick(Frame);
-            Thread.Sleep(1);
-        }
-
-        Assert.Equal(NavigationWalkState.NoRoute, walk.Report.State);
-        Assert.Contains("no clear spot near the start", walk.Report.Reason);
     }
 
     [Fact]

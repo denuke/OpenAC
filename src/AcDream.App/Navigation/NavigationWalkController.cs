@@ -302,12 +302,6 @@ internal sealed class NavigationWalkController
     internal const double PauseSettleSeconds = 1.5d;
 
     /// <summary>
-    /// How long a walk asked for while the character is in the air, jumping or thrown, waits
-    /// for it to land before planning from wherever it is.
-    /// </summary>
-    internal const double LandingWaitSeconds = 5d;
-
-    /// <summary>
     /// Routes pass the creatures and players within <see cref="CrowdReach"/> of the
     /// character where they stand when planned. While walking, the next
     /// <see cref="CrowdLookAheadMeters"/> of the route are looked along every
@@ -687,19 +681,11 @@ internal sealed class NavigationWalkController
             return;
         }
 
-        // A route starts from floor, so a walk asked for in the air plans from where the character lands.
+        // A route starts from floor, so a walk asked for in the air plans once the character lands, however long it is aloft.
         if (sample.Airborne)
         {
-            active.AirborneSince ??= _seconds;
-            if (_seconds - active.AirborneSince.Value < LandingWaitSeconds)
-            {
-                Publish(active, NavigationWalkState.Planning, "waiting for the character to land", float.NaN);
-                return;
-            }
-        }
-        else
-        {
-            active.AirborneSince = null;
+            Publish(active, NavigationWalkState.Planning, "waiting for the character to land", float.NaN);
+            return;
         }
 
         bool inDungeon = TryMeasureDungeon(sample.CellId, out uint dungeon, out Vector2 cellsMinimum, out Vector2 cellsMaximum);
@@ -1949,9 +1935,6 @@ internal sealed class NavigationWalkController
 
         /// <summary>Whether the route being searched for is a way around creatures, searched while the walk goes on.</summary>
         public bool Detouring { get; set; }
-
-        /// <summary>When the walk, waiting to plan, first found the character in the air, while it still is.</summary>
-        public double? AirborneSince { get; set; }
 
         /// <summary>When the walk last planned a way around creatures, in the controller's seconds.</summary>
         public double DetouredAt { get; set; } = double.NegativeInfinity;

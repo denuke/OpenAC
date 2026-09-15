@@ -251,9 +251,9 @@ reported: `go to 24.30537 -101.10833 0.00002` gives north-south, east-west and
 elevation, and `go to 24.305N, 101.108W` keeps the character's own elevation. A
 place is walked to the same way in a dungeon, on open land and inside buildings,
 and the walk turns to face nothing when it arrives. A walk asked for while the
-character is in the air, jumping or thrown, waits up to five seconds for it to land
-and plans from where it comes down, rather than failing for want of floor to start
-from. `explore` offers places to go
+character is in the air, jumping or thrown, waits for it to land, however long it
+is aloft, and plans from where it comes down, rather than failing for want of floor
+to start from. `explore` offers places to go
 when nothing nearer calls, such as a dungeon with no monsters in sight: the places
 a walk reaches from where the character stands, over the whole dungeon or the land
 around it, told apart on the client's navigation mesh by how wide the floor is. A
