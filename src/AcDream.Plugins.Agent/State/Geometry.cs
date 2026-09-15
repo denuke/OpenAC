@@ -9,7 +9,7 @@ internal static class Geometry
         in PluginNavigationPosition to)
     {
         double horizontal = from.HorizontalDistanceMeters(to);
-        double vertical = to.Elevation - from.Elevation;
+        double vertical = (to.Elevation - from.Elevation) * 240d;
         return Math.Sqrt(horizontal * horizontal + vertical * vertical);
     }
 
