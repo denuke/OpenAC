@@ -207,6 +207,27 @@ public sealed class CreateObjectTests
 
 
     [Fact]
+    public void TryParse_ARotationOfAllZerosIsReadAsFacingNorth()
+    {
+        byte[] body = BuildMinimalCreateObjectWithWeenieHeader(
+            guid: 0x50000002u,
+            name: "Walker",
+            itemType: (uint)ItemType.Creature,
+            position: (0xA9B40021u, 12.5f, -40f, 6f, 0f, 0f, 0f, 0f));
+
+        var parsed = CreateObject.TryParse(body);
+
+        Assert.NotNull(parsed);
+        CreateObject.ServerPosition position = parsed.Value.Position!.Value;
+        Assert.Equal(0xA9B40021u, position.LandblockId);
+        Assert.Equal(-40f, position.PositionY);
+        Assert.Equal(1f, position.RotationW);
+        Assert.Equal(0f, position.RotationX);
+        Assert.Equal(0f, position.RotationY);
+        Assert.Equal(0f, position.RotationZ);
+    }
+
+    [Fact]
     public void TryParse_NoRadarFlags_LeavesRadarFieldsNull()
     {
         byte[] body = BuildMinimalCreateObjectWithWeenieHeader(
@@ -722,7 +743,8 @@ public sealed class CreateObjectTests
         uint? monarchId = null,
         bool houseRestrictionOpen = false,
         uint houseRestrictionMonarchId = 0,
-        IReadOnlyDictionary<uint, uint>? houseRestrictionGuests = null)
+        IReadOnlyDictionary<uint, uint>? houseRestrictionGuests = null,
+        (uint Cell, float X, float Y, float Z, float RotationW, float RotationX, float RotationY, float RotationZ)? position = null)
     {
         var bytes = new List<byte>();
         WriteU32(bytes, CreateObject.Opcode);
@@ -738,9 +760,16 @@ public sealed class CreateObjectTests
         uint physicsFlags = 0;
         if (placementId.HasValue) physicsFlags |= (uint)CreateObject.PhysicsDescriptionFlag.AnimationFrame;
         if (parentGuid.HasValue) physicsFlags |= (uint)CreateObject.PhysicsDescriptionFlag.Parent;
+        if (position.HasValue) physicsFlags |= (uint)CreateObject.PhysicsDescriptionFlag.Position;
         WriteU32(bytes, physicsFlags);
         WriteU32(bytes, physicsState);
         if (placementId.HasValue) WriteU32(bytes, placementId.Value);
+        if (position is { } at)
+        {
+            WriteU32(bytes, at.Cell);
+            foreach (float component in new[] { at.X, at.Y, at.Z, at.RotationW, at.RotationX, at.RotationY, at.RotationZ })
+                WriteF32(bytes, component);
+        }
         if (parentGuid.HasValue)
         {
             WriteU32(bytes, parentGuid.Value);
@@ -842,6 +871,13 @@ public sealed class CreateObjectTests
         Span<byte> tmp = stackalloc byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(tmp, value);
         bytes.AddRange(tmp.ToArray());
+    }
+
+    private static void WriteF32(List<byte> bytes, float value)
+    {
+        var tmp = new byte[4];
+        BinaryPrimitives.WriteSingleLittleEndian(tmp, value);
+        bytes.AddRange(tmp);
     }
 
     private static void WriteU16(List<byte> bytes, ushort value)

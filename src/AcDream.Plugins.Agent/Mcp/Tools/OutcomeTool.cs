@@ -12,8 +12,7 @@ internal sealed class OutcomeTool(AgentContext context) : IMcpTool
         "How the command line with this handle ended: its outcome word, such as completed, "
         + "accepted, refused, ended or unconfirmed, with the shared class and every record the "
         + "line produced. pending means no answer yet; unknown means no record carries the handle. "
-        + "unconfirmed means no answer came in time, and the action may still have happened. "
-        + "Sends nothing.",
+        + "unconfirmed means no answer came in time, and the action may still have happened.",
         new JsonObject
         {
             ["handle"] = new JsonObject

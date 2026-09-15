@@ -121,7 +121,7 @@ public sealed class NavigationWalkCorpusTests
             TurnSpeed = RunTurnDegreesPerSecond,
             WalkTurnSpeed = WalkTurnDegreesPerSecond,
             Turning = cutCorners
-                ? new RuntimeRouteTurning(RunSpeed, RunTurnDegreesPerSecond, WalkSpeed, WalkTurnDegreesPerSecond)
+                ? new RuntimeRouteTurning(RunSpeed, RunTurnDegreesPerSecond)
                 : null,
             Obstacle = walk.Door is { } blocking ? (new Vector2(blocking.At.X, blocking.At.Y), DoorRadius) : null,
             ObstacleActive = doors is null ? null : () => !doors.Open,

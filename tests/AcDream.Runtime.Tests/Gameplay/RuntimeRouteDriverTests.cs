@@ -10,9 +10,7 @@ public sealed class RuntimeRouteDriverTests
     /// <summary>How fast the simulated body goes and turns.</summary>
     private static readonly RuntimeRouteTurning Turning = new(
         RunSpeed: 4f,
-        RunTurnDegreesPerSecond: 90f,
-        WalkSpeed: 1.5f,
-        WalkTurnDegreesPerSecond: 90f);
+        RunTurnDegreesPerSecond: 90f);
 
     [Fact]
     public void AStraightRouteIsRunToItsEnd()
@@ -59,7 +57,7 @@ public sealed class RuntimeRouteDriverTests
     }
 
     [Fact]
-    public void ACornerIsTurnedInPlaceAfterWalkingUpToIt()
+    public void ACornerIsRunUpToAndTurnedInPlaceWithoutWalking()
     {
         var body = new SimulatedBody();
         var driver = new RuntimeRouteDriver(
@@ -68,7 +66,7 @@ public sealed class RuntimeRouteDriverTests
         List<RuntimeRouteDriveStep> steps = Drive(driver, body, seconds: 20f);
 
         Assert.Equal(RuntimeRouteDriveState.Arrived, driver.State);
-        Assert.Contains(steps, step => step.Travel is { Pace: RuntimeMovePace.Walk });
+        Assert.DoesNotContain(steps, step => step.Travel is { Pace: RuntimeMovePace.Walk });
         Assert.Contains(steps, step => step.StopTravel && step.Turn is { Direction: RuntimeMoveDirection.TurnRight });
         Assert.InRange(Vector2.Distance(body.Position, new Vector2(10f, 10f)), 0f, 0.6f);
     }
@@ -100,11 +98,11 @@ public sealed class RuntimeRouteDriverTests
         Assert.True(nearest > 0.8f, $"the body came within {nearest:0.00} m of the corner");
         Assert.InRange(Vector2.Distance(body.Position, new Vector2(10f, 10f)), 0f, 0.6f);
         Assert.True(steps.Count < standing.Count, $"cutting the corner took {steps.Count} frames, turning in place {standing.Count}");
-        Assert.Equal((1, 0, 0), (driver.CornersRunAround, driver.CornersWalkedAround, driver.CornersTurnedInPlace));
+        Assert.Equal((1, 0), (driver.CornersRunAround, driver.CornersTurnedInPlace));
     }
 
     [Fact]
-    public void ACornerOnlyAWalksTighterArcPassesIsWalkedAroundWithoutStopping()
+    public void ACornerOnlyAWalksTighterArcPassesIsTurnedInPlaceRatherThanWalked()
     {
         var arcs = new List<IReadOnlyList<Vector3>>();
         var body = new SimulatedBody { Turning = Turning };
@@ -119,15 +117,15 @@ public sealed class RuntimeRouteDriverTests
         List<RuntimeRouteDriveStep> steps = Drive(driver, body, seconds: 20f);
 
         Assert.Equal(RuntimeRouteDriveState.Arrived, driver.State);
-        Assert.Equal(2, arcs.Count);
-        Assert.Equal((0, 1, 0), (driver.CornersRunAround, driver.CornersWalkedAround, driver.CornersTurnedInPlace));
-        Assert.Contains(steps, step => step.Travel is { Pace: RuntimeMovePace.Walk });
-        Assert.DoesNotContain(steps.SkipLast(1), step => step.StopTravel);
+        Assert.Single(arcs);
+        Assert.Equal((0, 1), (driver.CornersRunAround, driver.CornersTurnedInPlace));
+        Assert.DoesNotContain(steps, step => step.Travel is { Pace: RuntimeMovePace.Walk });
+        Assert.Contains(steps, step => step.StopTravel && step.Turn is { Direction: RuntimeMoveDirection.TurnRight });
         Assert.InRange(Vector2.Distance(body.Position, new Vector2(10f, 10f)), 0f, 0.6f);
     }
 
     [Fact]
-    public void ACornerNoArcPassesIsTurnedInPlaceAfterWalkingUpToIt()
+    public void ACornerNoArcPassesIsTurnedInPlaceWithoutWalkingUpToIt()
     {
         var body = new SimulatedBody { Turning = Turning };
         var driver = new RuntimeRouteDriver(
@@ -137,8 +135,8 @@ public sealed class RuntimeRouteDriverTests
         List<RuntimeRouteDriveStep> steps = Drive(driver, body, seconds: 20f);
 
         Assert.Equal(RuntimeRouteDriveState.Arrived, driver.State);
-        Assert.Equal((0, 0, 1), (driver.CornersRunAround, driver.CornersWalkedAround, driver.CornersTurnedInPlace));
-        Assert.Contains(steps, step => step.Travel is { Pace: RuntimeMovePace.Walk });
+        Assert.Equal((0, 1), (driver.CornersRunAround, driver.CornersTurnedInPlace));
+        Assert.DoesNotContain(steps, step => step.Travel is { Pace: RuntimeMovePace.Walk });
         Assert.Contains(steps, step => step.StopTravel && step.Turn is { Direction: RuntimeMoveDirection.TurnRight });
     }
 

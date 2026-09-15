@@ -16,25 +16,23 @@ internal static class PlaceTour
     /// The indices of the rooms, passages and open ground in <paramref name="places"/> in
     /// tour order, leaving out those <paramref name="leaveOut"/> names, with the place the
     /// tour ends at in <paramref name="end"/>: <paramref name="endAt"/> when a way from the
-    /// start reaches it, and otherwise the place farthest from the start. Places no way from
-    /// the start reaches come after the tour, nearest walk first.
+    /// start reaches it, and otherwise the place farthest from the start. The tour starts at
+    /// <paramref name="startAt"/>, such as a dungeon's entrance, or else at the place nearest
+    /// the character by walk. Places no way from the start reaches come after the tour,
+    /// nearest walk first.
     /// </summary>
     internal static List<int> Order(
         IReadOnlyList<PluginNavigationPlace> places,
         int? endAt,
         Func<int, bool> leaveOut,
-        out int end)
+        out int end,
+        int? startAt = null)
     {
         ArgumentNullException.ThrowIfNull(places);
         ArgumentNullException.ThrowIfNull(leaveOut);
         end = -1;
         var order = new List<int>();
-        int start = -1;
-        for (int index = 0; index < places.Count; index++)
-        {
-            if (Walkable(places[index]) && (start < 0 || places[index].WalkMeters < places[start].WalkMeters))
-                start = index;
-        }
+        int start = Start(places, startAt);
         if (start < 0)
             return order;
 
@@ -110,6 +108,24 @@ internal static class PlaceTour
             if (place == finish && !leaveOut(place))
                 order.Add(place);
         }
+    }
+
+    /// <summary>
+    /// The place a tour starts at: <paramref name="startAt"/> when it can be walked, otherwise the
+    /// place nearest the character by walk, or -1 when no place can be walked.
+    /// </summary>
+    internal static int Start(IReadOnlyList<PluginNavigationPlace> places, int? startAt)
+    {
+        ArgumentNullException.ThrowIfNull(places);
+        if (startAt is { } asked && (uint)asked < (uint)places.Count && Walkable(places[asked]))
+            return asked;
+        int start = -1;
+        for (int index = 0; index < places.Count; index++)
+        {
+            if (Walkable(places[index]) && (start < 0 || places[index].WalkMeters < places[start].WalkMeters))
+                start = index;
+        }
+        return start;
     }
 
     /// <summary>The straight distance between two places in meters, their elevations being in map units like the rest of their coordinates.</summary>

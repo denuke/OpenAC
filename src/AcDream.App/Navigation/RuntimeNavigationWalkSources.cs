@@ -48,9 +48,7 @@ internal sealed class RuntimeNavigationWalkBody : INavigationWalkBody
             controller.IsAirborne,
             new RuntimeRouteTurning(
                 controller.RunSpeed,
-                WalkTurnDegreesPerSecond * MotionInterpreter.RunTurnFactor,
-                MotionInterpreter.WalkAnimSpeed,
-                WalkTurnDegreesPerSecond));
+                WalkTurnDegreesPerSecond * MotionInterpreter.RunTurnFactor));
         return true;
     }
 
@@ -161,7 +159,8 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
             closed,
             nearestFootprint.Centre,
             nearestFootprint.Radius,
-            Moves: item is not null && Moves(item));
+            Moves: item is not null && Moves(item),
+            Hostile: item is not null && Moves(item) && RuntimeHostileTargetQuery.IsHostile(_runtime, objectId));
         return true;
     }
 

@@ -281,7 +281,7 @@ public sealed class NavigationWalkControllerTests
     [Fact]
     public void AWalkRunsThroughADoorwayWithoutStoppingWhereItsArcsKeepToTheFloor()
     {
-        var turning = new RuntimeRouteTurning(RunSpeed: 4f, RunTurnDegreesPerSecond: 180f, WalkSpeed: 1.5f, WalkTurnDegreesPerSecond: 180f);
+        var turning = new RuntimeRouteTurning(RunSpeed: 4f, RunTurnDegreesPerSecond: 180f);
         var standing = new SimulatedBody(new Vector3(4f, 4f, -30f));
         var cutting = new SimulatedBody(new Vector3(4f, 4f, -30f)) { Turning = turning };
         var said = new List<string>();
@@ -483,6 +483,31 @@ public sealed class NavigationWalkControllerTests
         Assert.Equal(NavigationWalkState.Blocked, report.State);
         Assert.Equal(Other, report.BlockedByObjectId);
         Assert.Contains("Drudge Skulker", report.Reason);
+    }
+
+    [Fact]
+    public void AWalkStoppedByAHostileMonsterPlansAroundItAtOnceInsteadOfWaitingForItToMove()
+    {
+        var body = new SimulatedBody(new Vector3(5f, 8f, -30f)) { Stuck = true };
+        var goals = new Goals
+        {
+            [Target] = new Vector3(5f, 15f, -30f),
+            Blocker = new NavigationBlocker(Other, "Drudge Skulker", IsClosedDoor: false, new Vector3(5f, 10f, -30f), 0.8f, Moves: true, Hostile: true),
+            CrowdNow = () => [new NavAvoidance(new Vector3(5f, 10f, -30f), 0.8f)],
+        };
+        var walk = new NavigationWalkController(RoomWithDoorways(5f), body, goals);
+
+        walk.WalkTo(Target);
+        NavigationWalkReport first = RunUntil(
+            walk,
+            body,
+            report => report.Reason.Contains("waiting for it to move") || report.Reason.Contains("planning again"));
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Contains("planning again", first.Reason);
+        Assert.Equal(NavigationWalkState.Blocked, report.State);
+        Assert.Equal(Other, report.BlockedByObjectId);
+        Assert.Contains("a hostile monster, Drudge Skulker", report.Reason);
     }
 
     [Fact]

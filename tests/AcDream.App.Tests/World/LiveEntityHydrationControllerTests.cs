@@ -2708,6 +2708,45 @@ public sealed class LiveEntityHydrationControllerTests
             ForgottenUnknownOwners.Add(serverGuid);
     }
 
+    [Fact]
+    public void RemoteCreateAtAnInvalidFrame_IsDroppedWithoutEndingTheSession()
+    {
+        using var fixture = new Fixture(originKnown: true);
+
+        fixture.Controller.OnCreate(AtInvalidFrame(Spawn(Generation: 1, PositionSequence: 1)));
+
+        Assert.False(fixture.Runtime.TryGetRecord(Guid, out _));
+        Assert.Empty(fixture.Operations);
+
+        fixture.Controller.OnCreate(Spawn(Generation: 1, PositionSequence: 1));
+
+        Assert.True(fixture.Runtime.TryGetRecord(Guid, out _));
+    }
+
+    [Fact]
+    public void LocalPlayerCreateAtAnInvalidFrame_StillFaults()
+    {
+        using var fixture = new Fixture(originKnown: true, playerGuid: Guid);
+
+        InvalidOperationException fault = Assert.Throws<InvalidOperationException>(() =>
+            fixture.Controller.OnCreate(AtInvalidFrame(Spawn(Generation: 1, PositionSequence: 1))));
+
+        Assert.Contains(
+            "cannot acquire a structurally valid initial residence lease",
+            fault.Message,
+            StringComparison.Ordinal);
+    }
+
+    private static WorldSession.EntitySpawn AtInvalidFrame(WorldSession.EntitySpawn spawn)
+    {
+        CreateObject.ServerPosition invalid = spawn.Position!.Value with { LandblockId = Cell & 0xFFFF0000u };
+        return spawn with
+        {
+            Position = invalid,
+            Physics = spawn.Physics!.Value with { Position = invalid },
+        };
+    }
+
     private static WorldSession.EntitySpawn Spawn(
         ushort Generation,
         ushort PositionSequence,

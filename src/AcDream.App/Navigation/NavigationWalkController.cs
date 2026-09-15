@@ -76,8 +76,8 @@ internal readonly record struct NavigationWalkBodySample(
 
 /// <summary>
 /// A server object standing where a walk stopped making progress, the point it
-/// stands on and radius it fills, and whether it is a creature or player, which
-/// moves and moves aside when bumped.
+/// stands on and radius it fills, whether it is a creature or player, which
+/// moves and moves aside when bumped, and whether it is hostile, which stays to fight.
 /// </summary>
 internal readonly record struct NavigationBlocker(
     uint ObjectId,
@@ -85,7 +85,8 @@ internal readonly record struct NavigationBlocker(
     bool IsClosedDoor,
     Vector3 Position = default,
     float Radius = 0f,
-    bool Moves = false);
+    bool Moves = false,
+    bool Hostile = false);
 
 /// <summary>A door a walk can open, and the point it stands on and radius it fills, when known.</summary>
 internal readonly record struct NavigationDoor(uint ObjectId, string Name, Vector3 Position = default, float Radius = 0f);
@@ -946,7 +947,7 @@ internal sealed class NavigationWalkController
         }
         if (active.BlockedBy is { Moves: true } mover)
         {
-            if (active.Shuffles < MaximumShuffles)
+            if (active.Shuffles < MaximumShuffles && !mover.Hostile)
             {
                 active.Shuffles++;
                 active.ShuffledAt = sample.Position;
@@ -1319,8 +1320,7 @@ internal sealed class NavigationWalkController
         if (request.Drives.Count > 0)
         {
             _say?.Invoke(
-                $"Walk to {Label(request)}: ran around {request.Drives.Sum(drive => drive.CornersRunAround)} corners, "
-                + $"walked around {request.Drives.Sum(drive => drive.CornersWalkedAround)} "
+                $"Walk to {Label(request)}: ran around {request.Drives.Sum(drive => drive.CornersRunAround)} corners "
                 + $"and turned in place at {request.Drives.Sum(drive => drive.CornersTurnedInPlace)}");
         }
     }
@@ -1748,7 +1748,7 @@ internal sealed class NavigationWalkController
 
     private static string BlockedReason(Request request) =>
         request.BlockedBy is { } blocker
-            ? $"the character stopped making progress beside {(blocker.IsClosedDoor ? "a closed door, " : string.Empty)}"
+            ? $"the character stopped making progress beside {(blocker.IsClosedDoor ? "a closed door, " : blocker.Hostile ? "a hostile monster, " : string.Empty)}"
                 + $"{blocker.Name} (0x{blocker.ObjectId:X8})"
             : "the character stopped making progress";
 

@@ -20,7 +20,7 @@ internal sealed class EventsTool(AgentContext context) : IMcpTool
         + "returned, for example "
         + "{\"kind\":\"vital-changed\",\"match\":{\"vital\":\"health\"},\"compare\":[\"value\",\"<\",100]}. "
         + "Pass nextSeq back as sinceSeq to continue. Omit sinceSeq to start from now, or pass -1 "
-        + "for every record still kept. Sends nothing.",
+        + "for every record still kept.",
         new JsonObject
         {
             ["sinceSeq"] = new JsonObject

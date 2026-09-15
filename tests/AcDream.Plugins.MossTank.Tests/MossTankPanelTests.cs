@@ -5489,6 +5489,89 @@ public sealed class MossTankPanelTests
     }
 
     [Fact]
+    public void ARouteWhoseNearestPointIsFarFromTheCharacterIsASetupProblem()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = NavigationAt(0f) };
+        var panel = new MossTankPanel(new FakeHost(automation));
+        Assert.True(panel.ChangeSharedSettings("""{"route":{"enabled":true,"waypoints":[{"point":{"northSouth":24.30537,"eastWest":-101.10833,"elevation":-0.025}}]}}""").Applied);
+
+        using (JsonDocument elsewhere = JsonDocument.Parse(panel.ReadSharedSettings("macro")!))
+        {
+            JsonElement problem = Assert.Single(elsewhere.RootElement.GetProperty("macro").GetProperty("problems").EnumerateArray());
+            Assert.Equal("route-elsewhere", problem.GetProperty("problem").GetString());
+            Assert.Contains("made for somewhere else", problem.GetProperty("message").GetString(), StringComparison.Ordinal);
+        }
+
+        Assert.True(panel.ChangeSharedSettings("""{"route":{"waypoints":[{"point":{"northSouth":0.001,"eastWest":0.001,"elevation":0}}]}}""").Applied);
+
+        using JsonDocument near = JsonDocument.Parse(panel.ReadSharedSettings("macro")!);
+        Assert.Empty(near.RootElement.GetProperty("macro").GetProperty("problems").EnumerateArray());
+    }
+
+    [Fact]
+    public void ArrivingInAnotherLandblockWithTheMacroRunningChecksTheSetupAgain()
+    {
+        var automation = new FakeAutomation
+        {
+            CurrentHealth = 100,
+            MaxHealth = 100,
+            CurrentStamina = 100,
+            MaxStamina = 100,
+            CurrentMana = 100,
+            MaxMana = 100,
+            NavigationSnapshot = NavigationAt(0f),
+        };
+        var host = new FakeHost(automation);
+        var panel = new MossTankPanel(host);
+        Assert.True(panel.ChangeSharedSettings("""{"route":{"enabled":true,"waypoints":[{"point":{"northSouth":0.001,"eastWest":0.001,"elevation":0}}]}}""").Applied);
+
+        panel.ToggleCombat();
+        for (int tick = 0; tick < 4; tick++)
+            panel.OnTick(0.3d);
+        Assert.True(panel.CombatMacroRunning);
+        Assert.Empty(PostedProblems(host));
+
+        automation.NavigationSnapshot = NavigationAt(0f) with
+        {
+            Position = new PluginNavigationPosition(0x01560124u, -100.9d, -33.3d, 0d, 0f, IsOutdoor: false),
+        };
+        for (int tick = 0; tick < 4; tick++)
+            panel.OnTick(0.3d);
+
+        Assert.Equal(["route-elsewhere"], PostedProblems(host));
+    }
+
+    [Fact]
+    public void AOnceRouteWalkedToItsEndIsNotARouteWithNoWaypoints()
+    {
+        var automation = new FakeAutomation
+        {
+            CurrentHealth = 100,
+            MaxHealth = 100,
+            CurrentStamina = 100,
+            MaxStamina = 100,
+            CurrentMana = 100,
+            MaxMana = 100,
+            NavigationSnapshot = NavigationAt(0f),
+        };
+        var host = new FakeHost(automation);
+        var panel = new MossTankPanel(host);
+        Assert.True(panel.ChangeSharedSettings("""{"route":{"enabled":true,"mode":"once","waypoints":[{"point":{"northSouth":0,"eastWest":0,"elevation":0}}]}}""").Applied);
+
+        panel.ToggleCombat();
+        for (int tick = 0; tick < 40 && !host.FakeNotices.Posted.Any(static notice => notice.Kind == "route-finished"); tick++)
+            panel.OnTick(0.3d);
+        Assert.Contains(host.FakeNotices.Posted, static notice => notice.Kind == "route-finished");
+        using (JsonDocument finished = JsonDocument.Parse(panel.ReadSharedSettings("macro")!))
+            Assert.Empty(finished.RootElement.GetProperty("macro").GetProperty("problems").EnumerateArray());
+
+        Assert.True(panel.ChangeSharedSettings("""{"options":{"AttackDistance":0.1}}""").Applied);
+        Assert.True(panel.ChangeSharedSettings("""{"macro":{"running":false}}""").Applied);
+
+        Assert.Empty(PostedProblems(host));
+    }
+
+    [Fact]
     public void AMacroWithNothingToDoForTwoMinutesIsPostedIdleOnce()
     {
         var automation = new FakeAutomation

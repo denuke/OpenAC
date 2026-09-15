@@ -29,7 +29,7 @@ public sealed class GeometryTests
     public void DistanceCombinesTheMapAndElevation()
     {
         PluginNavigationPosition from = At(0d, 0d);
-        var to = new PluginNavigationPosition(0u, 0d, 0.0125, 4d, 0f, true);
+        var to = new PluginNavigationPosition(0u, 0d, 0.0125, 4d / 240d, 0f, true);
 
         Assert.Equal(5d, Geometry.DistanceMeters(from, to), 6);
     }

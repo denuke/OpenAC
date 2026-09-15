@@ -210,10 +210,19 @@ internal sealed class LiveEntityHydrationController : ILiveEntityLandblockLoaded
     {
         lock (_datLock)
         {
-            LiveEntityRegistrationResult registration =
-                _runtime.RegisterLiveEntity(
-                    spawn,
-                    isLocalPlayer: spawn.Guid == _identity.ServerGuid);
+            bool isLocalPlayer = spawn.Guid == _identity.ServerGuid;
+            LiveEntityRegistrationResult registration;
+            try
+            {
+                registration = _runtime.RegisterLiveEntity(spawn, isLocalPlayer);
+            }
+            catch (InvalidOperationException) when (!isLocalPlayer
+                && AcDream.Runtime.Entities.RuntimeInitialCreateResidenceState.HasInvalidTopLevelPosition(spawn))
+            {
+                Console.WriteLine(FormattableString.Invariant(
+                    $"[create-dropped] 0x{spawn.Guid:X8} has no valid position frame"));
+                return;
+            }
             InboundCreateResult result = registration.Inbound;
             if (result.Disposition is
                 AcDream.Core.Physics.CreateObjectTimestampDisposition.StaleGeneration)
