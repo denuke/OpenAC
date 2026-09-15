@@ -327,6 +327,19 @@ public sealed class RuntimeScriptedMovementTests
     }
 
     [Fact]
+    public void AJumpLeftAtAPaceChargesStandingAndPressesForwardAsItReleases()
+    {
+        var movement = new RuntimeScriptedMovement();
+        Assert.True(movement.BeginJump(0.5f, RuntimeMovePace.Run));
+
+        Assert.True(movement.Advance(Sample(10d)) is { Jump: true, Forward: false });
+        Assert.True(movement.Advance(Sample(10.4d)) is { Jump: true, Forward: false });
+        Assert.True(movement.Advance(Sample(10.5d)) is { Jump: false, Forward: true, Run: true });
+        Assert.Equal(RuntimeScriptedMoveState.Moving, movement.Snapshot.Travel.State);
+        Assert.Equal(RuntimeMovePace.Run, movement.Snapshot.Travel.Request.Pace);
+    }
+
+    [Fact]
     public void AJumpDuringMovesKeepsThemHeld()
     {
         var movement = new RuntimeScriptedMovement();

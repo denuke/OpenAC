@@ -52,6 +52,26 @@ public sealed class NavigationWalkControllerTests
     }
 
     [Fact]
+    public void AWalkAskedForInTheAirWaitsHoweverLongTheCharacterIsAloftAndPlansFromWhereItLands()
+    {
+        var body = new SimulatedBody(new Vector3(40f, 40f, 3f)) { Airborne = true };
+        var walk = new NavigationWalkController(FlatWorld(), body, new Goals { [Target] = new Vector3(60f, 75f, 0f) });
+
+        walk.WalkTo(Target);
+        TickFor(walk, 12f);
+
+        Assert.Equal(NavigationWalkState.Planning, walk.Report.State);
+        Assert.Equal("waiting for the character to land", walk.Report.Reason);
+        Assert.Null(walk.Route);
+
+        body.Place(new Vector3(40f, 40f, 0f));
+        body.Airborne = false;
+        NavigationWalkReport report = RunUntilSettled(walk, body);
+
+        Assert.Equal(NavigationWalkState.Arrived, report.State);
+    }
+
+    [Fact]
     public void AWalkWaitsWhileSomethingElseNeedsTheCharacterAndGoesOnFromWhereItWasLeft()
     {
         var body = new SimulatedBody(new Vector3(40f, 40f, 0f));
@@ -965,6 +985,18 @@ public sealed class NavigationWalkControllerTests
             report => report.State is not (NavigationWalkState.Planning or NavigationWalkState.Walking or NavigationWalkState.Waiting),
             seconds);
 
+    /// <summary>Ticks a walk through a stretch of time without moving the body, each tick once any search under way has finished.</summary>
+    private static void TickFor(NavigationWalkController walk, float seconds)
+    {
+        var wall = Stopwatch.StartNew();
+        for (float simulated = 0f; simulated < seconds && wall.Elapsed < TimeSpan.FromSeconds(60); simulated += Frame)
+        {
+            walk.Tick(Frame);
+            while (walk.IsSearching && !walk.SearchFinished && wall.Elapsed < TimeSpan.FromSeconds(60))
+                Thread.Sleep(1);
+        }
+    }
+
     private static NavigationWalkReport RunUntil(
         NavigationWalkController walk,
         SimulatedBody body,
@@ -1175,6 +1207,9 @@ public sealed class NavigationWalkControllerTests
 
         public RuntimeRouteTurning? Turning { get; init; }
 
+        /// <summary>Whether the body is in the air, jumping or falling.</summary>
+        public bool Airborne { get; set; }
+
         /// <summary>How many times a travel under way was stopped.</summary>
         public int TravelStops { get; private set; }
 
@@ -1202,6 +1237,7 @@ public sealed class NavigationWalkControllerTests
                 new RuntimeScriptedMoveSnapshot(_travel, default, _turn, 0, false),
                 InPortalSpace: false,
                 CellId: CellId,
+                Airborne: Airborne,
                 Turning: Turning);
             return true;
         }

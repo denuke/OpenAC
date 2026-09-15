@@ -225,18 +225,23 @@ internal sealed class WorldReadVerbs : IVerbFamily
 
         var rows = new JsonArray();
         var waypoints = new JsonArray();
-        for (int stop = 0; stop < order.Count; stop++)
+        List<int> routePoints = PlaceTour.RoutePoints(places, order);
+        foreach (int point in routePoints)
         {
-            PluginNavigationPlace place = places[order[stop]];
+            PluginNavigationPosition position = places[point].Position;
             waypoints.Add(new JsonObject
             {
                 ["point"] = new JsonObject
                 {
-                    ["northSouth"] = Math.Round(place.Position.NorthSouth, Coordinates.Decimals),
-                    ["eastWest"] = Math.Round(place.Position.EastWest, Coordinates.Decimals),
-                    ["elevation"] = Math.Round(place.Position.Elevation, Coordinates.Decimals),
+                    ["northSouth"] = Math.Round(position.NorthSouth, Coordinates.Decimals),
+                    ["eastWest"] = Math.Round(position.EastWest, Coordinates.Decimals),
+                    ["elevation"] = Math.Round(position.Elevation, Coordinates.Decimals),
                 },
             });
+        }
+        for (int stop = 0; stop < order.Count; stop++)
+        {
+            PluginNavigationPlace place = places[order[stop]];
             if (rows.Count >= limit)
                 continue;
             rows.Add(new JsonObject
@@ -257,6 +262,7 @@ internal sealed class WorldReadVerbs : IVerbFamily
             ["center"] = Coordinates.Describe(here),
             ["found"] = places.Count,
             ["stops"] = order.Count,
+            ["waypoints"] = routePoints.Count,
             ["shown"] = rows.Count,
             ["start"] = start >= 0 && order.Count > 0
                 ? new JsonObject

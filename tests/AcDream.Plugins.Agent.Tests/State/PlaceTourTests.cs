@@ -124,6 +124,26 @@ public sealed class PlaceTourTests
         Assert.Equal(0, PlaceTour.Start(places, startAt: 7));
     }
 
+    [Fact]
+    public void AHuntingRouteGoesToTheToursRoomsInOrderAndItsEndButNotDownPassagesWithNoRoom()
+    {
+        PluginNavigationPlace[] places =
+        [
+            Place(0, 0, 0f, 1),
+            Place(10, 0, 10f, 0, 2, 5) with { Kind = PluginPlaceKind.Passage },
+            Place(20, 0, 20f, 1, 3, 4) with { Kind = PluginPlaceKind.Passage },
+            Place(30, 0, 30f, 2),
+            Place(20, 10, 30f, 2),
+            Place(10, -10, 20f, 1) with { Kind = PluginPlaceKind.Passage },
+        ];
+
+        List<int> order = PlaceTour.Order(places, endAt: 3, _ => false, out int end);
+
+        Assert.Equal(3, end);
+        Assert.Equal([0, 1, 5, 2, 4, 3], order);
+        Assert.Equal([0, 4, 3], PlaceTour.RoutePoints(places, order));
+    }
+
     private static PluginNavigationPlace Place(double eastMeters, double northMeters, float walkMeters, params int[] neighbours) =>
         new(
             new PluginNavigationPosition(0u, eastMeters / 240d, northMeters / 240d, 0d, 0f, false),

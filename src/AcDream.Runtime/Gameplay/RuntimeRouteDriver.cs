@@ -38,13 +38,14 @@ public readonly record struct RuntimeRouteDriveSample(
     bool Airborne = false,
     RuntimeRouteTurning? Turning = null);
 
-/// <summary>The scripted moves a route driver wants begun or stopped on one frame, and the power of a jump to charge.</summary>
+/// <summary>The scripted moves a route driver wants begun or stopped on one frame, the power of a jump to charge, and the pace to leave the ground at as it releases.</summary>
 public readonly record struct RuntimeRouteDriveStep(
     RuntimeMoveRequest? Travel = null,
     RuntimeMoveRequest? Turn = null,
     bool StopTravel = false,
     bool StopTurn = false,
-    float? Jump = null)
+    float? Jump = null,
+    RuntimeMovePace? JumpPace = null)
 {
     public bool IsEmpty => Travel is null && Turn is null && !StopTravel && !StopTurn && Jump is null;
 }
@@ -68,8 +69,9 @@ public readonly record struct RuntimeRouteLeap(int LegIndex, float Power, bool R
 /// it runs up to, stops at and turns in place, never slowing to a walk. A leg the body stops making progress on ends the
 /// drive as blocked, so the route can be planned again from where it stands.
 /// A leap is taken as a standing long jump: the body walks up to the takeoff,
-/// stops, faces the landing, charges the jump, and presses forward at the leap's
-/// pace while the jump charges, so it leaves the ground at that pace. A leap that
+/// stops, faces the landing, charges the jump standing still, and presses forward
+/// at the leap's pace only as the jump releases, so it leaves the ground from the
+/// takeoff at that pace. A leap that
 /// comes down on its landing's level goes on along the route, or asks for a new
 /// plan from where it came down when that is far from the landing; one that comes
 /// down on another level ends the drive blocked.
@@ -119,8 +121,8 @@ public sealed class RuntimeRouteDriver
     /// landing to within <see cref="LeapFacingDegrees"/>. It has come down on its
     /// landing's level within <see cref="LandingHeight"/> of the landing's height,
     /// and where it was planned within <see cref="LandingRadius"/> of the landing,
-    /// measured flat. A jump still on the ground this long after its charge, or still
-    /// in the air this long after it, ends the drive blocked.
+    /// measured flat. A jump still on the ground this long after it releases, or still
+    /// in the air this long after that, ends the drive blocked.
     /// </summary>
     public const float TakeoffRadius = 0.35f;
     public const float LeapFacingDegrees = 2f;
@@ -143,7 +145,6 @@ public sealed class RuntimeRouteDriver
     private long _travelBaseline;
     private long _turnBaseline;
     private LeapPhase _phase;
-    private bool _leapTravelBegun;
     private readonly bool _takeOverMoves;
     private readonly Func<IReadOnlyList<Vector3>, bool>? _canCutAlong;
     private int _cutPlannedFor;
@@ -311,7 +312,7 @@ public sealed class RuntimeRouteDriver
 
     /// <summary>
     /// Takes the leap whose leg the body is on: faces its landing from where the
-    /// body stopped at the takeoff, charges the jump, presses forward at its pace,
+    /// body stopped at the takeoff, charges the jump standing, leaves the ground pressing forward at its pace,
     /// and once the body comes down, goes on along the route from a landing near
     /// the leg's end or ends the drive blocked from anywhere else.
     /// </summary>
@@ -324,7 +325,6 @@ public sealed class RuntimeRouteDriver
     {
         RuntimeRouteLeap leap = _leaps[LegIndex];
         Vector3 landing = _legs[LegIndex];
-        float charge = leap.Power * (float)RuntimeScriptedMovement.FullJumpChargeSeconds;
         switch (_phase)
         {
             case LeapPhase.Facing:
@@ -337,28 +337,25 @@ public sealed class RuntimeRouteDriver
                 if (travelling)
                     return new RuntimeRouteDriveStep(StopTravel: true);
                 _phase = LeapPhase.Charging;
-                _leapTravelBegun = false;
-                return new RuntimeRouteDriveStep(Jump: leap.Power);
+                return new RuntimeRouteDriveStep(
+                    Jump: leap.Power,
+                    JumpPace: leap.Run ? RuntimeMovePace.Run : RuntimeMovePace.Walk);
             }
             case LeapPhase.Charging:
-                if (!_leapTravelBegun)
-                {
-                    _leapTravelBegun = true;
-                    RuntimeMovePace pace = leap.Run ? RuntimeMovePace.Run : RuntimeMovePace.Walk;
-                    return new RuntimeRouteDriveStep(Travel: new RuntimeMoveRequest(RuntimeMoveDirection.Forward, pace, 0f));
-                }
                 if (sample.Airborne)
                 {
                     _phase = LeapPhase.Flying;
                     return default;
                 }
-                return travel.ElapsedSeconds > charge + TakeoffGraceSeconds
+                if (sample.Moves.JumpCharging)
+                    return default;
+                return !travelling || travel.ElapsedSeconds > TakeoffGraceSeconds
                     ? Finish(RuntimeRouteDriveState.Blocked, travelling, turning)
                     : default;
             default:
                 if (sample.Airborne)
                 {
-                    return travel.ElapsedSeconds > charge + LongestFlightSeconds
+                    return travel.ElapsedSeconds > LongestFlightSeconds
                         ? Finish(RuntimeRouteDriveState.Blocked, travelling, turning)
                         : default;
                 }

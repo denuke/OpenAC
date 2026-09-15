@@ -128,6 +128,26 @@ internal static class PlaceTour
         return start;
     }
 
+    /// <summary>
+    /// The places of a tour's stops in <paramref name="order"/> a hunting route is sent to: its
+    /// rooms and open ground in tour order, where monsters are, and the tour's last stop. A
+    /// client planning each walk goes through the passages between on its way, and a branch with
+    /// no room on it is not walked at all.
+    /// </summary>
+    internal static List<int> RoutePoints(IReadOnlyList<PluginNavigationPlace> places, IReadOnlyList<int> order)
+    {
+        ArgumentNullException.ThrowIfNull(places);
+        ArgumentNullException.ThrowIfNull(order);
+        var points = new List<int>(order.Count);
+        for (int stop = 0; stop < order.Count; stop++)
+        {
+            PluginPlaceKind kind = places[order[stop]].Kind;
+            if (kind is PluginPlaceKind.Room or PluginPlaceKind.Open || stop == order.Count - 1)
+                points.Add(order[stop]);
+        }
+        return points;
+    }
+
     /// <summary>The straight distance between two places in meters, their elevations being in map units like the rest of their coordinates.</summary>
     private static double Meters(in PluginNavigationPosition from, in PluginNavigationPosition to)
     {

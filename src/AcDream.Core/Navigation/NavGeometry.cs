@@ -69,7 +69,7 @@ public sealed class NavGeometry
 
     public IReadOnlyList<NavTerrain> Terrains { get; }
 
-    /// <summary>Interior cell polygons. Terrain is left out of every column they cover.</summary>
+    /// <summary>Interior cell polygons. Terrain is left out of every column where it does not stand above them.</summary>
     public IReadOnlyList<NavTriangle> CellTriangles { get; }
 
     /// <summary>Building shells and placed objects.</summary>

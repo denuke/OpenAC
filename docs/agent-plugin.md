@@ -51,7 +51,7 @@ another plugin's settings. Every other tool only reads.
 | `capabilities` | Everything around the character in one answer, each object with the lines this client would take for it now and whether each would be taken; with `guid`, one object. |
 | `act` | Runs one command line and returns a handle with a status: `pending`, `done`, `refused` or `sent-as-chat`. |
 | `outcome` | How the line with a handle ended: its outcome word, its shared class, and every record it produced. |
-| `events` | Records after a cursor. With `waitSeconds`, up to 60, it waits for the next one, and `until` wakes it on a condition. |
+| `events` | Records after a cursor. With `waitSeconds`, up to 45, it waits for the next one, and `until` wakes it on a condition. |
 | `nearby` | Objects around the character, nearest first, with distance, bearing, kind and sight. |
 | `explore` | Rooms, passages and open ground the character can walk to, from the client's navigation mesh, and outdoors nearby buildings and the landblocks beside its own, unvisited first and nearest first, each with a line that walks there; or, with `tour`, one way through them all from the dungeon's entrance to the portal seen farthest from it or the far end, with a MossTank route that walks it. |
 | `inspect` | Everything the client holds about one object, with its sight. |
@@ -88,7 +88,7 @@ shown and how many the limit held back, so a short list never reads as a short i
 `act` and `outcome` take `waitSeconds`, up to 30, to answer once the action
 settles instead of at once. An accepted action is not a finished one: the server
 can still refuse a spell the client sent, so read `outcome` before relying on it.
-`events` takes `waitSeconds` up to 60, inside the time MCP clients allow a call,
+`events` takes `waitSeconds` up to 45, inside the time MCP clients allow a call,
 so a model waits for something that takes minutes, such as a route finishing, by
 calling again with `nextSeq`. A call with `until` answers only when a record meets
 a condition or the wait runs out, keeping the newest `limit` records meanwhile and
@@ -112,7 +112,7 @@ MossTank reaches the 30th waypoint of its route, or skips past it:
 {
   "kinds": ["plugin-notice"],
   "until": [{ "kind": "plugin-notice", "match": { "notice": "route-waypoint" }, "compare": ["details.waypoint", ">=", 29] }],
-  "waitSeconds": 300
+  "waitSeconds": 45
 }
 ```
 
@@ -122,7 +122,7 @@ and this one once experience over the last hour falls below a million an hour:
 {
   "kinds": ["trends"],
   "until": [{ "kind": "trends", "compare": ["xpPerHour.60m", "<", 1000000] }],
-  "waitSeconds": 300
+  "waitSeconds": 45
 }
 ```
 
@@ -221,7 +221,7 @@ out as the arc of a running turn needs, wherever that arc stays on the floor
 and off ledges, brushing walls at most. Where that arc does not fit, and at
 hairpins, it runs up to the corner, stops and turns in place at a running turn's
 rate, as bots do, and never slows to a walk but for the last stretch before a leap. A route keeps out of objects the server placed, such as ore deposits, whenever
-another way arrives. A route passes creatures and players around them where
+another way arrives, but crosses corpses rather than go around them. A route passes creatures and players around them where
 there is room, and through them where going around would bring the character
 nearer walls than going through. A walk plans a way around one that steps onto
 its route without stopping, and a walk stopped by one waits for it to move
@@ -233,8 +233,12 @@ walk uses it; a locked door, or one that will not open, is walked around, and
 with no other way the walk ends `blocked` naming it. Where no walk reaches, a
 route leaps: it hops off ledges of up to 12 m, the deepest fall measured to do
 no damage, and takes standing long jumps across gaps and up onto ledges as far
-and as high as the character's jump skill, run skill and burden allow. A route
-does not pass through portals. While a walk is under way the client
+and as high as the character's jump skill, run skill and burden allow. For a
+jump the character stops at the takeoff, faces the landing and charges in place,
+and presses forward only as the jump releases, so it leaves the ground from the
+takeoff at the jump's pace. A route
+does not pass through portals, and never plans into the open sea, a landblock
+under water end to end, which the client walls off. While a walk is under way the client
 draws its route as a magenta line. Ctrl+F4 also shows the grid, Ctrl+F5 plans
 a route to the selected object, and Ctrl+F6 walks to it or stops the walk;
 without Ctrl on the acdream keymap, where F4 to F6 are free. The grid marks
@@ -246,13 +250,17 @@ ceilings, as the world is.
 reported: `go to 24.30537 -101.10833 0.00002` gives north-south, east-west and
 elevation, and `go to 24.305N, 101.108W` keeps the character's own elevation. A
 place is walked to the same way in a dungeon, on open land and inside buildings,
-and the walk turns to face nothing when it arrives. `explore` offers places to go
+and the walk turns to face nothing when it arrives. A walk asked for while the
+character is in the air, jumping or thrown, waits for it to land, however long it
+is aloft, and plans from where it comes down, rather than failing for want of floor
+to start from. `explore` offers places to go
 when nothing nearer calls, such as a dungeon with no monsters in sight: the places
 a walk reaches from where the character stands, over the whole dungeon or the land
-around it, told apart on the client's navigation mesh by how open the floor is. A
-room is floor that opens out away from its edges and narrows at its doorways, a
-passage is floor that stays narrow, given in stretches of about 20 m, and open
-ground is a room too large to call one. Outdoors it also gives the buildings in
+around it, told apart on the client's navigation mesh by how wide the floor is. A
+room is floor at least twice as wide as the widest way from it to wider floor,
+measured past pillars and other small obstacles, so a corridor's wider stretches
+and junctions are not rooms; a passage is floor no room takes in, given in
+stretches of about 20 m, and open ground is a room too large to call one. Outdoors it also gives the buildings in
 the character's landblock and those beside it, at their origins with their
 doorways, and the landblocks beside the character's own, at their middles with
 their direction and whether they lie under water. Places the character has not stood near
@@ -282,7 +290,11 @@ in one call. It covers every room, passage and open ground not yet visited.
   shallowest first, and the way on to the end last. So it clears the rooms beside
   its way and never goes back and forth between ways that meet again.
 - **Answer.** It answers `explore-tour` with the stops in order and a MossTank
-  route that walks them once, each leg planned by the client.
+  route that walks them once, each leg planned by the client. The route is for
+  hunting: it lists the tour's rooms and open ground in order, and its last stop,
+  and the client walks the passages between on the way. A branch with no room on it
+  is not walked, so a later tour still lists its passages. `waypoints` in the answer
+  counts the route's points.
 - **Walking it.** Send the route as the `route` part of `configure mosstank`, with
   the macro running. MossTank's route notices say when the tour reaches a waypoint,
   finishes, skips a leg or gets stuck. A new tour from where the character then

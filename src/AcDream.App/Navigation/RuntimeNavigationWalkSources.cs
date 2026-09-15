@@ -56,7 +56,7 @@ internal sealed class RuntimeNavigationWalkBody : INavigationWalkBody
 
     public bool StopMove(RuntimeMoveChannel channel) => _movement.StopMove(channel);
 
-    public bool BeginJump(float power) => _movement.BeginJump(power);
+    public bool BeginJump(float power, RuntimeMovePace? leaveAt) => _movement.BeginJump(power, leaveAt);
 }
 
 /// <summary>
@@ -165,9 +165,9 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
     }
 
     /// <summary>
-    /// The server objects near a point whose collision stands still: not doors,
-    /// which walks open, nor creatures or players, which move. Each part of an
-    /// object's collision is a footprint of its own.
+    /// The server objects near a point whose collision stands in a route's way, as
+    /// <see cref="StandsInTheWay"/> tells. Each part of an object's collision is a
+    /// footprint of its own.
     /// </summary>
     public IReadOnlyList<NavAvoidance> FindObstacles(Vector3 around, float radius, uint goalObjectId)
     {
@@ -183,14 +183,26 @@ internal sealed class RuntimeNavigationGoalSource : INavigationGoalSource
                 || record.ServerGuid == goalObjectId
                 || record.FinalPhysicsState.HasFlag(PhysicsStateFlags.Ethereal)
                 || _runtime.InventoryOwner.Objects.Get(record.ServerGuid) is not { } item
-                || (item.Type & ItemType.Creature) != 0
-                || ((PublicWeenieFlags)(item.PublicWeenieBitfield ?? 0u) & (PublicWeenieFlags.Door | PublicWeenieFlags.Player)) != 0)
+                || !StandsInTheWay(item))
             {
                 continue;
             }
             obstacles.Add(NavGeometry.FootprintOf(entry, _physics.DataCache));
         }
         return obstacles;
+    }
+
+    /// <summary>
+    /// Whether a route keeps out of a server object's collision: not a creature's or a
+    /// player's, which move, nor a door's, which walks open, nor a corpse's, which routes
+    /// cross rather than go around.
+    /// </summary>
+    internal static bool StandsInTheWay(ClientObject item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        return (item.Type & ItemType.Creature) == 0
+            && ((PublicWeenieFlags)(item.PublicWeenieBitfield ?? 0u)
+                & (PublicWeenieFlags.Door | PublicWeenieFlags.Player | PublicWeenieFlags.Corpse)) == 0;
     }
 
     /// <summary>A place in a cell's landblock frame, set relative to where the character stands in the physics world.</summary>
