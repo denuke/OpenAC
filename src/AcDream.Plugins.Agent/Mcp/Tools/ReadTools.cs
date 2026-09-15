@@ -104,7 +104,7 @@ internal static class ReadTools
             + "a few seconds. With tour, the answer is instead one way through every unvisited place, clearing side "
             + "branches first: from the dungeon's entrance when the client saw the character come in, else from the "
             + "place nearest it, to the given end, else the portal seen farthest from the start, else the farthest "
-            + "place, with a MossTank route to send as the route part of configure.",
+            + "place, with a MossTank route through its rooms in order and on to its end, the client walking the passages between, to send as the route part of configure.",
             () => new JsonObject
             {
                 ["tour"] = Property("boolean", "Answer with one tour through every unvisited place."),

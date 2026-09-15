@@ -274,6 +274,7 @@ public sealed class WorldReadVerbsTests
         JsonElement tour = Latest(ring, RecordKinds.ExploreTour);
         Assert.Equal("ready", tour.GetProperty("state").GetString());
         Assert.Equal(3, tour.GetProperty("stops").GetInt32());
+        Assert.Equal(3, tour.GetProperty("waypoints").GetInt32());
         Assert.Equal([1, 2, 3], tour.GetProperty("tour").EnumerateArray().Select(stop => stop.GetProperty("stop").GetInt32()));
         Assert.Equal("farthest a walk reaches from the character", tour.GetProperty("end").GetProperty("why").GetString());
         JsonElement route = tour.GetProperty("route");
@@ -329,6 +330,8 @@ public sealed class WorldReadVerbsTests
         JsonElement tour = Latest(ring, RecordKinds.ExploreTour);
         Assert.Equal("where the character came into this dungeon", tour.GetProperty("start").GetProperty("why").GetString());
         Assert.Equal("nearest the portal seen farthest from the start", tour.GetProperty("end").GetProperty("why").GetString());
+        Assert.Equal(4, tour.GetProperty("stops").GetInt32());
+        Assert.Equal(4, tour.GetProperty("waypoints").GetInt32());
         Assert.Equal(
             [0d, 0.1d, 0.1d, 0.3d],
             tour.GetProperty("route").GetProperty("waypoints").EnumerateArray().Select(waypoint => waypoint.GetProperty("point").GetProperty("eastWest").GetDouble()));
