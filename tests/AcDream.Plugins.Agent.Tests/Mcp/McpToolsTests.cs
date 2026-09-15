@@ -223,7 +223,7 @@ public sealed class McpToolsTests
     }
 
     [Fact]
-    public async Task EventsWaitsUpToAMinuteAndNoLonger()
+    public async Task EventsWaitsUpToFortyFiveSecondsAndNoLonger()
     {
         using var harness = new McpToolHarness();
         harness.StartTracking();
@@ -231,7 +231,7 @@ public sealed class McpToolsTests
         Task<JsonObject> call = harness.Begin("events",
             new JsonObject { ["kinds"] = new JsonArray("chat"), ["waitSeconds"] = 10_000 });
         harness.Tools.Tick();
-        harness.Tick(59d);
+        harness.Tick(44d);
         Assert.False(call.IsCompleted);
 
         harness.Tick(1d);
@@ -288,25 +288,27 @@ public sealed class McpToolsTests
                 ["kind"] = "trends",
                 ["compare"] = new JsonArray("xpPerHour.5m", "<", 1000),
             }),
-            ["waitSeconds"] = 60,
+            ["waitSeconds"] = 45,
             ["sinceSeq"] = sinceSeq,
         };
-        Task<JsonObject> first = harness.Begin("events", Waiting(null));
-        harness.Tools.Tick();
-        for (int second = 0; second < 60 && !first.IsCompleted; second++)
-            harness.Tick(1d);
+        long? cursor = null;
+        JsonElement answer = default;
+        int calls = 0;
+        do
+        {
+            Task<JsonObject> call = harness.Begin("events", Waiting(cursor));
+            harness.Tools.Tick();
+            for (int second = 0; second < 60 && !call.IsCompleted; second++)
+                harness.Tick(1d);
+            Assert.True(call.IsCompleted);
+            answer = McpToolHarness.Structured(await call);
+            cursor = answer.GetProperty("nextSeq").GetInt64();
+            calls++;
+        }
+        while (answer.GetProperty("woke").ValueKind == JsonValueKind.Null && calls < 5);
 
-        Assert.True(first.IsCompleted);
-        JsonElement waited = McpToolHarness.Structured(await first);
-        Assert.Equal(JsonValueKind.Null, waited.GetProperty("woke").ValueKind);
-
-        Task<JsonObject> call = harness.Begin("events", Waiting(waited.GetProperty("nextSeq").GetInt64()));
-        harness.Tools.Tick();
-        for (int second = 0; second < 60 && !call.IsCompleted; second++)
-            harness.Tick(1d);
-
-        Assert.True(call.IsCompleted);
-        JsonElement woke = McpToolHarness.Structured(await call).GetProperty("woke").GetProperty("record");
+        Assert.True(calls > 1);
+        JsonElement woke = answer.GetProperty("woke").GetProperty("record");
         Assert.Equal(0d, woke.GetProperty("xpPerHour").GetProperty("5m").GetDouble());
         Assert.True(woke.GetProperty("countedSeconds").GetProperty("5m").GetDouble() >= 60d);
     }
