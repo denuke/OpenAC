@@ -640,7 +640,7 @@ public sealed class CombatControllerTests
     }
 
     [Fact]
-    public void AMonsterEveryShotAtWhichMeetsAWallIsSetAsideForOneThatCanBeHit()
+    public void AMonsterEveryShotAtWhichMeetsAWallIsPassedOverForOneThatCanBeHit()
     {
         var surface = new FakeAutomation
         {
@@ -662,11 +662,60 @@ public sealed class CombatControllerTests
 
         controller.Toggle();
         controller.OnTick(0.25);
-        Assert.Empty(surface.CastSpellIds);
-        for (int tick = 0; tick < 6 && surface.CastSpellIds.Count == 0; tick++)
+
+        Assert.Equal((100u, 11u), surface.LastTargetedCast);
+        Assert.Equal(100u, Assert.Single(surface.CastSpellIds));
+    }
+
+    [Fact]
+    public void ATargetAWallComesBetweenIsDroppedForOneAShotReaches()
+    {
+        var surface = new FakeAutomation
+        {
+            CombatSnapshot = Physical() with { Mode = PluginCombatMode.Magic },
+            Targets = [Target(10, "Drudge", 5, 0), Target(11, "Drudge Skulker", 12, 0)],
+            KnownAttackSpells =
+            [
+                Spell(100, "Incantation of Flame Bolt") with
+                {
+                    IsProjectile = true,
+                },
+            ],
+            EquipmentItems = [WieldedCaster()],
+        };
+        var controller = new CombatController(
+            new FakeHost(surface),
+            FireAttackRule(new CombatSettings { UseProjectileAwareness = true, MaximumRange = 40d }));
+        controller.Toggle();
+        controller.OnTick(0.25);
+        Assert.Equal((100u, 10u), surface.LastTargetedCast);
+
+        surface.ProjectilePaths[10u] = new(PluginProjectilePathStatus.Blocked);
+        for (int tick = 0; tick < 8 && surface.LastTargetedCast.Target != 11u; tick++)
             controller.OnTick(0.3);
 
         Assert.Equal((100u, 11u), surface.LastTargetedCast);
+    }
+
+    [Fact]
+    public void AMeleeAttackTracesNoShotsWhenChoosingItsTarget()
+    {
+        var surface = new FakeAutomation
+        {
+            CombatSnapshot = Physical(),
+            Targets = [Target(10, "Drudge", 2, 0)],
+            EquipmentItems = [WieldedPlannedWeapon()],
+            ProjectilePath = new(PluginProjectilePathStatus.Blocked),
+        };
+        var settings = new CombatSettings { UseProjectileAwareness = true };
+        ProfileFixtureWeapon(settings);
+        var controller = new CombatController(new FakeHost(surface), settings);
+
+        controller.Toggle();
+        controller.OnTick(0.25);
+
+        Assert.Equal(10u, surface.LastBeginTarget);
+        Assert.Equal(0u, surface.LastProjectileTarget);
     }
 
     [Fact]
