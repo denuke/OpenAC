@@ -461,6 +461,7 @@ internal sealed class CombatController
                 out PluginProjectilePathResult missilePath))
         {
             Status = ProjectileStatus(missilePath, _targetName);
+            SetAsideIfWalled(missilePath.Status == PluginProjectilePathStatus.Blocked);
             return;
         }
         float desiredPower = AutoAttackPower.Resolve(
@@ -652,6 +653,7 @@ internal sealed class CombatController
     {
         bool boltBlocked = false;   // f7.a.c
         bool arcBlocked = false;    // f7.a.b
+        bool walled = false;
         string? projectileRefusal = null;
         Func<PluginSpellInfo, bool> usable = IsUsableAttackSpell(target);
         for (int attempt = 0; attempt < 3; attempt++)
@@ -666,10 +668,16 @@ internal sealed class CombatController
             // hi.cs:483-488
             if (bolt is null && arc is null)
             {
+                if (projectileRefusal is not null)
+                {
+                    Status = projectileRefusal;
+                    SetAsideIfWalled(walled);
+                    return null;
+                }
                 PostAttackWarning(
                     "Warning: no usable attack spell detected for element \""
                     + ElementName(element) + "\"");
-                Status = projectileRefusal ?? "No usable attack spell";
+                Status = "No usable attack spell";
                 return null;
             }
 
@@ -734,19 +742,24 @@ internal sealed class CombatController
             {
                 projectileRefusal = ProjectileStatus(path, _targetName);
                 Status = projectileRefusal;
+                walled |= path.Status == PluginProjectilePathStatus.Blocked;
                 if (type == VtankCombatSpellType.Arc)
                     arcBlocked = true;
                 else
                     boltBlocked = true;
                 if (arcBlocked && boltBlocked)
+                {
+                    SetAsideIfWalled(walled);
                     return null;
+                }
                 continue;
             }
             return new AttackSpellChoice(
                 spell,
                 type,
                 element,
-                CastWithoutTarget: false);
+                CastWithoutTarget: false,
+                PathChecked: true);
         }
         return null;
     }
@@ -806,6 +819,21 @@ internal sealed class CombatController
         in PluginCombatTarget target)
     {
         IMagicCommands magic = _host.Automation.Magic;
+        if (!choice.CastWithoutTarget
+            && !choice.PathChecked
+            && choice.Spell.IsProjectile
+            && !ProjectilePathIsClear(
+                _targetId,
+                choice.Type == VtankCombatSpellType.Arc
+                    ? PluginProjectilePathKind.Arc
+                    : PluginProjectilePathKind.Straight,
+                _settings.AttackHeight,
+                out PluginProjectilePathResult path))
+        {
+            Status = ProjectileStatus(path, _targetName);
+            SetAsideIfWalled(path.Status == PluginProjectilePathStatus.Blocked);
+            return;
+        }
         if (!choice.CastWithoutTarget
             && !ReadyForBreakableTurn(choice.Spell, _targetId))
         {
@@ -1446,6 +1474,19 @@ internal sealed class CombatController
         }
 
         return DebuffPassResult.Idle;
+    }
+
+    /// <summary>
+    /// How long a monster is set aside when every shot the macro could take at it
+    /// would meet a wall, so the macro attacks one it can hit instead of waiting on
+    /// the wall.
+    /// </summary>
+    internal const double WalledTargetSeconds = 5d;
+
+    private void SetAsideIfWalled(bool walled)
+    {
+        if (walled && _targetId != 0u)
+            _failures.SetAside(_targetId, _now + WalledTargetSeconds);
     }
 
     private bool ProjectilePathIsClear(
