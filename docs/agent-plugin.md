@@ -53,7 +53,7 @@ another plugin's settings. Every other tool only reads.
 | `outcome` | How the line with a handle ended: its outcome word, its shared class, and every record it produced. |
 | `events` | Records after a cursor. With `waitSeconds`, up to 300, it waits for the next one, and `until` wakes it on a condition. |
 | `nearby` | Objects around the character, nearest first, with distance, bearing, kind and sight. |
-| `explore` | Rooms, passages and open ground the character can walk to, from the client's navigation mesh, and outdoors nearby buildings and the landblocks beside its own, unvisited first and nearest first, each with a line that walks there; or, with `tour`, one way through them all from the character to the far end, with a MossTank route that walks it. |
+| `explore` | Rooms, passages and open ground the character can walk to, from the client's navigation mesh, and outdoors nearby buildings and the landblocks beside its own, unvisited first and nearest first, each with a line that walks there; or, with `tour`, one way through them all from the dungeon's entrance to the portal seen farthest from it or the far end, with a MossTank route that walks it. |
 | `inspect` | Everything the client holds about one object, with its sight. |
 | `spells` | Known spells, narrowed by `search`, including whether their components are carried. |
 | `skills` | Skills with their training and values. |
@@ -215,15 +215,17 @@ the shortest to one keeping well clear of walls, and the tidiest is walked, its
 corners taken wide where there is room so the character does not brush them.
 The character runs around a corner without stopping, starting its turn as far
 out as the arc of a running turn needs, wherever that arc stays on the floor
-and off ledges, brushing walls at most. Where only a walk's tighter arc fits it
-walks around the corner, and it stops to turn in place only where neither fits,
-at hairpins and at leaps. A route keeps out of objects the server placed, such as ore deposits, whenever
+and off ledges, brushing walls at most. Where that arc does not fit, and at
+hairpins, it runs up to the corner, stops and turns in place at a running turn's
+rate, as bots do, and never slows to a walk but for the last stretch before a leap. A route keeps out of objects the server placed, such as ore deposits, whenever
 another way arrives. A route passes creatures and players around them where
 there is room, and through them where going around would bring the character
 nearer walls than going through. A walk plans a way around one that steps onto
 its route without stopping, and a walk stopped by one waits for it to move
 aside, up to twice, before planning around it; it never keeps out of the spot a
-creature stood in for good. A door the client has not appraised is appraised before a
+creature stood in for good. A hostile monster stays to fight rather than move
+aside, so a walk stopped by one plans around it at once, and a walk it never lets
+by ends `blocked` naming it as a hostile monster. A door the client has not appraised is appraised before a
 walk uses it; a locked door, or one that will not open, is walked around, and
 with no other way the walk ends `blocked` naming it. Where no walk reaches, a
 route leaps: it hops off ledges of up to 12 m, the deepest fall measured to do
@@ -261,10 +263,17 @@ a moment in a large dungeon, and answers `mapping`; an answer found from where t
 character stood before answers `refreshing`. Ask again in a few seconds for either.
 
 `explore tour` gives one way through instead, so a model can plan a whole dungeon
-in one call. It covers every room, passage and open ground not yet visited, from
-the place nearest the character to the place a walk reaches farthest from it. With
-`explore tour to <north-south> <east-west> [elevation]` it ends at the place
-nearest that point instead, such as a dungeon's surface portal.
+in one call. It covers every room, passage and open ground not yet visited.
+- **Start and end.** The tour starts at the place nearest the dungeon's entrance,
+  where the character first stood after arriving from another landblock while the
+  plugin ran, and otherwise at the place nearest the character. It ends at the place
+  nearest the portal seen farthest from the start, leaving out portals within 20 m
+  of the start, which are most likely the way in. The client shows only the portals
+  near the character, so the plugin remembers each portal it has seen in each
+  dungeon. With no portal seen, the tour ends at the place a walk reaches farthest
+  from the start, and with `explore tour to <north-south> <east-west> [elevation]`
+  at the place nearest that point instead. `start` and `end` in the answer say which
+  applied.
 - **Order.** The tour joins the places into the shortest ways out from the start.
   It walks each branch to its end before turning back: side branches first,
   shallowest first, and the way on to the end last. So it clears the rooms beside
@@ -309,11 +318,15 @@ from `acdream.mosstank`:
   idle helpers for two minutes, with no walk under way.
 - `misconfigured`, for setup that stops part of it working, with `details.problem`:
   `no-casting-device` when it buffs or casts and carries no wand, orb or staff on
-  its Items list, `rule-weapon-not-carried`, `route-empty`, `follow-target-missing`,
-  `loot-rules-empty`, `low-waypoint-distance` and `walk-legs-unavailable`. The setup
-  is checked when the macro starts and after each `configure` while it runs, each
-  problem is posted once while it lasts, and `settings mosstank macro` lists those
-  standing now as `problems`.
+  its Items list, `rule-weapon-not-carried`, `route-empty`, which a once route walked to
+  its end does not count as, `route-elsewhere` when
+  the route's nearest point is over 1000 m from the character, so it was made for
+  somewhere else, `follow-target-missing`, `loot-rules-empty`,
+  `low-waypoint-distance` and `walk-legs-unavailable`. The setup is checked when
+  the macro starts, after each `configure` while it runs, and when the character
+  arrives in another landblock, such as through a portal. Each problem is posted
+  once while it lasts, and `settings mosstank macro` lists those standing now as
+  `problems`.
 - `combat-warning`, `buff-warning`, such as too few of a buff's components,
   `item-warning`, `ghost-target` and `profile-recovered`: the warnings it also says
   in chat.
