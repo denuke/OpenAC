@@ -62,10 +62,7 @@ internal static class ReadTools
 {
     internal const int MaximumSearchLength = 64;
 
-    private const string Nothing = " Sends nothing.";
-
-    private const string Limits =
-        " The answer says how many rows matched and how many are shown; pass limit for more or fewer.";
+    private const string Limits = " Answers count the rows matched and shown.";
 
     internal static IEnumerable<IMcpTool> Create(AgentContext context) =>
     [
@@ -75,8 +72,7 @@ internal static class ReadTools
             + "missing, and with its sight. Lines graded alike for every object are said once in legend, with <guid> "
             + "in place of the id. The character's own lines, such as buy at the open vendor, stance combat or "
             + "logout, come under character. Pass guid to ask about one object, including one the character carries. "
-            + "Send a line through act as written, filling any <placeholder>."
-            + Nothing,
+            + "Send a line through act as written, filling any <placeholder>.",
             () => new JsonObject
             {
                 ["guid"] = Property("string", "An object id such as 0x70000001; leave it out to ask about everything around the character."),
@@ -89,8 +85,7 @@ internal static class ReadTools
             + "kind in range and anything unclassified, so a short list never reads as an empty world. "
             + "The nearest objects carry a sight verdict for an arc spell, a war bolt and an arrow: visible, "
             + "blocked with what blocked it, such as a closed door, or geometry for the landscape and the walls, "
-            + "floors and ceilings of buildings and dungeons, or cannot-say with the reason."
-            + Nothing,
+            + "floors and ceilings of buildings and dungeons, or cannot-say with the reason.",
             () => new JsonObject
             {
                 ["kind"] = Property("string", "One kind word such as monster, vendor, npc, corpse, portal, door or player."),
@@ -99,28 +94,24 @@ internal static class ReadTools
             [],
             Nearby),
         new ReadTool(context, "explore", "Where can I explore?",
-            "The places the character can walk to from where it stands, for when nothing nearer calls, such as a "
-            + "dungeon with no monsters in sight, told apart on the client's navigation mesh by how open the floor is: "
-            + "rooms, passages in stretches of about 20 m, and open ground, over the whole dungeon the character is in "
-            + "or the land around it, and outdoors also the buildings nearby, with their doorways, and the landblocks "
-            + "beside the character's own, with their direction. Places the character has not been near come first, "
-            + "then those it has, marked "
-            + "visited, each nearest walk first, at its most open point, with its kind, notes such as dead end, junction, "
-            + "stairs or ramp, above or below, its floor area, width, rise and exits, the walk's length, the straight "
-            + "distance and bearing, and a go line to send through act as written. Ask again after walking somewhere: "
-            + "the order follows the character. The first ask maps the ground and can answer mapping, and an answer "
-            + "found from where the character stood before says refreshing; ask again in a few seconds. With tour, "
-            + "the answer is instead one way through every place not yet visited, from where the character stands to "
-            + "the dungeon's far end or the given end, clearing side branches before the way on, with a MossTank route "
-            + "that walks it to send as the route part of configure."
-            + Nothing,
+            "The places the character can walk to, for when nothing nearer calls, such as a dungeon with no monsters "
+            + "in sight: rooms, passages in stretches of about 20 m and open ground on the client's navigation mesh, "
+            + "across the whole dungeon or the land around, and outdoors also nearby buildings with their doorways and "
+            + "the landblocks beside this one. Unvisited places come first, each nearest walk first, with its kind, "
+            + "notes such as dead end, junction or stairs, floor area, width, rise, exits, walk length, distance, "
+            + "bearing and a go line for act. Ask again after walking: the order follows the character. The first ask "
+            + "can answer mapping, and one found from where the character stood before says refreshing; ask again in "
+            + "a few seconds. With tour, the answer is instead one way through every unvisited place, clearing side "
+            + "branches first: from the dungeon's entrance when the client saw the character come in, else from the "
+            + "place nearest it, to the given end, else the portal seen farthest from the start, else the farthest "
+            + "place, with a MossTank route to send as the route part of configure.",
             () => new JsonObject
             {
-                ["tour"] = Property("boolean", "Give one tour through every place not yet visited instead of the nearest places."),
+                ["tour"] = Property("boolean", "Answer with one tour through every unvisited place."),
                 ["end"] = Property(
                     "string",
                     "With tour, where it ends, such as a surface portal, in map coordinates the way go to takes them: "
-                    + "24.30537 -101.10833 0.00002. Without it the tour ends at the place farthest from the character."),
+                    + "24.30537 -101.10833 0.00002."),
                 ["limit"] = LimitProperty(),
             },
             [],
@@ -129,8 +120,7 @@ internal static class ReadTools
             "Everything the client holds about one object, by id: its kind, whether it is carried, "
             + "where it is and how far, whether an arc spell, a war bolt and an arrow can reach it, whether "
             + "it has been appraised, and its properties. An id the client does not hold is refused, never "
-            + "guessed."
-            + Nothing,
+            + "guessed.",
             () => new JsonObject { ["guid"] = Property("string", "An object id such as 0x70000001.") },
             ["guid"],
             Inspect),
@@ -139,8 +129,7 @@ internal static class ReadTools
             + "each is cast on self, on a target or on nothing, whether it helps or harms, and whether the "
             + "character carries its components. A trained caster knows hundreds, so pass search to "
             + "narrow by name. Cast one through act, for example 'cast Strength Self VI'."
-            + Limits
-            + Nothing,
+            + Limits,
             () => new JsonObject
             {
                 ["search"] = Property("string", "Part of a spell name, such as strength or bolt."),
@@ -150,14 +139,12 @@ internal static class ReadTools
             arguments => Searched("spells", arguments)),
         new ReadTool(context, "skills", "What are my skills?",
             "The character's skills: whether each is untrained, trained or specialized, with current "
-            + "and base values."
-            + Nothing,
+            + "and base values.",
             () => new JsonObject(),
             [],
             _ => ReadLine.Of("skills")),
         new ReadTool(context, "buffs", "What is enchanting me?",
-            "The enchantments on the character: spell, family, tier and seconds remaining."
-            + Nothing,
+            "The enchantments on the character: spell, family, tier and seconds remaining.",
             () => new JsonObject(),
             [],
             _ => ReadLine.Of("buffs")),
@@ -166,8 +153,7 @@ internal static class ReadTools
             + "spent per hour by name, such as spell components, and seconds since the character last gained "
             + "experience, killed, gained an item and moved. A rate is null until a minute of its window has "
             + "been counted. events delivers a trends record every minute, so until can wake a wait on a rate, "
-            + "such as [\"xpPerHour.60m\", \"<\", 1000000]."
-            + Nothing,
+            + "such as [\"xpPerHour.60m\", \"<\", 1000000].",
             () => new JsonObject(),
             [],
             _ => ReadLine.Of("trends")),
@@ -175,8 +161,7 @@ internal static class ReadTools
             "Everything the character carries: id, name, kind, stack size, value, burden, which pack "
             + "holds it and whether it is equipped, with the free main-pack slots. Pass search to narrow "
             + "by name. Use the ids through act, for example 'use 0x50000A01' or 'sell 0x50000A01 5'."
-            + Limits
-            + Nothing,
+            + Limits,
             () => new JsonObject
             {
                 ["search"] = Property("string", "Part of an item name, such as scarab or healing kit."),
@@ -186,8 +171,7 @@ internal static class ReadTools
             arguments => Searched("inventory", arguments)),
         new ReadTool(context, "equipment", "What am I wearing?",
             "What the character wears and wields, and the carried items that could be equipped, with "
-            + "ids for 'equip' and 'unequip' through act."
-            + Nothing,
+            + "ids for 'equip' and 'unequip' through act.",
             () => new JsonObject(),
             [],
             _ => ReadLine.Of("equipment")),
@@ -195,22 +179,19 @@ internal static class ReadTools
             "The open vendor's listings: id, name, unit price and stock. When no vendor is open the "
             + "listings are unknown, not an empty shop; 'use <vendor id>' through act opens one. Buy "
             + "through act, for example 'buy prismatic taper 10'."
-            + Limits
-            + Nothing,
+            + Limits,
             () => new JsonObject { ["limit"] = LimitProperty() },
             [],
             arguments => Limited("vendor", arguments)),
         new ReadTool(context, "container", "What is in the open container?",
             "The items in the open corpse or container, with ids to take through act as "
             + "'loot <item id>'. 'open <corpse id>' through act opens one."
-            + Limits
-            + Nothing,
+            + Limits,
             () => new JsonObject { ["limit"] = LimitProperty() },
             [],
             arguments => Limited("loot list", arguments)),
         new ReadTool(context, "corpses", "Which corpses are near?",
-            "Corpses within range, nearest first, with whether each has been opened already."
-            + Nothing,
+            "Corpses within range, nearest first, with whether each has been opened already.",
             () => new JsonObject { ["range"] = Property("number", "Maximum distance in meters; 30 when omitted.") },
             [],
             Corpses),
@@ -218,8 +199,7 @@ internal static class ReadTools
             "The characters on the account while the client is at the character list, with each one's id and "
             + "whether it can enter the world, and where the client stands: not-connected, connecting, "
             + "choosing-character, entering-world or in-world. Act 'login <name>' to enter the world as one, "
-            + "and 'logout' to come back to the list."
-            + Nothing,
+            + "and 'logout' to come back to the list.",
             () => new JsonObject(),
             [],
             _ => ReadLine.Of("characters")),
@@ -229,8 +209,7 @@ internal static class ReadTools
             + "section, one part, such as options, monsters, items or buffs for MossTank. MossTank shares whether "
             + "its macro runs and what it is doing, every option including the advanced ones, its monster rules "
             + "with their priorities, actions, damage types and weapons, its items and consumables, and its extra "
-            + "and blacklisted buffs."
-            + Nothing,
+            + "and blacklisted buffs.",
             () => new JsonObject
             {
                 ["plugin"] = Property("string", "A plugin's name or settings id, such as mosstank; leave it out to list them."),

@@ -17,7 +17,7 @@ internal sealed class ObserveTool(AgentContext context) : IMcpTool
         "The character's current state: whether it is in the world, where its body is, its "
         + "vitals, level and attributes, what is selected, its combat stance, the actions still "
         + "waiting for an answer, and the last few action outcomes. Every value carries a presence: "
-        + "unknown means the client has not been told, never zero. Sends nothing.",
+        + "unknown means the client has not been told, never zero.",
         new JsonObject(),
         [],
         readOnly: true);

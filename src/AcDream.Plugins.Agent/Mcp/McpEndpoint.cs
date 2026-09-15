@@ -25,6 +25,7 @@ internal sealed class McpEndpoint
         + "act runs one command line and returns a handle; call outcome with the handle to learn "
         + "what actually happened, because an accepted action is not a finished one. "
         + "events waits for records, so you never need to poll. "
+        + "Only act and configure change anything; every other tool only reads. "
         + "A value the client has not received is unknown, never zero.";
 
     private readonly McpSessions _sessions;
