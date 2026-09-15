@@ -22,14 +22,12 @@ public enum RuntimeRouteDriveState
 }
 
 /// <summary>
-/// How fast a body goes and turns at a run and at a walk, in meters and degrees a
-/// second, which sets the arc it follows when it turns as it moves.
+/// How fast a body runs and turns at a run, in meters and degrees a second, which
+/// sets the arc it follows when it turns as it runs.
 /// </summary>
 public readonly record struct RuntimeRouteTurning(
     float RunSpeed,
-    float RunTurnDegreesPerSecond,
-    float WalkSpeed,
-    float WalkTurnDegreesPerSecond);
+    float RunTurnDegreesPerSecond);
 
 /// <summary>The body as a route driver sees it on one frame, with how fast it goes and turns when that is known.</summary>
 public readonly record struct RuntimeRouteDriveSample(
@@ -65,10 +63,9 @@ public readonly record struct RuntimeRouteLeap(int LegIndex, float Power, bool R
 /// end as reached once the body is near it or past it. Where it knows how fast
 /// the body goes and turns, it cuts a corner without stopping: it starts turning
 /// as far before the corner as the arc of a running turn needs and keeps running
-/// around it, or walks around it when only a walk's tighter arc fits, wherever the
-/// check it was given lets a body pass along that arc. A corner it cannot cut, or
-/// one sharper than <see cref="SharpestCutDegrees"/>, it walks the last stretch
-/// before and turns in place. A leg the body stops making progress on ends the
+/// around it, wherever the check it was given lets a body pass along that arc. A
+/// corner it cannot run around, or one sharper than <see cref="SharpestCutDegrees"/>,
+/// it runs up to, stops at and turns in place, never slowing to a walk. A leg the body stops making progress on ends the
 /// drive as blocked, so the route can be planned again from where it stands.
 /// A leap is taken as a standing long jump: the body walks up to the takeoff,
 /// stops, faces the landing, charges the jump, and presses forward at the leap's
@@ -82,7 +79,8 @@ public sealed class RuntimeRouteDriver
     public const float ArrivalRadius = 0.5f;
     public const float SteerToleranceDegrees = 3f;
     public const float TurnInPlaceDegrees = 30f;
-    public const float CornerWalkMeters = 1.5f;
+    /// <summary>A body walks the last this many meters up to a leap's takeoff.</summary>
+    public const float TakeoffWalkMeters = 1.5f;
 
     /// <summary>A corner turning more than this is never cut; the body turns in place at it.</summary>
     public const float SharpestCutDegrees = 120f;
@@ -93,9 +91,6 @@ public sealed class RuntimeRouteDriver
     /// crossed the arc's start.
     /// </summary>
     public const float CutEarlySeconds = 1f / 120f;
-
-    /// <summary>A body slows to a walk this far before the arc of a corner it cuts at a walk.</summary>
-    public const float CutWalkInMeters = 0.5f;
 
     /// <summary>
     /// While cutting a corner, and after a cut until it faces within
@@ -204,10 +199,8 @@ public sealed class RuntimeRouteDriver
     /// <summary>How far from its planned landing, measured flat, the last leap came down.</summary>
     public float LandingError { get; private set; }
 
-    /// <summary>How many corners the drive has come to and planned to run around, walk around, or turn in place at.</summary>
+    /// <summary>How many corners the drive has come to and planned to run around, or turn in place at.</summary>
     public int CornersRunAround { get; private set; }
-
-    public int CornersWalkedAround { get; private set; }
 
     public int CornersTurnedInPlace { get; private set; }
 
@@ -291,7 +284,7 @@ public sealed class RuntimeRouteDriver
                 StopTravel: travelling);
         }
 
-        RuntimeMovePace pace = PaceFor(position, Vector2.Distance(position, Flat(_legs[LegIndex])), sample.Turning);
+        RuntimeMovePace pace = PaceFor(Vector2.Distance(position, Flat(_legs[LegIndex])));
         bool renew = !travelling
             || travel.Request.Direction != RuntimeMoveDirection.Forward
             || travel.Request.Pace != pace
@@ -404,11 +397,11 @@ public sealed class RuntimeRouteDriver
         return along.LengthSquared() > 1e-6f && Vector2.Dot(position - end, along) >= 0f;
     }
 
-    /// <summary>Whether to walk the rest of a leg: the last stretch before a sharp corner or a leap's takeoff.</summary>
+    /// <summary>Whether to walk the rest of a leg: the last stretch before a leap's takeoff.</summary>
     private bool SlowForWithin(float distance) =>
         LegIndex + 1 < _legs.Length
-        && distance <= CornerWalkMeters
-        && (_leaps.ContainsKey(LegIndex + 1) || TurnsSharplyAt(LegIndex));
+        && distance <= TakeoffWalkMeters
+        && _leaps.ContainsKey(LegIndex + 1);
 
     /// <summary>Whether the route turns more than <see cref="TurnInPlaceDegrees"/> at a leg's end between two walked legs.</summary>
     private bool TurnsSharplyAt(int corner)
@@ -422,21 +415,12 @@ public sealed class RuntimeRouteDriver
 
     /// <summary>
     /// The pace to go at: a cut's own while cutting and until the body faces the leg
-    /// ahead, a walk from <see cref="CutWalkInMeters"/> before the arc of a corner cut at
-    /// a walk, and otherwise a run, but for the last stretch before a corner taken
-    /// standing or a leap's takeoff.
+    /// ahead, and otherwise a run, but for the last stretch before a leap's takeoff.
     /// </summary>
-    private RuntimeMovePace PaceFor(Vector2 position, float distance, RuntimeRouteTurning? turning)
+    private RuntimeMovePace PaceFor(float distance)
     {
         if ((_cutting.Pace ?? _settling) is { } cutting)
             return cutting;
-        Cut next = CutFor(LegIndex, turning);
-        if (next.Pace is { } pace)
-        {
-            return pace == RuntimeMovePace.Walk && AlongTo(position, LegIndex) <= next.Lead + CutWalkInMeters
-                ? RuntimeMovePace.Walk
-                : RuntimeMovePace.Run;
-        }
         return SlowForWithin(distance) ? RuntimeMovePace.Walk : RuntimeMovePace.Run;
     }
 
@@ -478,8 +462,6 @@ public sealed class RuntimeRouteDriver
             _cut = PlanCut(corner, turning);
             if (_cut.Pace == RuntimeMovePace.Run)
                 CornersRunAround++;
-            else if (_cut.Pace == RuntimeMovePace.Walk)
-                CornersWalkedAround++;
             else if (TurnsSharplyAt(corner))
                 CornersTurnedInPlace++;
         }
@@ -487,8 +469,8 @@ public sealed class RuntimeRouteDriver
     }
 
     /// <summary>
-    /// A cut around the corner at a leg's end: at a run where the arc of a running turn
-    /// passes, or at a walk where only a walk's tighter arc does. An arc must start and
+    /// A cut around the corner at a leg's end, at a run, where the arc of a running turn
+    /// passes; none where it does not, so the body stops and turns there. An arc must start and
     /// end within the legs beside the corner, no nearer the middle of a leg the body
     /// cuts into from another corner. Leaps' takeoffs and landings are not cut.
     /// </summary>
@@ -513,10 +495,7 @@ public sealed class RuntimeRouteDriver
         if (MathF.Abs(turn) <= SteerToleranceDegrees || MathF.Abs(turn) > SharpestCutDegrees)
             return default;
         float room = MathF.Min(corner == 1 ? inbound : inbound * 0.5f, outbound * 0.5f);
-        Cut run = TryCut(corner, turn, room, RuntimeMovePace.Run, speeds.RunSpeed, speeds.RunTurnDegreesPerSecond);
-        return run.Pace is not null
-            ? run
-            : TryCut(corner, turn, room, RuntimeMovePace.Walk, speeds.WalkSpeed, speeds.WalkTurnDegreesPerSecond);
+        return TryCut(corner, turn, room, RuntimeMovePace.Run, speeds.RunSpeed, speeds.RunTurnDegreesPerSecond);
     }
 
     private Cut TryCut(int corner, float turn, float room, RuntimeMovePace pace, float speed, float degreesPerSecond)

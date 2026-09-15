@@ -281,7 +281,7 @@ public sealed class NavigationWalkControllerTests
     [Fact]
     public void AWalkRunsThroughADoorwayWithoutStoppingWhereItsArcsKeepToTheFloor()
     {
-        var turning = new RuntimeRouteTurning(RunSpeed: 4f, RunTurnDegreesPerSecond: 180f, WalkSpeed: 1.5f, WalkTurnDegreesPerSecond: 180f);
+        var turning = new RuntimeRouteTurning(RunSpeed: 4f, RunTurnDegreesPerSecond: 180f);
         var standing = new SimulatedBody(new Vector3(4f, 4f, -30f));
         var cutting = new SimulatedBody(new Vector3(4f, 4f, -30f)) { Turning = turning };
         var said = new List<string>();

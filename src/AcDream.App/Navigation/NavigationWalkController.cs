@@ -1320,8 +1320,7 @@ internal sealed class NavigationWalkController
         if (request.Drives.Count > 0)
         {
             _say?.Invoke(
-                $"Walk to {Label(request)}: ran around {request.Drives.Sum(drive => drive.CornersRunAround)} corners, "
-                + $"walked around {request.Drives.Sum(drive => drive.CornersWalkedAround)} "
+                $"Walk to {Label(request)}: ran around {request.Drives.Sum(drive => drive.CornersRunAround)} corners "
                 + $"and turned in place at {request.Drives.Sum(drive => drive.CornersTurnedInPlace)}");
         }
     }
