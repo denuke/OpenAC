@@ -30,7 +30,17 @@ public readonly record struct NavPlace(
     float AreaSquareMeters,
     float WidthMeters,
     float RiseMeters,
-    int Exits);
+    int Exits)
+{
+    private readonly IReadOnlyList<int>? _neighbours;
+
+    /// <summary>The places this one opens onto, as indices into the same list of places, lowest first.</summary>
+    public IReadOnlyList<int> Neighbours
+    {
+        get => _neighbours ?? [];
+        init => _neighbours = value;
+    }
+}
 
 /// <summary>
 /// The places a body can walk to from where it stands, told apart by how open the floor is.
@@ -216,7 +226,7 @@ public static class NavPlaces
             exits[other] = exits.GetValueOrDefault(other) + 1;
         }
 
-        var places = new List<NavPlace>(kept.Count);
+        var found = new List<(long Key, NavPlace Place)>(kept.Count);
         foreach (long key in kept)
         {
             Tally tally = tallies[key];
@@ -224,7 +234,7 @@ public static class NavPlaces
             NavPlaceKind kind = !isRoom[(int)(key >> 20)]
                 ? NavPlaceKind.Passage
                 : area >= OpenAreaSquareMeters ? NavPlaceKind.Open : NavPlaceKind.Room;
-            places.Add(new NavPlace(
+            found.Add((key, new NavPlace(
                 tally.Best,
                 grid.Position(tally.Best),
                 walked[tally.Best],
@@ -232,9 +242,27 @@ public static class NavPlaces
                 area,
                 2f * ((clearance[tally.Best] * halfStep) + grid.NearestWall),
                 tally.High - tally.Low,
-                exits.GetValueOrDefault(key)));
+                exits.GetValueOrDefault(key))));
         }
-        places.Sort(static (left, right) => left.WalkMeters.CompareTo(right.WalkMeters));
+        found.Sort(static (left, right) => left.Place.WalkMeters.CompareTo(right.Place.WalkMeters));
+
+        var indexOf = new Dictionary<long, int>(found.Count);
+        for (int index = 0; index < found.Count; index++)
+            indexOf[found[index].Key] = index;
+        var neighbours = new List<int>[found.Count];
+        for (int index = 0; index < found.Count; index++)
+            neighbours[index] = [];
+        foreach ((long one, long other) in joins)
+        {
+            if (indexOf.TryGetValue(one, out int first) && indexOf.TryGetValue(other, out int second))
+            {
+                neighbours[first].Add(second);
+                neighbours[second].Add(first);
+            }
+        }
+        var places = new NavPlace[found.Count];
+        for (int index = 0; index < found.Count; index++)
+            places[index] = found[index].Place with { Neighbours = [.. neighbours[index].Order()] };
         return places;
     }
 

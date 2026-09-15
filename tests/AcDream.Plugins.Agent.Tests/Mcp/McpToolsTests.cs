@@ -18,7 +18,8 @@ public sealed class McpToolsTests
         Assert.Equal(
             [
                 "act", "buffs", "capabilities", "characters", "configure", "container", "corpses", "equipment", "events",
-                "explore", "inspect", "inventory", "nearby", "observe", "outcome", "settings", "skills", "spells", "vendor",
+                "explore", "inspect", "inventory", "nearby", "observe", "outcome", "settings", "skills", "spells", "trends",
+                "vendor",
             ],
             definitions.Select(tool => tool["name"]!.GetValue<string>()).Order(StringComparer.Ordinal));
         foreach (JsonObject tool in definitions)
@@ -219,6 +220,84 @@ public sealed class McpToolsTests
         Assert.True(call.IsCompleted);
         JsonElement result = McpToolHarness.Structured(await call);
         Assert.Equal("hello", result.GetProperty("records")[0].GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task EventsWaitsUpToFiveMinutesAndNoLonger()
+    {
+        using var harness = new McpToolHarness();
+        harness.StartTracking();
+
+        Task<JsonObject> call = harness.Begin("events",
+            new JsonObject { ["kinds"] = new JsonArray("chat"), ["waitSeconds"] = 10_000 });
+        harness.Tools.Tick();
+        harness.Tick(299d);
+        Assert.False(call.IsCompleted);
+
+        harness.Tick(1d);
+
+        Assert.True(call.IsCompleted);
+        Assert.Empty(McpToolHarness.Structured(await call).GetProperty("records").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task EventsUntilWakesWhenATrendFallsBelowAThreshold()
+    {
+        using var harness = new McpToolHarness();
+        harness.Host.FakeAutomation.FakeCharacter.TotalExperience = 5_000L;
+        harness.StartTracking();
+
+        Task<JsonObject> call = harness.Begin("events", new JsonObject
+        {
+            ["kinds"] = new JsonArray("trends"),
+            ["until"] = new JsonArray(new JsonObject
+            {
+                ["kind"] = "trends",
+                ["compare"] = new JsonArray("xpPerHour.5m", "<", 1000),
+            }),
+            ["waitSeconds"] = 300,
+        });
+        harness.Tools.Tick();
+        for (int second = 0; second < 60; second++)
+            harness.Tick(1d);
+        Assert.False(call.IsCompleted);
+        for (int second = 0; second < 120 && !call.IsCompleted; second++)
+            harness.Tick(1d);
+
+        Assert.True(call.IsCompleted);
+        JsonElement woke = McpToolHarness.Structured(await call).GetProperty("woke").GetProperty("record");
+        Assert.Equal(0d, woke.GetProperty("xpPerHour").GetProperty("5m").GetDouble());
+        Assert.True(woke.GetProperty("countedSeconds").GetProperty("5m").GetDouble() >= 60d);
+    }
+
+    [Fact]
+    public async Task EventsUntilWakesWhenAPluginNoticeNamesAWaypointAtOrPastOne()
+    {
+        using var harness = new McpToolHarness();
+        harness.StartTracking();
+
+        Task<JsonObject> call = harness.Begin("events", new JsonObject
+        {
+            ["kinds"] = new JsonArray("plugin-notice"),
+            ["until"] = new JsonArray(new JsonObject
+            {
+                ["kind"] = "plugin-notice",
+                ["match"] = new JsonObject { ["notice"] = "route-waypoint" },
+                ["compare"] = new JsonArray("details.waypoint", ">=", 29),
+            }),
+            ["waitSeconds"] = 300,
+        });
+        harness.Tools.Tick();
+        harness.Host.FakeNotices.Post("route-waypoint", PluginNoticeSeverity.Info, "Waypoint 29 of 50 reached", """{"waypoint":28}""");
+        harness.Tick();
+        Assert.False(call.IsCompleted);
+
+        harness.Host.FakeNotices.Post("route-waypoint", PluginNoticeSeverity.Info, "Waypoint 30 of 50 reached", """{"waypoint":29}""");
+        harness.Tick();
+
+        Assert.True(call.IsCompleted);
+        JsonElement woke = McpToolHarness.Structured(await call).GetProperty("woke").GetProperty("record");
+        Assert.Equal(29, woke.GetProperty("details").GetProperty("waypoint").GetInt32());
     }
 
     [Fact]

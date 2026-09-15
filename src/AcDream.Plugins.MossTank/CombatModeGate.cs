@@ -79,7 +79,7 @@ internal sealed class CombatModeGate
     {
         if (!_postedWarnings.Add(text))
             return;
-        _host.Automation.Chat.PostSystemMessage("[MossTank] " + text);
+        MossTankNotices.Announce(_host, MossTankNotices.CombatWarning, PluginNoticeSeverity.Warning, text);
     }
 
     public void Reset()
@@ -244,7 +244,13 @@ internal sealed class CombatModeGate
                 ? BuggedCombatStateWarning
                 : $"Combat-state recovery with {recovery.Name}: {use.Status}";
             if (use.Status == PluginItemCommandStatus.Started)
-                _host.Automation.Chat.PostSystemMessage("[MossTank] " + BuggedCombatStateWarning);
+            {
+                MossTankNotices.Announce(
+                    _host,
+                    MossTankNotices.CombatWarning,
+                    PluginNoticeSeverity.Warning,
+                    BuggedCombatStateWarning);
+            }
             return false;
         }
 
@@ -257,6 +263,10 @@ internal sealed class CombatModeGate
             Status = $"Entering peace mode to equip {forItemName}";
         return false;
     }
+
+    /// <summary>Whether the character carries a casting device the Items list names, the one the gate would wield to cast.</summary>
+    internal bool CarriesProfiledCaster(IReadOnlyList<PluginEquipmentItem> items) =>
+        FindFirstProfiledWand(items) is not null;
 
     private PluginEquipmentItem? FindFirstProfiledWand(
         IReadOnlyList<PluginEquipmentItem> items)
@@ -361,7 +371,12 @@ internal sealed class CombatModeGate
         Status = NoWandNotice;
         if (!_noWandNoticePosted)
         {
-            _host.Automation.Chat.PostSystemMessage("[MossTank] " + NoWandNotice);
+            MossTankNotices.Announce(
+                _host,
+                MossTankNotices.Misconfigured,
+                PluginNoticeSeverity.Error,
+                NoWandNotice,
+                MossTankNotices.Problem(MossTankNotices.NoCastingDevice));
             _noWandNoticePosted = true;
         }
         _stopMacro(NoWandNotice);

@@ -5451,6 +5451,137 @@ public sealed class MossTankPanelTests
         panel.ExecuteVtankCommand(new PluginCommand(
             "vt", arguments, "/vt " + arguments));
 
+    [Fact]
+    public void StartingTheMacroPostsEachSetupProblemOnceWhileItLasts()
+    {
+        var automation = new FakeAutomation
+        {
+            CurrentHealth = 100,
+            MaxHealth = 100,
+            CurrentStamina = 100,
+            MaxStamina = 100,
+            CurrentMana = 100,
+            MaxMana = 100,
+        };
+        var host = new FakeHost(automation);
+        var panel = new MossTankPanel(host);
+        Assert.True(panel.ChangeSharedSettings("""{"options":{"EnableNav":true,"EnableLooting":true}}""").Applied);
+        Assert.Empty(PostedProblems(host));
+
+        panel.ToggleCombat();
+        for (int tick = 0; tick < 4; tick++)
+            panel.OnTick(0.3d);
+
+        Assert.True(panel.CombatMacroRunning);
+        Assert.Equal(["loot-rules-empty", "route-empty"], PostedProblems(host).Order(StringComparer.Ordinal));
+        Assert.Contains(
+            automation.Messages,
+            static message => message.Contains("Navigation is on, but the route has no waypoints.", StringComparison.Ordinal));
+
+        Assert.True(panel.ChangeSharedSettings("""{"options":{"EnableLooting":false}}""").Applied);
+        Assert.True(panel.ChangeSharedSettings("""{"options":{"EnableLooting":true}}""").Applied);
+        for (int tick = 0; tick < 4; tick++)
+            panel.OnTick(0.3d);
+
+        Assert.Equal(
+            ["loot-rules-empty", "loot-rules-empty", "route-empty"],
+            PostedProblems(host).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void AMacroWithNothingToDoForTwoMinutesIsPostedIdleOnce()
+    {
+        var automation = new FakeAutomation
+        {
+            CurrentHealth = 100,
+            MaxHealth = 100,
+            CurrentStamina = 100,
+            MaxStamina = 100,
+            CurrentMana = 100,
+            MaxMana = 100,
+        };
+        var host = new FakeHost(automation);
+        var panel = new MossTankPanel(host);
+
+        panel.ToggleCombat();
+        for (int tick = 0; tick < 390; tick++)
+            panel.OnTick(0.3d);
+        Assert.DoesNotContain(host.FakeNotices.Posted, static notice => notice.Kind == "macro-idle");
+
+        for (int tick = 0; tick < 400; tick++)
+            panel.OnTick(0.3d);
+
+        PluginNotice idle = Assert.Single(host.FakeNotices.Posted, static notice => notice.Kind == "macro-idle");
+        Assert.Equal(PluginNoticeSeverity.Warning, idle.Severity);
+        using JsonDocument details = JsonDocument.Parse(idle.DetailsJson!);
+        Assert.True(details.RootElement.GetProperty("seconds").GetDouble() >= MossTankPanel.MacroIdleSeconds);
+    }
+
+    [Fact]
+    public void TheMacroSettingsListTheSetupProblemsAsTheyStandNow()
+    {
+        var panel = new MossTankPanel(new FakeHost(new FakeAutomation()));
+        Assert.True(panel.ChangeSharedSettings("""{"options":{"EnableNav":true}}""").Applied);
+
+        using JsonDocument macro = JsonDocument.Parse(panel.ReadSharedSettings("macro")!);
+
+        JsonElement problem = Assert.Single(macro.RootElement.GetProperty("macro").GetProperty("problems").EnumerateArray());
+        Assert.Equal("route-empty", problem.GetProperty("problem").GetString());
+        Assert.Equal("warning", problem.GetProperty("severity").GetString());
+        Assert.Equal("Navigation is on, but the route has no waypoints.", problem.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public void NoCastingDeviceOnTheItemsListIsASetupProblemUntilACarriedOneIsAdded()
+    {
+        var automation = new CombatCapableFakeAutomation
+        {
+            ItemEntries = [Item(10, "War Wand", itemType: 0x00008000u)],
+            EquipmentItems = [EquipmentItem(10, "War Wand", itemType: 0x00008000u)],
+        };
+        var panel = new MossTankPanel(new FakeHost(automation));
+
+        SetupProblem missing = Assert.Single(panel.SetupProblems());
+        Assert.Equal("no-casting-device", missing.Problem);
+        Assert.Equal(PluginNoticeSeverity.Error, missing.Severity);
+
+        Assert.True(panel.ChangeSharedSettings("""{"items":{"add":["War Wand"]}}""").Applied);
+
+        Assert.Empty(panel.SetupProblems());
+    }
+
+    [Fact]
+    public void AMonsterRuleWeaponTheCharacterDoesNotCarryIsASetupProblemNamingTheRule()
+    {
+        var automation = new CombatCapableFakeAutomation
+        {
+            ItemEntries = [Item(10, "War Wand", itemType: 0x00008000u)],
+            EquipmentItems = [EquipmentItem(10, "War Wand", itemType: 0x00008000u)],
+        };
+        var panel = new MossTankPanel(new FakeHost(automation));
+        Assert.True(panel.ChangeSharedSettings(
+            """{"items":{"add":["War Wand"]},"monsters":{"set":[{"name":"Drudge","weapon":"Ancient Sword"}]}}""").Applied);
+
+        SetupProblem problem = Assert.Single(panel.SetupProblems());
+        Assert.Equal("rule-weapon-not-carried", problem.Problem);
+        Assert.Equal("Drudge", problem.Subject);
+        Assert.Contains("Ancient Sword", problem.Message, StringComparison.Ordinal);
+
+        automation.EquipmentItems =
+        [
+            EquipmentItem(10, "War Wand", itemType: 0x00008000u),
+            EquipmentItem(11, "Ancient Sword", itemType: 1u),
+        ];
+
+        Assert.Empty(panel.SetupProblems());
+    }
+
+    private static string[] PostedProblems(FakeHost host) =>
+        host.FakeNotices.Posted
+            .Where(static notice => notice.Kind == "misconfigured")
+            .Select(static notice => JsonDocument.Parse(notice.DetailsJson!).RootElement.GetProperty("problem").GetString()!)
+            .ToArray();
+
     private sealed class FakeHost(
         IAutomationSurface automation,
         IPluginStorage? storage = null,
@@ -5471,6 +5602,8 @@ public sealed class MossTankPanelTests
             lootClassifiers ?? NoOpPluginLootClassifierRegistry.Instance;
         public IPluginStorage VtankProfiles { get; } =
             vtankProfiles ?? storage ?? NoOpPluginStorage.Instance;
+        public RecordingNotices FakeNotices { get; } = new();
+        public IPluginNoticeBoard Notices => FakeNotices;
     }
 
     private sealed class FakeLootClassifierRegistry(

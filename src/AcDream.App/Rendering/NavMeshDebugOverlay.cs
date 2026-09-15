@@ -9,13 +9,17 @@ namespace AcDream.App.Rendering;
 /// The navigation view. The route of a walk under way, or of a route asked for
 /// alone, is drawn as a magenta line from the character along the legs still to
 /// walk, a leap drawn as an arc, with a dimmer line on to a goal beyond a stage.
-/// While the grid is shown it adds the grid around the player, the path the
+/// While the grid is shown it adds the grid around the player: every tight
+/// point in red and every second clear point in green. It also adds the path the
 /// route was straightened from, a post at the end of every leg, and an orange
 /// cylinder around each object the server placed that routes keep out of.
+/// Everything it draws is hidden behind walls, floors and ceilings, as the world is.
 /// </summary>
 internal sealed class NavMeshDebugOverlay
 {
     internal const float DrawRadius = 20f;
+
+    /// <summary>Clear points are drawn on every second column and row; tight points, beside a ledge or near a wall, are all drawn.</summary>
     internal const int DrawStride = 2;
 
     private const float MarkerHalfSize = 0.08f;
@@ -52,39 +56,54 @@ internal sealed class NavMeshDebugOverlay
         if (showGrid && player is not null)
         {
             foreach (NavAvoidance obstacle in _walk.ObstaclesNear(player.Position, DrawRadius))
-                lines.AddCylinder(obstacle.Centre, obstacle.Radius, ObstacleHeight, ObstacleColour);
+                lines.AddCylinder(obstacle.Centre, obstacle.Radius, ObstacleHeight, ObstacleColour, hiddenByScene: true);
         }
         DrawRoute(lines, player?.Position, showGrid);
     }
 
     private static void DrawGrid(DebugLineRenderer lines, NavGrid grid, Vector3 centre)
     {
+        var alongX = new Vector3(MarkerHalfSize, 0f, 0f);
+        var alongY = new Vector3(0f, MarkerHalfSize, 0f);
+        foreach ((Vector3 at, bool clear) in GridMarks(grid, centre))
+        {
+            Vector3 colour = clear ? ClearColour : TightColour;
+            lines.AddLine(at - alongX, at + alongX, colour, hiddenByScene: true);
+            lines.AddLine(at - alongY, at + alongY, colour, hiddenByScene: true);
+        }
+    }
+
+    /// <summary>
+    /// Where the grid's points around a centre are drawn, and whether each is clear: every
+    /// tight point within <see cref="DrawRadius"/> across, and the clear ones on every
+    /// <see cref="DrawStride"/>th column and row.
+    /// </summary>
+    internal static IEnumerable<(Vector3 At, bool Clear)> GridMarks(NavGrid grid, Vector3 centre)
+    {
         int reach = (int)(DrawRadius / grid.CellSize);
         int centreX = (int)MathF.Floor((centre.X - grid.OriginX) / grid.CellSize);
         int centreY = (int)MathF.Floor((centre.Y - grid.OriginY) / grid.CellSize);
         int startX = Math.Max(0, centreX - reach);
         int startY = Math.Max(0, centreY - reach);
-        startX -= startX % DrawStride;
-        startY -= startY % DrawStride;
         int endX = Math.Min(grid.Side - 1, centreX + reach);
         int endY = Math.Min(grid.Side - 1, centreY + reach);
-        var alongX = new Vector3(MarkerHalfSize, 0f, 0f);
-        var alongY = new Vector3(0f, MarkerHalfSize, 0f);
-        for (int y = startY; y <= endY; y += DrawStride)
+        for (int y = startY; y <= endY; y++)
         {
-            for (int x = startX; x <= endX; x += DrawStride)
+            for (int x = startX; x <= endX; x++)
             {
+                bool onStride = x % DrawStride == 0 && y % DrawStride == 0;
                 (int first, int count) = grid.NodesInColumn(x, y);
                 for (int node = first; node < first + count; node++)
                 {
-                    Vector3 at = grid.Position(node) + NodeLift;
-                    float dx = at.X - centre.X;
-                    float dy = at.Y - centre.Y;
+                    bool clear = grid.IsClear(node);
+                    if (clear && !onStride)
+                        continue;
+                    Vector3 position = grid.Position(node);
+                    float dx = position.X - centre.X;
+                    float dy = position.Y - centre.Y;
                     if ((dx * dx) + (dy * dy) > DrawRadius * DrawRadius)
                         continue;
-                    Vector3 colour = grid.IsClear(node) ? ClearColour : TightColour;
-                    lines.AddLine(at - alongX, at + alongX, colour);
-                    lines.AddLine(at - alongY, at + alongY, colour);
+                    yield return (position + NodeLift, clear);
                 }
             }
         }
@@ -93,28 +112,28 @@ internal sealed class NavMeshDebugOverlay
     private void DrawRoute(DebugLineRenderer lines, Vector3? character, bool showGrid)
     {
         if (_walk.Goal is { } goal)
-            lines.AddCylinder(goal.Position, goal.ArrivalMeters, 0.1f, RouteColour);
+            lines.AddCylinder(goal.Position, goal.ArrivalMeters, 0.1f, RouteColour, hiddenByScene: true);
         if (_walk.Route is not { Outcome: NavRouteOutcome.Routed } route || route.Legs.Count == 0)
             return;
 
         if (showGrid)
         {
             for (int index = 1; index < route.Path.Count; index++)
-                lines.AddLine(route.Path[index - 1] + PathLift, route.Path[index] + PathLift, PathColour);
+                lines.AddLine(route.Path[index - 1] + PathLift, route.Path[index] + PathLift, PathColour, hiddenByScene: true);
             foreach (Vector3 end in route.Legs)
-                lines.AddLine(end, end + LegPost, RouteColour);
+                lines.AddLine(end, end + LegPost, RouteColour, hiddenByScene: true);
         }
 
         int next = 1;
         if (_walk.LegIndex is { } walking && character is { } at && walking < route.Legs.Count)
         {
-            lines.AddLine(at + RouteLift, route.Legs[walking] + RouteLift, RouteColour);
+            lines.AddLine(at + RouteLift, route.Legs[walking] + RouteLift, RouteColour, hiddenByScene: true);
             next = walking + 1;
         }
         for (int index = Math.Max(next, 1); index < route.Legs.Count; index++)
             DrawLeg(lines, route, index);
         if (_walk.IsStaged && _walk.Goal is { } beyond)
-            lines.AddLine(route.Legs[^1] + RouteLift, beyond.Position + RouteLift, BeyondColour);
+            lines.AddLine(route.Legs[^1] + RouteLift, beyond.Position + RouteLift, BeyondColour, hiddenByScene: true);
     }
 
     /// <summary>Draws one leg of a route: a straight line, or an arc for a leap.</summary>
@@ -124,7 +143,7 @@ internal sealed class NavMeshDebugOverlay
         Vector3 to = route.Legs[index] + RouteLift;
         if (!route.Leaps.Any(leap => leap.LegIndex == index))
         {
-            lines.AddLine(from, to, RouteColour);
+            lines.AddLine(from, to, RouteColour, hiddenByScene: true);
             return;
         }
         Vector3 previous = from;
@@ -132,7 +151,7 @@ internal sealed class NavMeshDebugOverlay
         {
             float along = segment / (float)LeapArcSegments;
             Vector3 point = Vector3.Lerp(from, to, along) + new Vector3(0f, 0f, LeapArcHeight * 4f * along * (1f - along));
-            lines.AddLine(previous, point, RouteColour);
+            lines.AddLine(previous, point, RouteColour, hiddenByScene: true);
             previous = point;
         }
     }

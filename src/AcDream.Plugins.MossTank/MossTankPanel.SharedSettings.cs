@@ -23,7 +23,7 @@ internal sealed partial class MossTankPanel
     private static string DamageWords => string.Join(", ", Enum.GetNames<MonsterDamageType>());
 
     internal static string SharedSettingsHelp =>
-        "MossTank's settings come in sections: macro (whether it runs and what it is doing), options (every "
+        "MossTank's settings come in sections: macro (whether it runs, what it is doing, and the problems in its setup), options (every "
         + "option by name, the advanced ones included), monsters (the monster rules, in order), items (the items "
         + "and consumables it uses), buffs (extra buff spells and blacklisted buff families), profiles, loot and "
         + "route. Change them with one JSON object holding any of the parts below. A change wrong in any part "
@@ -118,6 +118,8 @@ internal sealed partial class MossTankPanel
             return new PluginSettingsChangeResult(false, "Nothing was changed: " + string.Join("; ", problems) + ".");
 
         ApplySharedChange(plan);
+        if (_combat.Enabled && _setupChecked)
+            PostSetupProblems();
         var changed = new JsonObject();
         foreach ((string part, _) in change)
             changed[part] = SharedSection(part);
@@ -135,6 +137,7 @@ internal sealed partial class MossTankPanel
             ["navigation"] = _navigation.Status,
             ["metaState"] = _meta.CurrentState,
             ["holdingWalks"] = WalkPauseReason,
+            ["problems"] = SharedProblems(),
         },
         "options" => SharedOptions(),
         "monsters" => new JsonArray([.. _combatSettings.Rules.Select(static rule => (JsonNode?)SharedMonster(rule))]),

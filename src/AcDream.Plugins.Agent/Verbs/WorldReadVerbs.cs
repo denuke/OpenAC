@@ -57,7 +57,16 @@ internal sealed class WorldReadVerbs : IVerbFamily
     {
         int limit = ExploreShown;
         string[] words = line.Arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        for (int index = 0; index < words.Length; index++)
+        bool tour = words.Length > 0 && words[0].Equals("tour", StringComparison.OrdinalIgnoreCase);
+        string[]? endWords = null;
+        int first = tour ? 1 : 0;
+        if (tour && words.Length > 1 && words[1].Equals("to", StringComparison.OrdinalIgnoreCase))
+        {
+            int limitAt = Array.FindIndex(words, 2, word => word.Equals("limit", StringComparison.OrdinalIgnoreCase));
+            first = limitAt < 0 ? words.Length : limitAt;
+            endWords = words[2..first];
+        }
+        for (int index = first; index < words.Length; index++)
         {
             if (words[index].Equals("limit", StringComparison.OrdinalIgnoreCase)
                 && index + 1 < words.Length
@@ -69,7 +78,9 @@ internal sealed class WorldReadVerbs : IVerbFamily
             }
             else
             {
-                return RefuseExplore(line, $"'{words[index]}' is not understood; use explore [limit <n>]");
+                return RefuseExplore(
+                    line,
+                    $"'{words[index]}' is not understood; use explore [limit <n>], or explore tour [to <north-south> <east-west> [elevation]] [limit <n>]");
             }
         }
 
@@ -82,6 +93,8 @@ internal sealed class WorldReadVerbs : IVerbFamily
         PluginPlacesReport report = automation.Navigation.CapturePlaces();
         if (report.State == PluginPlacesState.Unavailable)
             return RefuseExplore(line, report.Reason ?? "the client cannot find places now");
+        if (tour)
+            return Tour(line, self.Position, report, endWords, limit);
 
         IReadOnlyList<PluginNavigationPlace> places = report.Places ?? [];
         var kinds = new SortedDictionary<string, int>(StringComparer.Ordinal);
@@ -91,13 +104,7 @@ internal sealed class WorldReadVerbs : IVerbFamily
         {
             string kind = KindWord(place.Kind);
             kinds[kind] = kinds.TryGetValue(kind, out int seen) ? seen + 1 : 1;
-            bool been = place.Kind switch
-            {
-                PluginPlaceKind.Landblock => _visited.HasBeenIn(place.LandblockId),
-                PluginPlaceKind.Building => _visited.IsNear(place.Position, BuildingNearMeters),
-                _ => _visited.IsNear(place.Position, place.WidthMeters / 2d),
-            };
-            (been ? visited : unvisited).Add(place);
+            (Visited(place) ? visited : unvisited).Add(place);
         }
         PluginNavigationPosition here = self.Position;
         double Nearness(PluginNavigationPlace place) =>
@@ -160,6 +167,120 @@ internal sealed class WorldReadVerbs : IVerbFamily
             record["note"] = "these places were found from where the character stood before; ask again in a moment for walks from here";
         _publisher.Publish(RecordKinds.Explore, record);
         return VerbResult.Handled;
+    }
+
+    /// <summary>Whether the character has stood near a place: in a landblock, near a building's origin, or within half a place's width.</summary>
+    private bool Visited(in PluginNavigationPlace place) => place.Kind switch
+    {
+        PluginPlaceKind.Landblock => _visited.HasBeenIn(place.LandblockId),
+        PluginPlaceKind.Building => _visited.IsNear(place.Position, BuildingNearMeters),
+        _ => _visited.IsNear(place.Position, place.WidthMeters / 2d),
+    };
+
+    /// <summary>
+    /// One way through every room, passage and open ground not yet visited, from the place
+    /// nearest the character to the far end of the ground a walk reaches, or to the place
+    /// nearest a given end, with the stops in order and a MossTank route that walks them once
+    /// with the client's route planning.
+    /// </summary>
+    private VerbResult Tour(CommandLine line, in PluginNavigationPosition here, PluginPlacesReport report, string[]? endWords, int limit)
+    {
+        IReadOnlyList<PluginNavigationPlace> places = report.Places ?? [];
+        int? endAt = null;
+        if (endWords is not null)
+        {
+            if (!MotorVerbs.TryReadPlace(endWords, here, out PluginNavigationPosition asked))
+                return RefuseExplore(line, "a tour ends at a place in map coordinates, such as explore tour to 24.30537 -101.10833 0.00002");
+            endAt = NearestWalkablePlace(places, asked);
+        }
+        string state = report.State == PluginPlacesState.Mapping
+            ? "mapping"
+            : Geometry.DistanceMeters(here, report.From) > StalePlacesMeters ? "refreshing" : "ready";
+        int end = -1;
+        List<int> order = state == "mapping" ? [] : PlaceTour.Order(places, endAt, index => Visited(places[index]), out end);
+
+        var rows = new JsonArray();
+        var waypoints = new JsonArray();
+        for (int stop = 0; stop < order.Count; stop++)
+        {
+            PluginNavigationPlace place = places[order[stop]];
+            waypoints.Add(new JsonObject
+            {
+                ["point"] = new JsonObject
+                {
+                    ["northSouth"] = Math.Round(place.Position.NorthSouth, Coordinates.Decimals),
+                    ["eastWest"] = Math.Round(place.Position.EastWest, Coordinates.Decimals),
+                    ["elevation"] = Math.Round(place.Position.Elevation, Coordinates.Decimals),
+                },
+            });
+            if (rows.Count >= limit)
+                continue;
+            rows.Add(new JsonObject
+            {
+                ["stop"] = stop + 1,
+                ["kind"] = KindWord(place.Kind),
+                ["notes"] = Notes(here, place),
+                ["place"] = Coordinates.DescribePlace(place.Position),
+                ["walk"] = float.IsFinite(place.WalkMeters) ? Math.Round(place.WalkMeters, 1) : null,
+                ["exits"] = place.Exits,
+            });
+        }
+        var record = new JsonObject
+        {
+            ["id"] = line.Id,
+            ["state"] = state,
+            ["region"] = report.InDungeon ? "dungeon" : "land",
+            ["center"] = Coordinates.Describe(here),
+            ["found"] = places.Count,
+            ["stops"] = order.Count,
+            ["shown"] = rows.Count,
+            ["end"] = end >= 0
+                ? new JsonObject
+                {
+                    ["kind"] = KindWord(places[end].Kind),
+                    ["place"] = Coordinates.DescribePlace(places[end].Position),
+                    ["why"] = endAt == end ? "nearest the end asked for" : "farthest a walk reaches from the character",
+                    ["visited"] = Visited(places[end]),
+                }
+                : null,
+            ["tour"] = rows,
+            ["route"] = new JsonObject
+            {
+                ["enabled"] = true,
+                ["mode"] = "Once",
+                ["walkLegs"] = true,
+                ["waypoints"] = waypoints,
+            },
+        };
+        record["note"] = state switch
+        {
+            "mapping" => "the client is still mapping the ground around the character; ask again in a few seconds",
+            "refreshing" => "this tour starts from where the character stood before; ask again in a moment for one from here",
+            _ when order.Count == 0 => "every place a walk reaches has been visited",
+            _ => "send configure mosstank with this route as its route part and its macro running to walk the tour; "
+                + "ask for a new tour after it finishes or stops, and places walked near are left out",
+        };
+        _publisher.Publish(RecordKinds.ExploreTour, record);
+        return VerbResult.Handled;
+    }
+
+    /// <summary>The room, passage or open ground nearest a position, or null when there is none.</summary>
+    private static int? NearestWalkablePlace(IReadOnlyList<PluginNavigationPlace> places, in PluginNavigationPosition position)
+    {
+        int nearest = -1;
+        double nearestMeters = double.MaxValue;
+        for (int index = 0; index < places.Count; index++)
+        {
+            if (places[index].Kind is not (PluginPlaceKind.Room or PluginPlaceKind.Passage or PluginPlaceKind.Open))
+                continue;
+            double meters = Geometry.DistanceMeters(position, places[index].Position);
+            if (meters < nearestMeters)
+            {
+                nearest = index;
+                nearestMeters = meters;
+            }
+        }
+        return nearest < 0 ? null : nearest;
     }
 
     /// <summary>How far the character may stand from where places were found before they are found again.</summary>

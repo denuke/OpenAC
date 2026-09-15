@@ -256,6 +256,18 @@ public readonly record struct PluginNavigationPlace(
 
     /// <summary>Whether a landblock's middle lies under water.</summary>
     public bool IsWater { get; init; }
+
+    private readonly IReadOnlyList<int>? _neighbours;
+
+    /// <summary>
+    /// The places this one opens onto, as indices into the same report's <see cref="PluginPlacesReport.Places"/>,
+    /// lowest first; none for a building or a landblock.
+    /// </summary>
+    public IReadOnlyList<int> Neighbours
+    {
+        get => _neighbours ?? [];
+        init => _neighbours = value;
+    }
 }
 
 public enum PluginPlacesState

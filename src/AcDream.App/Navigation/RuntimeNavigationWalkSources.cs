@@ -13,6 +13,9 @@ namespace AcDream.App.Navigation;
 /// <summary>The local player's body, sampled from its movement controller and moved with scripted moves.</summary>
 internal sealed class RuntimeNavigationWalkBody : INavigationWalkBody
 {
+    /// <summary>How fast a character turns at a walk, 1.5 radians a second as its motion table sets; at a run it turns half again as fast.</summary>
+    private const float WalkTurnDegreesPerSecond = 1.5f * (180f / MathF.PI);
+
     private readonly RuntimeLocalPlayerMovementState _movement;
     private readonly IRuntimePortalView _portal;
 
@@ -42,7 +45,12 @@ internal sealed class RuntimeNavigationWalkBody : INavigationWalkBody
             jumpHeight > 0f
                 ? new NavLeapAbility(MotionInterpreter.WalkAnimSpeed, controller.RunSpeed, jumpHeight, NavigationWalkController.SafeDropMeters)
                 : null,
-            controller.IsAirborne);
+            controller.IsAirborne,
+            new RuntimeRouteTurning(
+                controller.RunSpeed,
+                WalkTurnDegreesPerSecond * MotionInterpreter.RunTurnFactor,
+                MotionInterpreter.WalkAnimSpeed,
+                WalkTurnDegreesPerSecond));
         return true;
     }
 

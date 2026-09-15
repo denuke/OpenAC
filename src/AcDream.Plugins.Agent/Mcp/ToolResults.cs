@@ -61,7 +61,10 @@ internal static class ToolArguments
             : null;
 
     internal static double WaitSeconds(JsonObject arguments) =>
-        Math.Clamp(Number(arguments, "waitSeconds") ?? 0d, 0d, McpToolHost.MaximumWaitSeconds);
+        WaitSeconds(arguments, McpToolHost.MaximumWaitSeconds);
+
+    internal static double WaitSeconds(JsonObject arguments, double maximum) =>
+        Math.Clamp(Number(arguments, "waitSeconds") ?? 0d, 0d, maximum);
 }
 
 internal static class ToolDefinitions
@@ -93,9 +96,13 @@ internal static class ToolDefinitions
         },
     };
 
-    internal static JsonObject WaitProperty() => new()
+    internal static JsonObject WaitProperty() => WaitProperty(McpToolHost.MaximumWaitSeconds);
+
+    internal static JsonObject WaitProperty(double maximum) => new()
     {
         ["type"] = "number",
-        ["description"] = "Seconds to wait for an answer, up to 30. Omit to answer at once.",
+        ["description"] = string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"Seconds to wait for an answer, up to {maximum:0}. Omit to answer at once."),
     };
 }

@@ -132,6 +132,7 @@ internal sealed class FakeCharacter : ICharacterInfo
     public string Name { get; set; } = "Tester";
     public string WorldName { get; set; } = "Testworld";
     public int Level { get; set; }
+    public long TotalExperience { get; set; }
     public int MainPackFreeSlots { get; set; }
     public uint ObjectId { get; set; } = 0x50000001u;
     public uint CurrentHealth { get; set; }

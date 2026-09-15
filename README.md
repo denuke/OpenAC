@@ -91,12 +91,18 @@ See [docs/agent-plugin.md](docs/agent-plugin.md).
   landblocks, and into dungeons.
 - `go to <id | name | target> [within <m>]`:
   - Walks the route and opens closed doors on the way.
+  - Runs around corners without stopping wherever the turn's arc stays on
+    the floor, brushing walls at most, and turns in place only where no arc
+    fits, at hairpins, and at jumps.
   - Re-plans around any spot where the character gets stuck.
   - Arrives where the target is actually in view, and faces it.
   - Ends `completed`, `no-route`, or `blocked`, with remaining distance and
     what (if anything) blocked it.
 - Debug keys: **F4** shows the navmesh, **F5** draws a route to the
   selection, and **F6** walks there. On the retail keymap, add Ctrl.
+  The navmesh marks every point beside a ledge or too near a wall in red,
+  and clear points in green every 0.5 m. The grid and the route line are
+  hidden behind walls, floors and ceilings, as the world is.
 - Plugin API: `INavigationAutomation.GoTo`, `StopGoTo`, `GoToReport`.
 
 ### Line of sight

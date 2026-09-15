@@ -85,9 +85,15 @@ public readonly record struct PluginCombatCommandResult(
         or PluginCombatCommandStatus.Stopped;
 }
 
+/// <summary>A creature the character killed: the order the client heard of it in, and the creature.</summary>
+public readonly record struct PluginKill(long Sequence, uint VictimObjectId, string VictimName);
+
 public interface ICombatAutomation
 {
     PluginCombatSnapshot Snapshot { get; }
+
+    /// <summary>The kills the client heard of after <paramref name="afterSequence"/>, oldest first, among the most recent it keeps.</summary>
+    IReadOnlyList<PluginKill> CaptureKills(long afterSequence) => Array.Empty<PluginKill>();
 
     IReadOnlyList<PluginCombatTarget> CaptureHostileTargets(float maximumDistance);
 

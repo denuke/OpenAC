@@ -109,10 +109,18 @@ internal static class ReadTools
             + "stairs or ramp, above or below, its floor area, width, rise and exits, the walk's length, the straight "
             + "distance and bearing, and a go line to send through act as written. Ask again after walking somewhere: "
             + "the order follows the character. The first ask maps the ground and can answer mapping, and an answer "
-            + "found from where the character stood before says refreshing; ask again in a few seconds."
+            + "found from where the character stood before says refreshing; ask again in a few seconds. With tour, "
+            + "the answer is instead one way through every place not yet visited, from where the character stands to "
+            + "the dungeon's far end or the given end, clearing side branches before the way on, with a MossTank route "
+            + "that walks it to send as the route part of configure."
             + Nothing,
             () => new JsonObject
             {
+                ["tour"] = Property("boolean", "Give one tour through every place not yet visited instead of the nearest places."),
+                ["end"] = Property(
+                    "string",
+                    "With tour, where it ends, such as a surface portal, in map coordinates the way go to takes them: "
+                    + "24.30537 -101.10833 0.00002. Without it the tour ends at the place farthest from the character."),
                 ["limit"] = LimitProperty(),
             },
             [],
@@ -153,6 +161,16 @@ internal static class ReadTools
             () => new JsonObject(),
             [],
             _ => ReadLine.Of("buffs")),
+        new ReadTool(context, "trends", "How am I doing?",
+            "Experience, kills and items gained per hour over the last 5 and 60 minutes, items gained and "
+            + "spent per hour by name, such as spell components, and seconds since the character last gained "
+            + "experience, killed, gained an item and moved. A rate is null until a minute of its window has "
+            + "been counted. events delivers a trends record every minute, so until can wake a wait on a rate, "
+            + "such as [\"xpPerHour.60m\", \"<\", 1000000]."
+            + Nothing,
+            () => new JsonObject(),
+            [],
+            _ => ReadLine.Of("trends")),
         new ReadTool(context, "inventory", "What am I carrying?",
             "Everything the character carries: id, name, kind, stack size, value, burden, which pack "
             + "holds it and whether it is equipped, with the free main-pack slots. Pass search to narrow "
@@ -247,7 +265,16 @@ internal static class ReadTools
         return ReadLine.Of(line);
     }
 
-    private static ReadLine Explore(JsonObject arguments) => Limited("explore", arguments);
+    private static ReadLine Explore(JsonObject arguments)
+    {
+        bool tour = false;
+        if (arguments["tour"] is { } tourNode && !(tourNode is JsonValue value && value.TryGetValue(out tour)))
+            return ReadLine.Refuse("tour must be true or false");
+        string? end = ToolArguments.Text(arguments, "end")?.Trim();
+        if (end is not null && (!tour || end.Length == 0 || end.Any(char.IsControl)))
+            return ReadLine.Refuse("end goes with tour, as a place in map coordinates such as 24.30537 -101.10833 0.00002");
+        return Limited(tour ? end is null ? "explore tour" : "explore tour to " + end : "explore", arguments);
+    }
 
     private static ReadLine Inspect(JsonObject arguments)
     {

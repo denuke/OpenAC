@@ -34,6 +34,7 @@ public sealed class NavGridTests
 
         Assert.Equal([NavPlaceKind.Room, NavPlaceKind.Passage, NavPlaceKind.Room], places.Select(place => place.Kind));
         Assert.Equal([1, 2, 1], places.Select(place => place.Exits));
+        Assert.Equal(["1", "0,2", "1"], places.Select(place => string.Join(",", place.Neighbours)));
         Assert.InRange(places[0].Position.X, 4f, 8f);
         Assert.InRange(places[2].Position.X, 32f, 36f);
         Assert.True(places[1].WidthMeters < places[0].WidthMeters);
@@ -418,6 +419,23 @@ public sealed class NavGridTests
             float distance = DistanceToSegment(corner, route.Legs[leg - 1], route.Legs[leg]);
             Assert.True(distance >= 0.85f, $"leg {leg} passes within {distance:0.00} m of the corner");
         }
+    }
+
+    [Fact]
+    public void ABodyMayBrushAWallAlongAPathButNotCrossOneOrLeaveItsFloor()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 10f, 10f, 0f),
+            .. Wall(5f, 0f, 5f, 4f, 0f, 3f)]);
+        int west = grid.FindNode(new Vector3(2.125f, 4.375f, 0f), 0.1f, 0.5f);
+        int east = grid.FindNode(new Vector3(8.125f, 4.375f, 0f), 0.1f, 0.5f);
+
+        Assert.False(grid.CanWalkStraight(west, east), "a walked leg keeps farther from the wall's end");
+        Assert.True(grid.CanBrushAlong([grid.Position(west), new Vector3(5f, 4.375f, 0f), grid.Position(east)]));
+        Assert.False(grid.CanBrushAlong([new Vector3(2.125f, 2.125f, 0f), new Vector3(8.125f, 2.125f, 0f)]), "through the wall");
+        Assert.False(grid.CanBrushAlong([new Vector3(5.125f, 1f, 0f), new Vector3(5.125f, 3f, 0f)]), "pressed against the wall");
+        Assert.False(grid.CanBrushAlong([new Vector3(8.125f, 8.125f, 0f), new Vector3(11f, 8.125f, 0f)]), "off the floor");
+        Assert.False(grid.CanBrushAlong([new Vector3(2.125f, 8.125f, 5f), new Vector3(4.125f, 8.125f, 5f)]), "far above the floor");
     }
 
     [Fact]

@@ -51,7 +51,17 @@ public sealed record SpellMetadata(
 
     public bool IsSelfTargeted => (Flags & (uint)SpellFlags.SelfTargeted) != 0;
     public bool IsBeneficial => (Flags & (uint)SpellFlags.Beneficial) != 0;
-    public bool IsProjectile => (Flags & (uint)SpellFlags.Projectile) != 0;
+    /// <summary>
+    /// Whether the spell flies to its target: a war bolt, streak or arc, a life projectile,
+    /// or an enchantment a projectile carries. Retail spells say so by their meta spell type;
+    /// none of them sets the Projectile flag.
+    /// </summary>
+    public bool IsProjectile =>
+        (Flags & (uint)SpellFlags.Projectile) != 0
+        || (DatReaderWriter.Enums.SpellType)SpellType
+            is DatReaderWriter.Enums.SpellType.Projectile
+            or DatReaderWriter.Enums.SpellType.LifeProjectile
+            or DatReaderWriter.Enums.SpellType.EnchantmentProjectile;
 }
 
 public readonly record struct SpellComponentSet(

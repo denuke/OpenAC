@@ -16,6 +16,9 @@ internal interface IBuffRuleHost
 
     void Announce(string text);
 
+    /// <summary>Says a warning in chat and posts it as a notice.</summary>
+    void Warn(string text) => Announce(text);
+
     /// <summary><c>ga.a(string, eLogState)</c>, gated by <c>/vt log</c>.</summary>
     void Log(MacroLogChannel channel, string message);
 
@@ -295,7 +298,7 @@ internal sealed class BuffSelfRule
     {
         if (!_itemMissingWarnings.Add(text))
             return;
-        _owner.Announce(text);
+        _owner.Warn(text);
         _owner.MirrorToLog(MacroLogChannel.Misc, text);
     }
 

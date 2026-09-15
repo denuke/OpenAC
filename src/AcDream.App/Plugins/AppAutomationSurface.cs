@@ -74,6 +74,13 @@ internal sealed class AppAutomationSurface
     private AcDream.App.Navigation.NavigationWalkController? _navigationWalk;
     private readonly List<Func<string?>> _goToPauses = [];
     private IDisposable? _communicationSubscription;
+
+    /// <summary>How many kills the surface keeps for plugins to read.</summary>
+    internal const int MaximumPluginKills = 200;
+
+    private readonly List<PluginKill> _kills = [];
+    private long _killSequence;
+    private AcDream.Core.Combat.CombatState? _combat;
     private readonly List<PluginChatMessage> _chatMessages = [];
     private ulong _pluginChatSequence;
     private long _inventoryCompletionRevision;
@@ -412,6 +419,8 @@ internal sealed class AppAutomationSurface
             _communication = runtime.CommunicationOwner;
             _communicationSubscription =
                 runtime.CommunicationOwner.Events.Subscribe(this);
+            _combat = runtime.ActionOwner.Combat;
+            _combat.KillLanded += OnKillLanded;
             _character = character;
             _cast = cast;
             _spellbook = spellbook;
@@ -580,6 +589,10 @@ internal sealed class AppAutomationSurface
         }
         _communicationSubscription?.Dispose();
         _communicationSubscription = null;
+        if (_combat is not null)
+            _combat.KillLanded -= OnKillLanded;
+        _combat = null;
+        _kills.Clear();
         _chatMessages.Clear();
         if (_spellbook is not null)
         {
@@ -919,6 +932,21 @@ internal sealed class AppAutomationSurface
             return runtime.InventoryOwner.Objects
                 .Get(runtime.PlayerIdentity.ServerGuid)?
                 .Properties.GetInt((uint)PropertyInt.Level) ?? 0;
+        }
+    }
+
+    public long TotalExperience
+    {
+        get
+        {
+            GameRuntime? runtime;
+            lock (_gate)
+                runtime = _runtime;
+            if (runtime is null)
+                return 0L;
+            return runtime.InventoryOwner.Objects
+                .Get(runtime.PlayerIdentity.ServerGuid)?
+                .Properties.GetInt64((uint)PropertyInt64.TotalExperience) ?? 0L;
         }
     }
 
@@ -1964,6 +1992,7 @@ internal sealed class AppAutomationSurface
             {
                 LandblockId = place.LandblockId,
                 IsWater = place.IsWater,
+                Neighbours = place.Neighbours,
             };
         }
         PluginPlacesState state = report.State switch
@@ -4059,6 +4088,24 @@ internal sealed class AppAutomationSurface
                 CompletionSequence = attack.CompletionSequence,
                 CompletionWeenieError = attack.CompletionWeenieError,
             };
+        }
+    }
+
+    public IReadOnlyList<PluginKill> CaptureKills(long afterSequence)
+    {
+        lock (_gate)
+            return _kills.Where(kill => kill.Sequence > afterSequence).ToArray();
+    }
+
+    private void OnKillLanded(string victimName, uint victimGuid)
+    {
+        lock (_gate)
+        {
+            if (_disposed)
+                return;
+            _kills.Add(new PluginKill(++_killSequence, victimGuid, victimName ?? string.Empty));
+            if (_kills.Count > MaximumPluginKills)
+                _kills.RemoveRange(0, _kills.Count - MaximumPluginKills);
         }
     }
 

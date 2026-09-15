@@ -201,7 +201,7 @@ internal sealed class CombatController
         if (Enabled)
         {
             Disable("Macro stopped");
-            _host.Automation.Chat.PostSystemMessage("[MossTank] Macro stopped.");
+            MossTankNotices.Announce(_host, MossTankNotices.MacroStopped, PluginNoticeSeverity.Info, "Macro stopped.");
             return;
         }
 
@@ -216,7 +216,7 @@ internal sealed class CombatController
         _combatPolicySuspended = !_settings.Enabled;
         _untilScan = 0d;
         Status = _settings.Enabled ? "Scanning for targets" : "Combat disabled";
-        _host.Automation.Chat.PostSystemMessage("[MossTank] Macro started.");
+        MossTankNotices.Announce(_host, MossTankNotices.MacroStarted, PluginNoticeSeverity.Info, "Macro started.");
     }
 
     public void SetPaused(bool paused)
@@ -354,7 +354,9 @@ internal sealed class CombatController
         if (_targetId == 0u)
         {
             StopApproachMovement();
-            Status = "Waiting for a target";
+            Status = _walledNote is null
+                ? "Waiting for a target"
+                : $"Waiting for a target: {_walledNote}";
             return;
         }
 
@@ -808,7 +810,7 @@ internal sealed class CombatController
     {
         if (!_postedAttackWarnings.Add(text))
             return;
-        _host.Automation.Chat.PostSystemMessage("[MossTank] " + text);
+        MossTankNotices.Announce(_host, MossTankNotices.CombatWarning, PluginNoticeSeverity.Warning, text);
     }
 
     private readonly HashSet<string> _postedAttackWarnings =
@@ -2161,11 +2163,10 @@ internal sealed class CombatController
             }
         }
 
-        CombatTargetCandidate chosen = CombatTargetSelector.Select(
+        CombatTargetCandidate chosen = SelectReachable(
             candidates,
-            _settings.DebuffEachFirst,
-            _settings.SelectionMethod,
-            _settings.TargetSelectAngleRange,
+            equipment,
+            combat.Mode,
             wieldedWeapon,
             wieldedOffhand);
 
@@ -2198,6 +2199,108 @@ internal sealed class CombatController
         }
         return (weapon, offhand);
     }
+
+    /// <summary>How many candidates one target choice traces shots at before it takes the best one left.</summary>
+    internal const int MaximumTargetTraces = 4;
+
+    /// <summary>Why the macro waits when every monster in range was passed over for a wall, or null.</summary>
+    private string? _walledNote;
+
+    /// <summary>
+    /// The best candidate a shot can reach. With projectile awareness on, the best candidate
+    /// is traced first, and one every shot at which would meet a wall is set aside as a
+    /// refused shot sets it aside, so the next best is chosen instead of standing on it.
+    /// </summary>
+    private CombatTargetCandidate SelectReachable(
+        List<CombatTargetCandidate> candidates,
+        IReadOnlyList<PluginEquipmentItem> equipment,
+        PluginCombatMode mode,
+        uint wieldedWeapon,
+        uint wieldedOffhand)
+    {
+        _walledNote = null;
+        for (int traced = 0; ; traced++)
+        {
+            CombatTargetCandidate chosen = CombatTargetSelector.Select(
+                candidates,
+                _settings.DebuffEachFirst,
+                _settings.SelectionMethod,
+                _settings.TargetSelectAngleRange,
+                wieldedWeapon,
+                wieldedOffhand);
+            if (chosen.ObjectId == 0u
+                || traced >= MaximumTargetTraces
+                || !EveryShotMeetsAWall(chosen, equipment, mode, out PluginProjectilePathResult path))
+            {
+                if (chosen.ObjectId != 0u)
+                    _walledNote = null;
+                return chosen;
+            }
+            _walledNote = ProjectileStatus(path, chosen.Target.Name);
+            uint walled = chosen.ObjectId;
+            _failures.SetAside(walled, _now + WalledTargetSeconds);
+            candidates.RemoveAll(candidate => candidate.ObjectId == walled);
+        }
+    }
+
+    /// <summary>
+    /// Whether every shot the macro would take at a candidate meets a wall: the projectile
+    /// bolts, streaks and arcs it can cast at the monster's element when it attacks with a
+    /// casting device, and arrows when it attacks with a missile weapon. A melee attack, a
+    /// rule that only debuffs, spells that do not fly, and projectile awareness turned off
+    /// take no shot to trace.
+    /// </summary>
+    private bool EveryShotMeetsAWall(
+        in CombatTargetCandidate candidate,
+        IReadOnlyList<PluginEquipmentItem> equipment,
+        PluginCombatMode mode,
+        out PluginProjectilePathResult path)
+    {
+        path = default;
+        MonsterRuleActions actions = candidate.Rule.Actions;
+        if (!_settings.UseProjectileAwareness || (!actions.Attacks && !actions.UsesStreak))
+            return false;
+        foreach (PluginEquipmentItem item in equipment)
+        {
+            if (item.ObjectId == candidate.PlannedWeapon)
+            {
+                mode = CombatModeGate.ModeFor(in item);
+                break;
+            }
+        }
+        var shots = new List<PluginProjectilePathKind>(2);
+        if (mode == PluginCombatMode.Missile)
+        {
+            shots.Add(PluginProjectilePathKind.Missile);
+        }
+        else if (mode == PluginCombatMode.Magic)
+        {
+            PluginCombatTarget target = candidate.Target;
+            MonsterDamageType element = ResolveAttackElement(actions, target);
+            if (element != MonsterDamageType.DrainAuto)
+            {
+                Func<PluginSpellInfo, bool> usable = IsUsableAttackSpell(target);
+                if (Flies(_attackCatalog.Resolve(element, VtankCombatSpellType.War, usable))
+                    || Flies(_attackCatalog.Resolve(element, VtankCombatSpellType.Streak, usable)))
+                {
+                    shots.Add(PluginProjectilePathKind.Straight);
+                }
+                if (Flies(_attackCatalog.Resolve(element, VtankCombatSpellType.Arc, usable)))
+                    shots.Add(PluginProjectilePathKind.Arc);
+            }
+        }
+        if (shots.Count == 0)
+            return false;
+        foreach (PluginProjectilePathKind shot in shots)
+        {
+            ProjectilePathIsClear(candidate.ObjectId, shot, _settings.AttackHeight, out path);
+            if (path.Status != PluginProjectilePathStatus.Blocked)
+                return false;
+        }
+        return true;
+    }
+
+    private static bool Flies(PluginSpellInfo? spell) => spell is { IsProjectile: true };
 
     /// <summary>
     /// <c>f7.a(fu, maxDist, minDist, targetLock)</c> (<c>f7.cs:247-297</c>) —
@@ -2822,8 +2925,11 @@ internal sealed class CombatController
         PluginCombatCommandResult result =
             _host.Automation.Combat.DismissGhostTarget(objectId);
         string suffix = result.Accepted ? "deleted" : "ignored";
-        _host.Automation.Chat.PostSystemMessage(
-            $"[MossTank] Ghost target 0x{objectId:X8} {suffix}.");
+        MossTankNotices.Announce(
+            _host,
+            MossTankNotices.GhostTarget,
+            PluginNoticeSeverity.Info,
+            $"Ghost target 0x{objectId:X8} {suffix}.");
         // gj.cs:263-278 — ReleaseObject on the awaited target drops the
         // tracker to idle; deleting a ghost is our own version of that event.
         _castTracker.ResetForTarget(objectId);

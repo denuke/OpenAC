@@ -23,6 +23,9 @@ public interface IPluginHost
     IPluginSettingsRegistry SharedSettings =>
         NoOpPluginSettingsRegistry.Instance;
 
+    /// <summary>Notices plugins post for one another, such as a combat macro's warnings for an agent.</summary>
+    IPluginNoticeBoard Notices => NoOpPluginNoticeBoard.Instance;
+
     IAutomationSurface Automation { get; }
 
     IPluginStorage VtankProfiles => NoOpPluginStorage.Instance;

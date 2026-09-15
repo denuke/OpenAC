@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AcDream.Plugin.Abstractions;
 
 namespace AcDream.Plugins.MossTank.Tests;
@@ -1313,7 +1314,10 @@ public sealed class NavigationTests
         }
 
         Assert.Equal(2, automation.GoTos.Count);
-        Assert.Equal(2, automation.PostedSystemMessages.Count);
+        Assert.Equal(3, automation.PostedSystemMessages.Count);
+        Assert.Equal(
+            "[MossTank] No leg of the route could be walked; reset the route to try again.",
+            automation.PostedSystemMessages[^1]);
         Assert.Contains("No leg of the route could be walked", controller.Status, StringComparison.Ordinal);
     }
 
@@ -1433,6 +1437,129 @@ public sealed class NavigationTests
         Assert.Empty(automation.Intents);
     }
 
+    [Fact]
+    public void EachWaypointReachedIsPostedWithHowFarThroughItsLapAndTheLapWhenTheRouteComesRound()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Position(0d, 0d)) };
+        var host = new FakeHost(automation);
+        var settings = new NavigationSettings { Enabled = true, Mode = RouteMode.Circular, MinimumDistanceMeters = 2d };
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Position(0d, 0d)));
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Meters(0d, 1d)));
+        var controller = new NavigationController(host, settings);
+
+        for (int tick = 0; tick < 3; tick++)
+            Assert.True(controller.Tick(0.1d, canAct: true));
+
+        Assert.Equal(
+            ["route-waypoint", "route-waypoint", "route-lap", "route-waypoint"],
+            host.FakeNotices.Posted.Select(static notice => notice.Kind));
+        JsonElement second = Details(host.FakeNotices.Posted[1]);
+        Assert.Equal(1, second.GetProperty("waypoint").GetInt32());
+        Assert.Equal(2, second.GetProperty("count").GetInt32());
+        Assert.Equal(100, second.GetProperty("percent").GetInt32());
+        Assert.Equal(1, second.GetProperty("lap").GetInt32());
+        Assert.Equal(0, second.GetProperty("next").GetInt32());
+        Assert.False(second.GetProperty("skipped").GetBoolean());
+        Assert.Equal("Waypoint 2 of 2 reached, 100% of lap 1.", host.FakeNotices.Posted[1].Message);
+        Assert.Equal(1, Details(host.FakeNotices.Posted[2]).GetProperty("laps").GetInt32());
+        JsonElement third = Details(host.FakeNotices.Posted[3]);
+        Assert.Equal(50, third.GetProperty("percent").GetInt32());
+        Assert.Equal(2, third.GetProperty("lap").GetInt32());
+        Assert.Empty(automation.PostedSystemMessages);
+    }
+
+    [Fact]
+    public void AOnceRouteIsPostedFinishedWithItsLastWaypoint()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Position(0d, 0d)) };
+        var host = new FakeHost(automation);
+        var settings = new NavigationSettings { Enabled = true, Mode = RouteMode.Once, MinimumDistanceMeters = 2d };
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Position(0d, 0d)));
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Meters(0d, 1d)));
+        var controller = new NavigationController(host, settings);
+
+        controller.Tick(0.1d, canAct: true);
+        controller.Tick(0.1d, canAct: true);
+
+        Assert.Equal(
+            ["route-waypoint", "route-waypoint", "route-finished"],
+            host.FakeNotices.Posted.Select(static notice => notice.Kind));
+        JsonElement first = Details(host.FakeNotices.Posted[0]);
+        Assert.Equal(0, first.GetProperty("waypoint").GetInt32());
+        Assert.Equal(2, first.GetProperty("count").GetInt32());
+        Assert.Equal(50, first.GetProperty("percent").GetInt32());
+        Assert.Equal(1, first.GetProperty("next").GetInt32());
+        JsonElement last = Details(host.FakeNotices.Posted[1]);
+        Assert.Equal(1, last.GetProperty("waypoint").GetInt32());
+        Assert.Equal(100, last.GetProperty("percent").GetInt32());
+        Assert.Equal(JsonValueKind.Null, last.GetProperty("next").ValueKind);
+        Assert.Equal(2, Details(host.FakeNotices.Posted[2]).GetProperty("count").GetInt32());
+    }
+
+    [Fact]
+    public void ARouteThatHasTheCharacterForNinetySecondsWithoutReachingAWaypointIsPostedStuckOnce()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Position(0d, 0d)) };
+        var host = new FakeHost(automation);
+        var settings = new NavigationSettings { Enabled = true, Mode = RouteMode.Circular, MinimumDistanceMeters = 2d };
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Meters(0d, 50d)));
+        var controller = new NavigationController(host, settings);
+
+        for (int second = 0; second < 89; second++)
+            controller.Tick(1d, canAct: true);
+        for (int second = 0; second < 30; second++)
+            controller.Tick(1d, canAct: false);
+        Assert.Empty(host.FakeNotices.Posted);
+
+        for (int second = 0; second < 5; second++)
+            controller.Tick(1d, canAct: true);
+
+        PluginNotice stuck = Assert.Single(host.FakeNotices.Posted);
+        Assert.Equal("route-stuck", stuck.Kind);
+        Assert.Equal(PluginNoticeSeverity.Warning, stuck.Severity);
+        JsonElement details = Details(stuck);
+        Assert.Equal(0, details.GetProperty("waypoint").GetInt32());
+        Assert.Equal(90, details.GetProperty("seconds").GetInt32());
+    }
+
+    [Fact]
+    public void ALegTheClientCannotWalkIsPostedSkippedWithTheWaypointAndWhy()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        var host = new FakeHost(automation);
+        var settings = new NavigationSettings
+        {
+            Enabled = true,
+            Mode = RouteMode.Circular,
+            MinimumDistanceMeters = 2d,
+            WalkLegsWithClient = true,
+        };
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Meters(0d, 30d)));
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Meters(30d, 60d)));
+        var controller = new NavigationController(host, settings);
+
+        Assert.True(controller.Tick(0.1d, canAct: true));
+        automation.WalkIs(PluginGoToState.NoRoute, "no route joins the character to it");
+        Assert.True(controller.Tick(0.1d, canAct: true));
+
+        Assert.Equal(
+            ["route-skipped", "route-waypoint"],
+            host.FakeNotices.Posted.Select(static notice => notice.Kind));
+        PluginNotice skipped = host.FakeNotices.Posted[0];
+        Assert.Equal(PluginNoticeSeverity.Warning, skipped.Severity);
+        Assert.Equal(
+            "Waypoint 1 could not be walked (no route joins the character to it); moving on to the next.",
+            skipped.Message);
+        JsonElement details = Details(skipped);
+        Assert.Equal(0, details.GetProperty("waypoint").GetInt32());
+        Assert.Equal("no route joins the character to it", details.GetProperty("reason").GetString());
+        Assert.True(Details(host.FakeNotices.Posted[1]).GetProperty("skipped").GetBoolean());
+        Assert.Equal("[MossTank] " + skipped.Message, Assert.Single(automation.PostedSystemMessages));
+    }
+
+    private static JsonElement Details(PluginNotice notice) =>
+        JsonDocument.Parse(notice.DetailsJson!).RootElement.Clone();
+
     private static (NavigationController Controller, NavigationSettings Settings) ClientLegs(
         FakeAutomation automation,
         RouteMode mode,
@@ -1511,6 +1638,8 @@ public sealed class NavigationTests
         public IPluginStorage Storage { get; } = storage ?? NoOpPluginStorage.Instance;
         public IAutomationSurface Automation { get; } = automation;
         public IPluginStorage VtankProfiles { get; } = storage ?? NoOpPluginStorage.Instance;
+        public RecordingNotices FakeNotices { get; } = new();
+        public IPluginNoticeBoard Notices => FakeNotices;
     }
 
     private sealed class FakeAutomation

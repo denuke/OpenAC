@@ -36,6 +36,21 @@ public sealed class PluginSessionTests
     }
 
     [Fact]
+    public void ScopedHostPostsNoticesUnderItsOwnPluginIdAndReadsEveryPluginsNotices()
+    {
+        var board = new PluginNoticeBoard();
+        using var alpha = new ScopedPluginHost(new StubHost(notices: board), "acdream.alpha", "Alpha");
+        using var beta = new ScopedPluginHost(new StubHost(notices: board), "acdream.beta", "Beta");
+
+        alpha.Notices.Post("route-stuck", PluginNoticeSeverity.Warning, "stuck");
+        beta.Notices.Post("macro-idle", PluginNoticeSeverity.Info, "idle", "{\"seconds\":120}");
+
+        IReadOnlyList<PluginNotice> seen = beta.Notices.Capture(0);
+        Assert.Equal(["acdream.alpha", "acdream.beta"], seen.Select(static notice => notice.PluginId));
+        Assert.Equal("{\"seconds\":120}", seen[1].DetailsJson);
+    }
+
+    [Fact]
     public void ScopedHostForwardsVtankProfilesUnscoped()
     {
         var vtankProfiles = new MemoryStorage();
@@ -453,7 +468,8 @@ public sealed class PluginSessionTests
         IPluginLootClassifierRegistry? lootClassifiers = null,
         IPluginStorage? vtankProfiles = null,
         IReadOnlyDictionary<string, string>? sessionSettings = null,
-        IPluginSettingsRegistry? sharedSettings = null) : IPluginHost
+        IPluginSettingsRegistry? sharedSettings = null,
+        IPluginNoticeBoard? notices = null) : IPluginHost
     {
         public bool HasUi => false;
         public IPluginLogger Log { get; } = new StubLogger();
@@ -472,6 +488,8 @@ public sealed class PluginSessionTests
             sessionSettings ?? new Dictionary<string, string>();
         public IPluginSettingsRegistry SharedSettings { get; } =
             sharedSettings ?? NoOpPluginSettingsRegistry.Instance;
+        public IPluginNoticeBoard Notices { get; } =
+            notices ?? NoOpPluginNoticeBoard.Instance;
     }
 
     private sealed class PerPluginStubHost(
