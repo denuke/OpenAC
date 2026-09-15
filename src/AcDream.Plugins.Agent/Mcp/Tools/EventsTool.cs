@@ -18,7 +18,8 @@ internal sealed class EventsTool(AgentContext context) : IMcpTool
         + "waitSeconds it waits until something arrives instead of returning empty, so there is no "
         + "need to poll. until wakes the call when any record meets a condition, even a kind not "
         + "returned, for example "
-        + "{\"kind\":\"vital-changed\",\"match\":{\"vital\":\"health\"},\"compare\":[\"value\",\"<\",100]}. "
+        + "{\"kind\":\"vital-changed\",\"match\":{\"vital\":\"health\"},\"compare\":[\"value\",\"<\",100]}; "
+        + "until then it keeps only the newest limit records and counts the rest as dropped. "
         + "Pass nextSeq back as sinceSeq to continue. Omit sinceSeq to start from now, or pass -1 "
         + "for every record still kept.",
         new JsonObject
@@ -96,11 +97,12 @@ internal sealed class EventsTool(AgentContext context) : IMcpTool
         var collected = new JsonArray();
         long missed = 0;
         int filtered = 0;
+        int dropped = 0;
         JsonObject? woke = null;
 
         return new PollingRun(() =>
         {
-            if (woke is null && collected.Count < limit)
+            if (woke is null && (until is not null || collected.Count < limit))
             {
                 RecordRead read = context.Ring.Read(cursor);
                 missed += read.Missed;
@@ -116,9 +118,18 @@ internal sealed class EventsTool(AgentContext context) : IMcpTool
                     JsonObject parsed = ToolRecords.Parse(record);
                     int clause = until?.FindIndex(condition => condition.Matches(parsed)) ?? -1;
                     if (wanted)
+                    {
                         collected.Add(parsed);
+                        if (until is not null && collected.Count > limit)
+                        {
+                            collected.RemoveAt(0);
+                            dropped++;
+                        }
+                    }
                     else
+                    {
                         filtered++;
+                    }
                     if (clause >= 0)
                     {
                         woke = new JsonObject
@@ -128,14 +139,13 @@ internal sealed class EventsTool(AgentContext context) : IMcpTool
                         };
                         break;
                     }
-                    if (collected.Count >= limit)
+                    if (until is null && collected.Count >= limit)
                         break;
                 }
             }
 
             bool answered = woke is not null
                 || (until is null && collected.Count > 0)
-                || collected.Count >= limit
                 || context.Clock.Now >= deadline;
             if (!answered)
                 return null;
@@ -145,6 +155,7 @@ internal sealed class EventsTool(AgentContext context) : IMcpTool
                 ["more"] = context.Ring.LastSeq > cursor,
                 ["woke"] = woke,
                 ["filtered"] = filtered,
+                ["dropped"] = dropped,
                 ["missed"] = missed,
                 ["cursorReset"] = cursorReset,
                 ["records"] = collected,

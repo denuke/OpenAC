@@ -12,8 +12,11 @@ internal sealed class McpToolHost : IMcpTools
 {
     internal const double MaximumWaitSeconds = 30d;
 
-    /// <summary>How long one events call may wait, so a model can park until what it waits for happens.</summary>
-    internal const double MaximumEventWaitSeconds = 300d;
+    /// <summary>
+    /// How long one events call may wait: long enough to park on what a model waits for, and short
+    /// enough to answer inside MCP clients' request timeouts, which cut longer calls off.
+    /// </summary>
+    internal const double MaximumEventWaitSeconds = 60d;
 
     private readonly Dictionary<string, IMcpTool> _tools = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<PendingCall> _incoming = new();
