@@ -394,6 +394,9 @@ internal sealed class NavigationController
 
     /// <summary>The last leg to a point that the client could not walk and the route skipped, and why; empty when none has been since the route was reset.</summary>
     public string LastSkippedLeg { get; private set; } = string.Empty;
+
+    /// <summary>Whether a once route has been walked to its last waypoint, which leaves it with none.</summary>
+    internal bool OnceComplete => _onceComplete;
     public int CurrentWaypointIndex => _index;
     public bool Reversing => _reverse;
 

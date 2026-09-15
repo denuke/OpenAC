@@ -25,6 +25,10 @@ internal sealed partial class MossTankPanel
     /// </summary>
     private readonly HashSet<string> _postedProblems = new(StringComparer.Ordinal);
     private bool _setupChecked;
+    private uint _setupLandblock;
+
+    /// <summary>A route whose nearest point lies farther than this from the character was made for somewhere else.</summary>
+    internal const double RouteElsewhereMeters = 1000d;
 
     private void Announce(
         string kind,
@@ -36,7 +40,11 @@ internal sealed partial class MossTankPanel
     void IBuffRuleHost.Warn(string text) =>
         Announce(MossTankNotices.BuffWarning, PluginNoticeSeverity.Warning, text);
 
-    /// <summary>Checks the setup once each time the macro starts, and notes how long the running macro has had nothing to do.</summary>
+    /// <summary>
+    /// Checks the setup each time the macro starts and again when the character arrives in
+    /// another landblock, such as through a portal, and notes how long the running macro has
+    /// had nothing to do.
+    /// </summary>
     private void NoteMacroState(bool macroRunning, double elapsedSeconds)
     {
         if (!macroRunning)
@@ -46,10 +54,19 @@ internal sealed partial class MossTankPanel
             _macroIdlePosted = false;
             return;
         }
+        uint landblock = _host.Automation.IsAvailable && _host.Automation.Navigation.Snapshot is { IsAvailable: true } self
+            ? self.Position.CellId >> 16
+            : 0u;
         if (!_setupChecked)
         {
             _setupChecked = true;
+            _setupLandblock = landblock;
             _postedProblems.Clear();
+            PostSetupProblems();
+        }
+        else if (landblock != 0u && landblock != _setupLandblock)
+        {
+            _setupLandblock = landblock;
             PostSetupProblems();
         }
         NoteIdle(elapsedSeconds);
@@ -160,12 +177,21 @@ internal sealed partial class MossTankPanel
                         "Navigation follows a target, but no target to follow is set."));
                 }
             }
-            else if (_navigationSettings.Waypoints.Count == 0)
+            else if (_navigationSettings.Waypoints.Count == 0 && !_navigation.OnceComplete)
             {
                 problems.Add(new SetupProblem(
                     MossTankNotices.RouteEmpty,
                     PluginNoticeSeverity.Warning,
                     "Navigation is on, but the route has no waypoints."));
+            }
+            else if (RouteNearestPointMeters() is { } nearest && nearest > RouteElsewhereMeters)
+            {
+                problems.Add(new SetupProblem(
+                    MossTankNotices.RouteElsewhere,
+                    PluginNoticeSeverity.Warning,
+                    string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"The route's nearest point is {nearest:0} m away, so it was made for somewhere else: load a route for where the character is.")));
             }
         }
         LootSettings loot = _inventorySettings.Loot;
@@ -177,6 +203,24 @@ internal sealed partial class MossTankPanel
                 "Looting is on, but the loot profile has no rules, so nothing is looted."));
         }
         return problems;
+    }
+
+    /// <summary>How far the character stands from the route's nearest point, or null with no point or no position.</summary>
+    private double? RouteNearestPointMeters()
+    {
+        IAutomationSurface automation = _host.Automation;
+        if (!automation.IsAvailable || automation.Navigation.Snapshot is not { IsAvailable: true } self)
+            return null;
+        double? nearest = null;
+        foreach (RouteWaypoint waypoint in _navigationSettings.Waypoints)
+        {
+            if (waypoint.Type != RouteWaypointType.Point)
+                continue;
+            double meters = self.Position.HorizontalDistanceMeters(waypoint.Position);
+            if (nearest is null || meters < nearest)
+                nearest = meters;
+        }
+        return nearest;
     }
 
     /// <summary>Whether the setup casts: buffing is on, or a monster rule casts more than a plain attack.</summary>

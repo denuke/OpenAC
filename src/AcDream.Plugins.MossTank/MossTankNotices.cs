@@ -30,6 +30,7 @@ internal static class MossTankNotices
     internal const string NoCastingDevice = "no-casting-device";
     internal const string RuleWeaponNotCarried = "rule-weapon-not-carried";
     internal const string RouteEmpty = "route-empty";
+    internal const string RouteElsewhere = "route-elsewhere";
     internal const string FollowTargetMissing = "follow-target-missing";
     internal const string LootRulesEmpty = "loot-rules-empty";
     internal const string LowWaypointDistance = "low-waypoint-distance";
