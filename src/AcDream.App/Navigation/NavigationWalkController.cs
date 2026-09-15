@@ -126,7 +126,7 @@ internal interface INavigationWalkBody
     bool StopMove(RuntimeMoveChannel channel);
 
     /// <summary>Charges a jump for <paramref name="power"/> of a full charge, from 0 to 1, then releases it.</summary>
-    bool BeginJump(float power) => false;
+    bool BeginJump(float power, RuntimeMovePace? leaveAt) => false;
 }
 
 /// <summary>Where objects stand in the physics world, and what stands in a walk's way.</summary>
@@ -1297,7 +1297,7 @@ internal sealed class NavigationWalkController
         if (step.Turn is { } turn)
             accepted &= _body.BeginMove(turn);
         if (step.Jump is { } power)
-            accepted &= _body.BeginJump(power);
+            accepted &= _body.BeginJump(power, step.JumpPace);
         return accepted;
     }
 

@@ -264,11 +264,14 @@ public sealed class RuntimeLocalPlayerMovementState
         return true;
     }
 
-    /// <summary>Charges a jump for part of a full charge, from 0 to 1, then releases it.</summary>
-    public bool BeginJump(float power)
+    /// <summary>
+    /// Charges a jump for part of a full charge, from 0 to 1, then releases it; with a pace to
+    /// leave at, the body charges standing and presses forward at that pace as the jump releases.
+    /// </summary>
+    public bool BeginJump(float power, RuntimeMovePace? leaveAt = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_controller is null || _commandInterpreterDisabled || !_scripted.BeginJump(power))
+        if (_controller is null || _commandInterpreterDisabled || !_scripted.BeginJump(power, leaveAt))
             return false;
         Interlocked.Increment(ref _revision);
         return true;

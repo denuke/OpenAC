@@ -56,7 +56,7 @@ internal sealed class RuntimeNavigationWalkBody : INavigationWalkBody
 
     public bool StopMove(RuntimeMoveChannel channel) => _movement.StopMove(channel);
 
-    public bool BeginJump(float power) => _movement.BeginJump(power);
+    public bool BeginJump(float power, RuntimeMovePace? leaveAt) => _movement.BeginJump(power, leaveAt);
 }
 
 /// <summary>

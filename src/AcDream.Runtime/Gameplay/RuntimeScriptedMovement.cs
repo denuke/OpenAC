@@ -158,6 +158,7 @@ public sealed class RuntimeScriptedMovement
     private bool _jumpCharging;
     private double _jumpHoldSeconds;
     private double? _jumpReleaseAt;
+    private RuntimeMovePace? _jumpLeaveAt;
     private bool _heldLastFrame;
     private bool _sampled;
     private Vector2 _lastOffset;
@@ -215,16 +216,22 @@ public sealed class RuntimeScriptedMovement
         bool jump = _jumpCharging;
         _jumpCharging = false;
         _jumpReleaseAt = null;
+        _jumpLeaveAt = null;
         return EndAll(RuntimeScriptedMoveState.Lost) | jump;
     }
 
-    /// <summary>Charges a jump for <paramref name="power"/> of a full charge, then releases it.</summary>
-    public bool BeginJump(float power)
+    /// <summary>
+    /// Charges a jump for <paramref name="power"/> of a full charge, then releases it. With
+    /// <paramref name="leaveAt"/>, the body charges standing and presses forward at that pace
+    /// from the frame the jump releases, so it leaves the ground from where it stood, moving.
+    /// </summary>
+    public bool BeginJump(float power, RuntimeMovePace? leaveAt = null)
     {
         if (!float.IsFinite(power) || power <= 0f || power > 1f || _jumpCharging)
             return false;
         _jumpHoldSeconds = power * FullJumpChargeSeconds;
         _jumpReleaseAt = null;
+        _jumpLeaveAt = leaveAt;
         _jumpSequence++;
         _jumpCharging = true;
         return true;
@@ -271,6 +278,9 @@ public sealed class RuntimeScriptedMovement
             {
                 _jumpCharging = false;
                 _jumpReleaseAt = null;
+                if (_jumpLeaveAt is { } pace)
+                    Begin(new RuntimeMoveRequest(RuntimeMoveDirection.Forward, pace, 0f));
+                _jumpLeaveAt = null;
             }
             else
             {

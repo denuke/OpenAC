@@ -264,7 +264,9 @@ public sealed class RuntimeRouteDriverTests
         Assert.Equal(1, body.Jumps);
         RuntimeRouteDriveStep jump = Assert.Single(steps, step => step.Jump is not null);
         Assert.Equal(0.1f, jump.Jump!.Value, 3);
+        Assert.Equal(RuntimeMovePace.Walk, jump.JumpPace);
         Assert.Null(jump.Travel);
+        Assert.Equal(0, body.TravelsBegunWhileCharging);
         Assert.InRange(Vector2.Distance(body.Position, new Vector2(0f, 10f)), 0f, 0.6f);
         Assert.Equal(0f, body.Height, 3);
     }
@@ -349,6 +351,7 @@ public sealed class RuntimeRouteDriverTests
         private float _turnRemaining;
         private float _chargeLeft = -1f;
         private float _chargePower;
+        private RuntimeMovePace? _chargePace;
         private Vector3 _velocity;
         private float _airHeight;
 
@@ -375,13 +378,16 @@ public sealed class RuntimeRouteDriverTests
 
         public float LongestTravelSeconds { get; private set; }
 
+        /// <summary>How many travels were begun while a jump was charging.</summary>
+        public int TravelsBegunWhileCharging { get; private set; }
+
         public bool Travelling => _travel.State == RuntimeScriptedMoveState.Moving;
 
         public RuntimeRouteDriveSample Sample() =>
             new(
                 new Vector3(Position, Height),
                 Heading,
-                new RuntimeScriptedMoveSnapshot(_travel, default, _turn, 0, false),
+                new RuntimeScriptedMoveSnapshot(_travel, default, _turn, 0, _chargeLeft >= 0f),
                 InPortalSpace,
                 Airborne,
                 Turning);
@@ -409,7 +415,11 @@ public sealed class RuntimeRouteDriverTests
             if (step.StopTurn && _turn.State == RuntimeScriptedMoveState.Moving)
                 _turn = _turn with { State = RuntimeScriptedMoveState.Stopped };
             if (step.Travel is { } travel)
+            {
+                if (_chargeLeft >= 0f)
+                    TravelsBegunWhileCharging++;
                 _travel = new RuntimeMoveChannelSnapshot(++_sequence, RuntimeScriptedMoveState.Moving, travel, 0f, 0f);
+            }
             if (step.Turn is { } turn)
             {
                 _turn = new RuntimeMoveChannelSnapshot(++_sequence, RuntimeScriptedMoveState.Moving, turn, 0f, 0f);
@@ -419,6 +429,7 @@ public sealed class RuntimeRouteDriverTests
             {
                 _chargeLeft = power;
                 _chargePower = power;
+                _chargePace = step.JumpPace;
                 Jumps++;
             }
         }
@@ -454,6 +465,15 @@ public sealed class RuntimeRouteDriverTests
                 if (_chargeLeft > 0f)
                     return;
                 _chargeLeft = -1f;
+                if (_chargePace is { } leaveAt)
+                {
+                    _travel = new RuntimeMoveChannelSnapshot(
+                        ++_sequence,
+                        RuntimeScriptedMoveState.Moving,
+                        new RuntimeMoveRequest(RuntimeMoveDirection.Forward, leaveAt, 0f),
+                        0f,
+                        0f);
+                }
                 float pace = _travel.State != RuntimeScriptedMoveState.Moving ? 0f
                     : _travel.Request.Pace == RuntimeMovePace.Run ? RunSpeed
                     : WalkSpeed;
