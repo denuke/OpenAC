@@ -156,6 +156,24 @@ public sealed class RuntimeSpellCastStateTests
         Assert.Equal(99u, state.PendingTargetId);
     }
 
+    [Fact]
+    public void Cast_SpellTheBookDoesNotHold_RefusesAndSendsNothing()
+    {
+        // A wielded caster's own spell is never in the book. It must not be
+        // routed here to have this gate loosened for it: the panel asks the
+        // server to use the caster instead, and this gate stays exact for
+        // every ordinary spell.
+        Spellbook book = MakeBook(flags: 0, untargeted: true, targetMask: 0);
+        var operations = new FakeOperations { LocalPlayerId = 42u };
+        RuntimeSpellCastState state = Create(book, operations);
+
+        Assert.Equal(CastRequestResult.UnknownSpell, state.Cast(2670u));
+        Assert.Equal(0, operations.UntargetedSends);
+        Assert.Equal(0, operations.TargetedSends);
+        Assert.Equal(0, operations.BusyIncrements);
+        Assert.Equal("You do not know that spell.", operations.LastMessage);
+    }
+
     private static RuntimeSpellCastState Create(
         Spellbook book,
         FakeOperations operations,

@@ -2393,6 +2393,29 @@ public sealed partial class WorldSession : IDisposable
             inscription));
     }
 
+    /// <summary>Re-request an open book in full.</summary>
+    public void SendBookData(uint bookGuid) =>
+        SendGameAction(
+            BookRequests.BuildBookData(NextGameActionSequence(), bookGuid));
+
+    /// <summary>Ask for one page's text.</summary>
+    public void SendBookPageData(uint bookGuid, int page) =>
+        SendGameAction(
+            BookRequests.BuildBookPageData(NextGameActionSequence(), bookGuid, page));
+
+    public void SendBookAddPage(uint bookGuid) =>
+        SendGameAction(
+            BookRequests.BuildBookAddPage(NextGameActionSequence(), bookGuid));
+
+    public void SendBookDeletePage(uint bookGuid, int page) =>
+        SendGameAction(
+            BookRequests.BuildBookDeletePage(NextGameActionSequence(), bookGuid, page));
+
+    public void SendBookModifyPage(uint bookGuid, int page, string text) =>
+        SendGameAction(
+            BookRequests.BuildBookModifyPage(
+                NextGameActionSequence(), bookGuid, page, text));
+
     public void SendPutItemInContainer(uint itemGuid, uint containerGuid, int placement)
     {
         uint seq = NextGameActionSequence();

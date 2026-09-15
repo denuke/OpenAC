@@ -39,7 +39,8 @@ public sealed class SalvageUiControllerTests
                 Objects, id => Objects.IsOwnedByObject(id, Player),
                 (tool, items) => { Sends.Add((tool, items.ToArray())); return SendSucceeds; },
                 () => Multiple, (_, icon, _, _, _) => icon,
-                visible => Visible = visible, Errors.Add))!;
+                visible => Visible = visible, Errors.Add,
+                ResolveAppropriateName: ItemTooltipCaptionNames.Resolve))!;
             Controller.Open(Tool);
         }
 
@@ -52,6 +53,24 @@ public sealed class SalvageUiControllerTests
         }
 
         public void Dispose() => Controller.Dispose();
+    }
+
+    // #87: the hover caption is the same name flavour the selection caption
+    // shows - the composed name, material prefix included.
+    [Fact]
+    public void Hover_caption_carries_the_material_prefix_and_stays_plain_without_one()
+    {
+        using var h = new Harness();
+        ClientObject named = h.Item(1, ItemTooltipCaptionNames.Silver);
+        named.Name = "Scarab";
+        named.PluralName = "Scarabs";
+        ClientObject unnamed = h.Item(2, ItemTooltipCaptionNames.Unnamed);
+        unnamed.Name = "Bread Loaf";
+        Assert.True(h.Controller.AddItem(1));
+        Assert.True(h.Controller.AddItem(2));
+
+        Assert.Equal("Silver Scarab", h.List.GetItem(0)!.GetTooltipText());
+        Assert.Equal("Bread Loaf", h.List.GetItem(1)!.GetTooltipText());
     }
 
     [Fact]

@@ -8,5 +8,5 @@ public sealed record ItemDragPayload(
     uint ObjId,
     ItemDragSource SourceKind,  // what kind of slot it left
     int SourceSlot,
-    UiItemSlot SourceCell,
+    UiItemSlot? SourceCell,   // null when the lift came from an image-mapped region, not a slot
     ShortcutEntry? Shortcut = null); // lossless raw entry for shortcut-alias mutation

@@ -1,4 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
 using AcDream.Content;
+using AcDream.Content.CharGen;
 using AcDream.Core.Items;
 using DatReaderWriter;
 using DatReaderWriter.DBObjs;
@@ -17,15 +19,18 @@ public sealed class RetailAppraisalNameResolver
 
     private readonly IReadOnlyDictionary<uint, string> _materials;
     private readonly CreatureDisplayNameResolver _creatures;
+    private readonly IReadOnlyDictionary<uint, string> _skills;
 
     public RetailAppraisalNameResolver(
         IReadOnlyDictionary<uint, string> materials,
-        CreatureDisplayNameResolver creatures)
+        CreatureDisplayNameResolver creatures,
+        IReadOnlyDictionary<uint, string>? skills = null)
     {
         _materials = materials
             ?? throw new ArgumentNullException(nameof(materials));
         _creatures = creatures
             ?? throw new ArgumentNullException(nameof(creatures));
+        _skills = skills ?? new Dictionary<uint, string>();
     }
 
     public static RetailAppraisalNameResolver Load(
@@ -57,7 +62,42 @@ public sealed class RetailAppraisalNameResolver
             }
         }
 
-        return new RetailAppraisalNameResolver(materials, creatures);
+        var skills = new Dictionary<uint, string>();
+        if (dats.Get<SkillTable>(ChargenTableReader.SkillTableDid) is { } skillTable)
+        {
+            foreach ((DatReaderWriter.Enums.SkillId id, SkillBase skill)
+                     in skillTable.Skills)
+            {
+                string name = skill.Name.Value;
+                if (!string.IsNullOrWhiteSpace(name))
+                    skills.TryAdd((uint)id, name);
+            }
+        }
+
+        return new RetailAppraisalNameResolver(materials, creatures, skills);
+    }
+
+    /// <summary>How many skills this resolver took from the authored table.
+    /// Zero means every name it gives is the offline fallback.</summary>
+    internal int AuthoredSkillNameCount => _skills.Count;
+
+    /// <summary>
+    /// The authored name for a skill. False when the authored data does not
+    /// name it, which each appraisal line answers its own way — the game has
+    /// no substitute name to fall back on here.
+    /// </summary>
+    public bool TryResolveSkill(
+        int skillId,
+        [MaybeNullWhen(false)] out string name)
+    {
+        if (skillId > 0 && _skills.TryGetValue((uint)skillId, out string? authored))
+        {
+            name = authored;
+            return true;
+        }
+
+        name = null;
+        return false;
     }
 
     public string ResolveCreature(int creatureType)

@@ -102,6 +102,9 @@ namespace AcDream.App.Rendering.Wb
         private readonly IPreparedAssetSource _preparedAssets;
         private readonly ILogger _logger;
 
+        /// <summary>The sink this manager and its renderers report through.</summary>
+        internal ILogger Logger => _logger;
+
         private readonly AcDream.App.Rendering.Gpu.IGpuDevice _gpuDevice;
 
         private readonly IWorldTextureArrayFactory _atlasArrays;

@@ -2,6 +2,7 @@ using System.Numerics;
 using AcDream.App.UI;
 using AcDream.App.UI.Layout;
 using AcDream.Core.CharGen;
+using AcDream.Core.Player;
 using AcDream.Core.Net.Messages;
 using AcDream.Runtime;
 using AcDream.Runtime.Session;
@@ -14,6 +15,23 @@ public sealed class CharacterCreationUiControllerTests
     private const uint OlthoiId = (uint)ChargenHeritageGroup.Olthoi;
     private const uint GenderKey = 1u;
     private const uint SkillTrainOnly = 1u;
+
+    // The authored skill table names every skill it carries, and the page must
+    // use that name rather than the offline fallback table. These three fixture
+    // names are deliberately not the fallback names for ids 1-3, so a row that
+    // showed the fallback would fail every lookup below.
+    private const string SkillTrainOnlyName = "Assess Creature";
+    private const string SkillSpecializableName = "Assess Person";
+    private const string SkillFreeTrainedName = "Shield";
+
+    private static string AuthoredSkillName(uint skillId) => skillId switch
+    {
+        SkillTrainOnly => SkillTrainOnlyName,
+        SkillSpecializable => SkillSpecializableName,
+        SkillFreeTrained => SkillFreeTrainedName,
+        _ => RetailSkillNames.Describe((int)skillId),
+    };
+
     private const uint SkillSpecializable = 2u;
 
     private const uint SkillFreeTrained = 3u;
@@ -289,7 +307,7 @@ public sealed class CharacterCreationUiControllerTests
 
         UiElement row = Assert.Single(skillRows, candidate =>
             UiElement.FindDescendant(candidate, 0x10000301u) is UiText name
-            && JoinedText(name) == ItemAppraisalTextFormatter.SkillName((int)SkillTrainOnly));
+            && JoinedText(name) == AuthoredSkillName(SkillTrainOnly));
 
         // FakeRuntime.GetSkillScore's deterministic stand-in: skillId * 10.
         UiText level = Assert.IsType<UiText>(UiElement.FindDescendant(row, 0x10000302u));
@@ -306,7 +324,7 @@ public sealed class CharacterCreationUiControllerTests
         environment.Controller.Tick();
         row = Assert.Single(environment.SkillsList().ViewportForTest!.Children, candidate =>
             UiElement.FindDescendant(candidate, 0x10000301u) is UiText name
-            && JoinedText(name) == ItemAppraisalTextFormatter.SkillName((int)SkillTrainOnly));
+            && JoinedText(name) == AuthoredSkillName(SkillTrainOnly));
         upCost = Assert.IsType<UiText>(UiElement.FindDescendant(row, 0x10000303u));
         downCost = Assert.IsType<UiText>(UiElement.FindDescendant(row, 0x10000306u));
         Assert.Equal("4", JoinedText(upCost));
@@ -335,7 +353,7 @@ public sealed class CharacterCreationUiControllerTests
 
         // FakeRuntime.GetSkillScore's deterministic stand-in: skillId * 10.
         string expectedTitle =
-            $"{ItemAppraisalTextFormatter.SkillName((int)SkillTrainOnly)} ({SkillTrainOnly * 10u})";
+            $"{AuthoredSkillName(SkillTrainOnly)} ({SkillTrainOnly * 10u})";
         Assert.Equal(expectedTitle, JoinedText(environment.SkillInfoTitle()));
         Assert.Equal(
             "A test skill description. Formula : (2 x Strength) / 4 +2",
@@ -519,10 +537,10 @@ public sealed class CharacterCreationUiControllerTests
             UiElement.FindDescendant(c, 0x100002F6u) is UiButton b && b.Label == "Unuseable Untrained");
         int trainOnlyRowIndex = children.FindIndex(c =>
             UiElement.FindDescendant(c, 0x10000301u) is UiText n
-            && JoinedText(n) == ItemAppraisalTextFormatter.SkillName((int)SkillTrainOnly));
+            && JoinedText(n) == AuthoredSkillName(SkillTrainOnly));
         int specializableRowIndex = children.FindIndex(c =>
             UiElement.FindDescendant(c, 0x10000301u) is UiText n
-            && JoinedText(n) == ItemAppraisalTextFormatter.SkillName((int)SkillSpecializable));
+            && JoinedText(n) == AuthoredSkillName(SkillSpecializable));
 
         Assert.InRange(trainOnlyRowIndex, useableHeaderIndex + 1, unuseableHeaderIndex - 1);
         Assert.True(specializableRowIndex > unuseableHeaderIndex);
@@ -548,7 +566,7 @@ public sealed class CharacterCreationUiControllerTests
             UiElement.FindDescendant(c, 0x100002F6u) is UiButton b && b.Label == "Useable Untrained");
         int rowIndex = children.FindIndex(c =>
             UiElement.FindDescendant(c, 0x10000301u) is UiText n
-            && JoinedText(n) == ItemAppraisalTextFormatter.SkillName((int)SkillTrainOnly));
+            && JoinedText(n) == AuthoredSkillName(SkillTrainOnly));
 
         Assert.InRange(rowIndex, trainedHeaderIndex + 1, useableHeaderIndex - 1);
     }
@@ -1355,8 +1373,10 @@ public sealed class CharacterCreationUiControllerTests
 
         Assert.Contains("Specialized Skills", headers);
         Assert.Contains("Trained Skills", headers);
-        Assert.Single(pairs, p => p.Key == "Axe" && p.Value == "10");
-        Assert.DoesNotContain(pairs, p => p.Key == "Bow");
+        // The summary names skills from the authored data too, so this is the
+        // fixture's authored name for skill 1 rather than the fallback "Axe".
+        Assert.Single(pairs, p => p.Key == SkillTrainOnlyName && p.Value == "10");
+        Assert.DoesNotContain(pairs, p => p.Key == SkillSpecializableName);
     }
 
     private static string JoinedText(UiText text) =>
@@ -1708,7 +1728,7 @@ public sealed class CharacterCreationUiControllerTests
 
         public (UiButton Up, UiButton Down) SkillRowArrows(uint skillId)
         {
-            string skillName = ItemAppraisalTextFormatter.SkillName((int)skillId);
+            string skillName = AuthoredSkillName(skillId);
             UiElement row = Assert.Single(
                 SkillsList().ViewportForTest!.Children,
                 candidate => UiElement.FindDescendant(candidate, 0x10000301u) is UiText name
@@ -1720,7 +1740,7 @@ public sealed class CharacterCreationUiControllerTests
 
         public (UiDatElement Row, UiText NameText) SkillRow(uint skillId)
         {
-            string skillName = ItemAppraisalTextFormatter.SkillName((int)skillId);
+            string skillName = AuthoredSkillName(skillId);
             UiElement row = Assert.Single(
                 SkillsList().ViewportForTest!.Children,
                 candidate => UiElement.FindDescendant(candidate, 0x10000301u) is UiText name
@@ -2066,6 +2086,7 @@ public sealed class CharacterCreationUiControllerTests
             {
                 [SkillTrainOnly] = new ChargenSkillDetail(
                     SkillTrainOnly,
+                    Name: SkillTrainOnlyName,
                     MinLevel: 1u,
                     Description: "A test skill description.",
                     Formula: new ChargenSkillFormula(
@@ -2076,9 +2097,17 @@ public sealed class CharacterCreationUiControllerTests
                         Attribute1: (uint)ChargenAttributeId.Strength,
                         Attribute2: 0u)),
                 [SkillSpecializable] = new ChargenSkillDetail(
-                    SkillSpecializable, MinLevel: 2u, Description: string.Empty, Formula: default),
+                    SkillSpecializable,
+                    Name: SkillSpecializableName,
+                    MinLevel: 2u,
+                    Description: string.Empty,
+                    Formula: default),
                 [SkillFreeTrained] = new ChargenSkillDetail(
-                    SkillFreeTrained, MinLevel: 1u, Description: string.Empty, Formula: default),
+                    SkillFreeTrained,
+                    Name: SkillFreeTrainedName,
+                    MinLevel: 1u,
+                    Description: string.Empty,
+                    Formula: default),
             };
 
             var aluvian = new ChargenHeritageOptions(

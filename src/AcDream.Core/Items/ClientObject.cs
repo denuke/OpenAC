@@ -228,9 +228,18 @@ public sealed class ClientObject
         return Name[^1] == 's' ? Name + "es" : Name + "s";
     }
 
-    public string GetTooltipDisplayName()
+    /// <summary>
+    /// The caption an item element shows on hover: the object's composed name
+    /// with the stack count in front once the stack holds more than one.
+    /// <paramref name="appropriateName"/> carries the fully composed name when
+    /// the caller can build it (the material prefix needs a DAT lookup this
+    /// layer does not have); without it the plain singular/plural name is used.
+    /// </summary>
+    public string GetTooltipDisplayName(string? appropriateName = null)
     {
-        string name = GetAppropriateName();
+        string name = string.IsNullOrEmpty(appropriateName)
+            ? GetAppropriateName()
+            : appropriateName;
         return StackSize > 1 ? $"{StackSize} {name}" : name;
     }
 }

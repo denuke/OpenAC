@@ -66,6 +66,21 @@ internal static class WalkTranscriptDump
         Console.WriteLine(sb.ToString());
     }
 
+    private static readonly HashSet<ulong> DeadPortalsPrinted = [];
+
+    /// <summary>
+    /// A portal whose far cell is not loaded ends the visibility flood there.
+    /// One line per (cell, portal) for the run, so a room that never appears
+    /// beyond a door names the cell the flood could not find.
+    /// </summary>
+    internal static void PrintDeadPortal(uint cellId, int portalIndex, uint otherCellId)
+    {
+        if (!Enabled) return;
+        ulong key = ((ulong)cellId << 32) | ((ulong)(uint)portalIndex << 24) | (otherCellId & 0xFFFFFFu);
+        if (!DeadPortalsPrinted.Add(key)) return;
+        Console.WriteLine($"DP {cellId.ToString("x8")} {portalIndex} {otherCellId.ToString("x8")}");
+    }
+
     internal static void PrintLandCell(uint cellId)
     {
         if (!Enabled) return;

@@ -39,7 +39,7 @@ public sealed class SpellcastingUiController : IRetainedPanelController
     private readonly Func<uint> _playerGuid;
     private readonly Func<uint, uint> _resolveSpellIcon;
     private readonly Func<ClientObject, uint> _resolveItemDragIcon;
-    private readonly Action<uint> _useItem;
+    private readonly Action<uint> _activateEndowment;
     private readonly Action<uint>? _examineSpell;
     private readonly Action<int, int, uint>? _addFavorite;
     private readonly Action<int, uint>? _removeFavorite;
@@ -72,7 +72,7 @@ public sealed class SpellcastingUiController : IRetainedPanelController
         Func<uint> playerGuid,
         Func<uint, uint> resolveSpellIcon,
         Func<ClientObject, uint> resolveItemDragIcon,
-        Action<uint> useItem,
+        Action<uint> activateEndowment,
         Action<uint>? examineSpell,
         SelectionState selection,
         Action<int, int, uint>? addFavorite,
@@ -93,7 +93,7 @@ public sealed class SpellcastingUiController : IRetainedPanelController
         _playerGuid = playerGuid;
         _resolveSpellIcon = resolveSpellIcon;
         _resolveItemDragIcon = resolveItemDragIcon;
-        _useItem = useItem;
+        _activateEndowment = activateEndowment;
         _examineSpell = examineSpell;
         _addFavorite = addFavorite;
         _removeFavorite = removeFavorite;
@@ -163,7 +163,7 @@ public sealed class SpellcastingUiController : IRetainedPanelController
         Func<uint> playerGuid,
         Func<uint, uint> resolveSpellIcon,
         Func<ClientObject, uint> resolveItemDragIcon,
-        Action<uint> useItem,
+        Action<uint> activateEndowment,
         SelectionState selection,
         Action<int, int, uint>? addFavorite,
         Action<int, uint>? removeFavorite,
@@ -193,7 +193,7 @@ public sealed class SpellcastingUiController : IRetainedPanelController
 
         return new SpellcastingUiController(
             layout, spellbook, casting, objects, playerGuid, resolveSpellIcon,
-            resolveItemDragIcon, useItem, examineSpell, selection,
+            resolveItemDragIcon, activateEndowment, examineSpell, selection,
             addFavorite, removeFavorite,
             tabs, groups, lists, scrollbars, cast, endowmentHost,
             shortcutDigits, emptySlotSprite);
@@ -322,7 +322,7 @@ public sealed class SpellcastingUiController : IRetainedPanelController
     private void CastSelected()
     {
         if (_endowmentSelected[_activeTab] && _endowmentItemId != 0u)
-            _useItem(_endowmentItemId);
+            _activateEndowment(_endowmentItemId);
         else if (_selected[_activeTab] is uint spellId)
             _casting.Cast(spellId);
     }

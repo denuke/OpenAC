@@ -45,11 +45,14 @@ internal sealed class DispatcherMovementInputSource : IMovementInputSource
         if (_movement.CommandInterpreterDisabled)
             return default;
 
-        if (_capture?.DevToolsWantCaptureKeyboard == true)
-            return default;
-
+        // A plugin's movement intent is not typed: an overlay window that
+        // has the keyboard (a bot panel the player just clicked) must not
+        // freeze the character it is driving.
         if (_movement.HasCommandInput)
             return _movement.CommandInput with { IsPersistentCommand = true };
+
+        if (_capture?.DevToolsWantCaptureKeyboard == true)
+            return default;
 
         if (_dispatcher is not { } dispatcher)
             return default;
@@ -73,12 +76,16 @@ internal sealed class DispatcherMovementInputSource : IMovementInputSource
             return _movement.Execute(
                 AcDream.Runtime.RuntimeMovementCommand.ToggleRunLock);
 
+        // Retail CommandInterpreter::AddCommand turns autorun off only for a
+        // command that lands on the forward list (forward, backup) or for a
+        // substate outside every list (a posture, stop). Sidesteps and turns
+        // have lists of their own, and ApplyCurrentMovement lays their heads
+        // over the locked run - so a strafe key steers the run sideways
+        // instead of ending it.
         if (AutoRunActive && action is (
             InputAction.MovementForward
             or InputAction.MovementBackup
-            or InputAction.MovementStop
-            or InputAction.MovementStrafeLeft
-            or InputAction.MovementStrafeRight))
+            or InputAction.MovementStop))
         {
             _movement.CancelAutoRun();
         }

@@ -1,5 +1,6 @@
 using System.Numerics;
 using AcDream.App.UI.Layout;
+using AcDream.Core.Ui;
 
 namespace AcDream.App.Tests.UI.Layout;
 
@@ -111,4 +112,52 @@ public sealed class VividTargetIndicatorLayoutTests
     public void DirectionImageUsesRetailSectorBoundaries(float angle, uint expected)
         => Assert.Equal(expected,
             VividTargetIndicatorController.SelectOffScreenImageEnum(angle));
+
+    private const uint PlayerBit = 0x00000008u;
+    private const uint AdminBit = 0x00100000u;
+
+    [Fact]
+    public void ComputeTint_fellowshipMember_isFellowshipGreen()
+    {
+        var target = new VividTargetInfo(default, 0f, ItemType: 0u, ObjectDescriptionFlags: PlayerBit);
+
+        RadarBlipColors.Rgba tint = VividTargetIndicatorController.ComputeTint(
+            target, new RadarRelationshipTraits(IsFellowshipMember: true));
+
+        Assert.Equal(RadarBlipColors.Fellowship, tint);
+    }
+
+    [Fact]
+    public void ComputeTint_fellowshipLeader_isFellowshipLeaderGreen()
+    {
+        var target = new VividTargetInfo(default, 0f, ItemType: 0u, ObjectDescriptionFlags: PlayerBit);
+
+        RadarBlipColors.Rgba tint = VividTargetIndicatorController.ComputeTint(
+            target, new RadarRelationshipTraits(IsFellowshipLeader: true));
+
+        Assert.Equal(RadarBlipColors.FellowshipLeader, tint);
+    }
+
+    [Fact]
+    public void ComputeTint_defaultRelationship_isWhite()
+    {
+        var target = new VividTargetInfo(default, 0f, ItemType: 0u, ObjectDescriptionFlags: PlayerBit);
+
+        RadarBlipColors.Rgba tint = VividTargetIndicatorController.ComputeTint(
+            target, default);
+
+        Assert.Equal(RadarBlipColors.White, tint);
+    }
+
+    [Fact]
+    public void ComputeTint_adminFellowshipMember_isFellowshipGreen()
+    {
+        var target = new VividTargetInfo(
+            default, 0f, ItemType: 0u, ObjectDescriptionFlags: PlayerBit | AdminBit);
+
+        RadarBlipColors.Rgba tint = VividTargetIndicatorController.ComputeTint(
+            target, new RadarRelationshipTraits(IsFellowshipMember: true));
+
+        Assert.Equal(RadarBlipColors.Fellowship, tint);
+    }
 }

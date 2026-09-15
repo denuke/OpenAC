@@ -102,6 +102,34 @@ public static class DatWidgetFactory
         };
         if (label?.FontColor is { } color)
             menu.TextColor = color;
+
+        // A drop-down authors its own face on the text child and its own
+        // open/closed arrow on the little image child beside it. Without
+        // these the menu falls back to generic button art, which is the
+        // wrong size for the row it sits in and has no arrow at all.
+        uint face = label is null ? 0u : DefaultImage(label);
+        if (face != 0u)
+        {
+            menu.NormalSprite = face;
+            menu.PressedSprite = face;
+        }
+
+        ElementInfo? arrowCap = info.Children.FirstOrDefault(
+            static child => child.Type == 3u);
+        uint closedCap = ButtonStateImage(arrowCap, "Normal");
+        if (arrowCap is not null && closedCap != 0u)
+        {
+            menu.ArrowCapClosedSprite = closedCap;
+            uint openCap = ButtonStateImage(arrowCap, "Highlight");
+            menu.ArrowCapOpenSprite = openCap != 0u ? openCap : closedCap;
+            if (arrowCap.Width > 0f) menu.ArrowCapWidth = arrowCap.Width;
+            if (arrowCap.Height > 0f) menu.ArrowCapHeight = arrowCap.Height;
+        }
+
+        if (label is { Height: > 0f })
+            menu.RowHeight = label.Height;
+        if (info.Width > 0f)
+            menu.ColumnWidth = info.Width;
         return menu;
     }
 

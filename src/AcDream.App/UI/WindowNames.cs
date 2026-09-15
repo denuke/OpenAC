@@ -38,5 +38,7 @@ public static class WindowNames
 
     public const string Journal = "journal";
 
+    public const string Book = "book";
+
     public const string PluginShelf = "plugin-shelf";
 }

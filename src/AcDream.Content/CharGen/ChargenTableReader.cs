@@ -53,6 +53,7 @@ public static class ChargenTableReader
                     skill.SpecializedCost);
                 globalSkillDetails[skillId] = new ChargenSkillDetail(
                     skillId,
+                    skill.Name.Value,
                     skill.MinLevel,
                     skill.Description.Value,
                     new ChargenSkillFormula(

@@ -2,6 +2,7 @@ using System.Numerics;
 using AcDream.App.UI;
 using AcDream.App.UI.Layout;
 using AcDream.Core.Items;
+using AcDream.Core.Player;
 using AcDream.Core.Net;
 using AcDream.Core.Net.Messages;
 using AcDream.Core.Spells;
@@ -10,6 +11,44 @@ namespace AcDream.App.Tests.UI.Layout;
 
 public sealed class ItemAppraisalTextFormatterTests
 {
+    [Fact]
+    public void TheBuiltInList_NamesEverySkillItEverKnew_AndNotShield()
+    {
+        // The client's built-in list runs 1-54 with one hole: Shield, added
+        // after the list was written, is named only by the authored data.
+        for (int skill = 1; skill <= 54; skill++)
+        {
+            if (skill == 48)
+                continue;
+            Assert.True(
+                RetailSkillNames.TryGetName(skill, out _),
+                $"skill {skill} should have a built-in name");
+        }
+
+        Assert.False(RetailSkillNames.TryGetName(48, out _));
+    }
+
+    // OpenAC #83: a use requirement for Shield read "Unknown Skill" because
+    // nothing named skill 48. The authored data does, so the requirement line
+    // names it once the item surfaces hand over the authored resolver.
+    [Fact]
+    public void UseRequirement_ForShield_NamesItFromTheAuthoredData()
+    {
+        var obj = new ClientObject { ObjectId = 0x50000010u, Name = "Buckler" };
+        var properties = new PropertyBundle();
+        properties.Ints[366u] = 48;
+        properties.Ints[367u] = 200;
+
+        string report = ItemAppraisalTextFormatter.Build(
+            obj,
+            Parsed(properties),
+            _ => null,
+            Names(skills: AuthoredSkills));
+
+        Assert.Contains("Use requires Shield of at least 200.", report);
+        Assert.DoesNotContain("Unknown Skill", report);
+    }
+
     [Fact]
     public void WeaponAndMagic_AreProjectedInRetailOrderWithDatDescriptions()
     {
@@ -434,7 +473,10 @@ public sealed class ItemAppraisalTextFormatterTests
         string report = ItemAppraisalTextFormatter.Build(
             obj,
             appraisal,
-            _ => null);
+            _ => null,
+            // A wield requirement names its skill from the authored data, so
+            // the report needs the same resolver the item surfaces hand over.
+            Names(skills: AuthoredSkills));
 
         Assert.Contains("Ratings: Dam 3", report);
         Assert.Contains("Armor Level: 200", report);
@@ -1016,6 +1058,11 @@ public sealed class ItemAppraisalTextFormatterTests
             Assert.DoesNotContain(forbiddenLine, listedReport);
     }
 
+    /// <summary>The same minimal appraisal the rows here use, shared with the
+    /// skill-name rows next door.</summary>
+    internal static AppraiseInfoParser.Parsed ParsedFor(PropertyBundle properties)
+        => Parsed(properties);
+
     private static AppraiseInfoParser.Parsed Parsed(
         PropertyBundle properties,
         uint[]? spells = null,
@@ -1070,11 +1117,26 @@ public sealed class ItemAppraisalTextFormatterTests
 
     private static RetailAppraisalNameResolver Names(
         IReadOnlyDictionary<uint, string>? materials = null,
-        IReadOnlyDictionary<uint, string>? creatures = null)
+        IReadOnlyDictionary<uint, string>? creatures = null,
+        IReadOnlyDictionary<uint, string>? skills = null)
         => new(
             materials ?? new Dictionary<uint, string>(),
             new CreatureDisplayNameResolver(
-                creatures ?? new Dictionary<uint, string>()));
+                creatures ?? new Dictionary<uint, string>()),
+            skills);
+
+    /// <summary>The authored skill names these reports need, spelled the way
+    /// the installed data spells them.</summary>
+    internal static IReadOnlyDictionary<uint, string> AuthoredSkills =>
+        new Dictionary<uint, string>
+        {
+            [6u] = "Melee Defense",
+            [19u] = "Assess Person",
+            [27u] = "Assess Creature",
+            [34u] = "War Magic",
+            [47u] = "Missile Weapons",
+            [48u] = "Shield",
+        };
 
     private static int Count(string source, string value)
     {

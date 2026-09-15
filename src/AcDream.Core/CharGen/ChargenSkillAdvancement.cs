@@ -20,6 +20,7 @@ public readonly record struct ChargenSkillFormula(
 
 public readonly record struct ChargenSkillDetail(
     uint SkillId,
+    string Name,
     uint MinLevel,
     string Description,
     ChargenSkillFormula Formula);

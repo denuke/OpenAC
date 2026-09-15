@@ -174,6 +174,15 @@ public sealed class UiMenu : UiElement
 
     public float PopupOuterWidth => OuterW;
 
+    /// <summary>
+    /// Sizes the rows so the open list comes out exactly this wide,
+    /// whether or not it has overflowed and brought a scrollbar with it.
+    /// Call it after the items change.
+    /// </summary>
+    public void SizePopupToWidth(float width) =>
+        ColumnWidth = System.MathF.Max(
+            1f, width - (2 * Border) - EffectiveScrollbarWidth);
+
     public bool OpenUpward { get; set; } = true;
 
     private float PopupTop => OpenUpward ? -OuterH : Height;

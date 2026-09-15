@@ -39,7 +39,9 @@ public sealed record LiveInventorySessionBindings(
     ItemManaState? ItemMana,
     ExternalContainerState? ExternalContainers,
     Action<AppraiseInfoParser.Parsed>? OnAppraisal = null,
-    VendorState? Vendor = null);
+    VendorState? Vendor = null,
+    RuntimeBookState? Book = null,
+    Func<string>? PlayerName = null);
 
 public sealed record LiveCharacterSessionBindings(
     CombatState Combat,
@@ -97,6 +99,28 @@ public sealed class LiveSessionEventRouter : ILiveSessionEventRouting
         _character = character;
         _social = social;
         _constructionCheckpoint = constructionCheckpoint;
+    }
+
+    /// <summary>
+    /// Sends whatever a page turn asked for. Opening a book and turning
+    /// a page take the same two answers, so they send the same way.
+    /// </summary>
+    private static void SendBookPageRequest(
+        WorldSession session, uint bookGuid, RuntimeBookPageTurn turn)
+    {
+        switch (turn.Action)
+        {
+            case RuntimeBookPageAction.RequestPageText:
+                session.SendGameAction(BookRequests.BuildBookPageData(
+                    session.NextGameActionSequence(), bookGuid, turn.Page));
+                break;
+            case RuntimeBookPageAction.AddPage:
+                session.SendGameAction(BookRequests.BuildBookAddPage(
+                    session.NextGameActionSequence(), bookGuid));
+                break;
+            default:
+                break;
+        }
     }
 
     public void Attach()
@@ -194,6 +218,39 @@ public sealed class LiveSessionEventRouter : ILiveSessionEventRouting
                 vendor: inventory.Vendor,
                 onInterfaceText: social.AddText,
                 accepting: IsAccepting,
+                onBookOpen: inventory.Book is { } bookOpen
+                    ? book =>
+                    {
+                        // Opening a book ends in a page turn, which may
+                        // need a page fetched or added before there is
+                        // anything to read.
+                        RuntimeBookPageTurn turn = bookOpen.ApplyOpenBook(book);
+                        SendBookPageRequest(session, book.BookGuid, turn);
+                    }
+                    : null,
+                onBookPageData: inventory.Book is { } bookPageData
+                    ? response => bookPageData.ApplyPageData(response)
+                    : null,
+                onBookAddPageResponse: inventory.Book is { } bookAddPage
+                    ? response =>
+                    {
+                        // Retail re-reads the whole book whenever it cannot
+                        // fold the answer into the open one.
+                        if (!bookAddPage.ApplyAddPageResponse(
+                                response,
+                                inventory.PlayerName?.Invoke() ?? string.Empty))
+                        {
+                            session.SendGameAction(
+                                BookRequests.BuildBookData(
+                                    session.NextGameActionSequence(),
+                                    response.BookGuid));
+                            bookAddPage.MarkRequestPending();
+                        }
+                    }
+                    : null,
+                onBookInscription: inventory.Book is { } bookInscription
+                    ? inscription => bookInscription.ApplyInscription(inscription)
+                    : null,
                 onFellowshipFullUpdate: social.Fellowship is { } fellowshipFull
                     ? fellowshipFull.ApplyFullUpdate
                     : null,

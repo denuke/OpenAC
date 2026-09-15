@@ -598,6 +598,10 @@ public sealed class UiButton : UiElement, IUiGlobalTimeListener, IUiDatStateful
 
     public override bool OnEvent(in UiEvent e)
     {
+        // A button can also be the interactive mask over an image map (an
+        // authored hit region with no face). Its region gets first refusal, so
+        // the mask behaves the same whichever class the layout authored it as.
+        if (DispatchToPointerRegion(in e)) return true;
         switch (e.Type)
         {
             case UiEventType.HoverEnter:

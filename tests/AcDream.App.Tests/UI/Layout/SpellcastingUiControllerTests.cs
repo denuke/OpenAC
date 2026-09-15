@@ -588,6 +588,42 @@ public sealed class SpellcastingUiControllerTests
     }
 
     [Fact]
+    public void EndowmentDoubleClick_ActivatesTheCasterAndNeverCastsFromTheSpellbook()
+    {
+        ImportedLayout layout = LayoutImporter.Build(
+            FixtureLoader.LoadCombatInfos(), NoTex, datFont: null);
+        var spellbook = new Spellbook();
+        var objects = new ClientObjectTable();
+        objects.AddOrUpdate(new ClientObject { ObjectId = 1u, Name = "Player" });
+        objects.AddOrUpdate(new ClientObject
+        {
+            ObjectId = 2u,
+            Name = "Orb of the Ironsea",
+            Type = ItemType.Caster,
+            WielderId = 1u,
+            CurrentlyEquippedLocation = EquipMask.Held,
+            SpellId = 2670u,
+        });
+        var activated = new List<uint>();
+        var operations = new RecordingSpellCastOperations();
+        using SpellcastingUiController controller = Bind(
+            layout, spellbook, objects, activated.Add, operations: operations)!;
+        UiElement host = layout.FindElement(SpellcastingUiController.EndowmentId)!;
+        UiCatalogSlot slot = Assert.IsType<UiCatalogSlot>(host.Children[^1]);
+
+        slot.OnEvent(new UiEvent(0, slot, UiEventType.DoubleClick));
+
+        // The caster's own spell is not a spellbook spell: the panel asks for
+        // the caster to be used, it does not raise a cast the spellbook and
+        // component gates would refuse.
+        Assert.Equal(new[] { 2u }, activated);
+        Assert.Empty(operations.Targeted);
+        Assert.Empty(operations.Untargeted);
+        Assert.Empty(operations.Messages);
+        Assert.False(spellbook.Knows(2670u));
+    }
+
+    [Fact]
     public void FavoritePressSelectsImmediately_AndRightClickExaminesLocally()
     {
         ImportedLayout layout = LayoutImporter.Build(
@@ -824,6 +860,26 @@ public sealed class SpellcastingUiControllerTests
         public void SendUntargeted(uint spellId) { }
         public void SendTargeted(uint targetId, uint spellId) { }
         public void DisplayMessage(string message) { }
+        public void IncrementBusy() { }
+    }
+
+    private sealed class RecordingSpellCastOperations : IRuntimeSpellCastOperations
+    {
+        public readonly List<(uint TargetId, uint SpellId)> Targeted = new();
+        public readonly List<uint> Untargeted = new();
+        public readonly List<string> Messages = new();
+        public uint LocalPlayerId => 1u;
+        public bool CanSend => true;
+        public bool HasRequiredComponents(uint spellId) => true;
+        public bool IsTargetCompatible(
+            uint targetId,
+            SpellMetadata spell,
+            bool showMessage) => true;
+        public void StopCompletely() { }
+        public void SendUntargeted(uint spellId) => Untargeted.Add(spellId);
+        public void SendTargeted(uint targetId, uint spellId)
+            => Targeted.Add((targetId, spellId));
+        public void DisplayMessage(string message) => Messages.Add(message);
         public void IncrementBusy() { }
     }
 

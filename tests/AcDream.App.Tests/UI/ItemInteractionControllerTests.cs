@@ -11,6 +11,11 @@ public sealed class ItemInteractionControllerTests
     private const uint Player = 0x50000001u;
     private const uint Pack = 0x50000010u;
     private const uint HealthKitUseability = 0x00220008u;
+    // A caster that carries its own spell is authored so that the source must
+    // be wielded and the target may be anything in reach.
+    private const uint WieldedCasterUseability = 0x00600004u;
+    private const uint Caster = 0x50000C01u;
+    private const uint Monster = 0x50000C02u;
 
     private sealed class Harness
     {
@@ -150,6 +155,114 @@ public sealed class ItemInteractionControllerTests
             Objects.MoveItem(id, Pack, Objects.GetContents(Pack).Count);
             return item;
         }
+    }
+
+    private static void AddWieldedCaster(Harness h)
+    {
+        h.Objects.AddOrUpdate(new ClientObject
+        {
+            ObjectId = Caster,
+            Name = "Orb of the Ironsea",
+            Type = ItemType.Caster,
+            WielderId = Player,
+            CurrentlyEquippedLocation = EquipMask.Held,
+            Useability = WieldedCasterUseability,
+            TargetType = (uint)ItemType.Creature,
+            SpellId = 2670u,
+        });
+        h.Objects.AddOrUpdate(new ClientObject
+        {
+            ObjectId = Monster,
+            Name = "Drudge",
+            Type = ItemType.Creature,
+        });
+    }
+
+    [Fact]
+    public void WieldedCaster_usedWithASelection_sendsTheTargetedRequest()
+    {
+        var h = new Harness();
+        AddWieldedCaster(h);
+        h.SelectedObject = Monster;
+
+        Assert.True(h.Controller.UseWithCurrentSelection(Caster));
+
+        // The server can only answer a caster's own spell for the targeted
+        // request; a bare use has no meaning for a caster and is dropped.
+        Assert.Equal(new[] { (Caster, Monster) }, h.UseWithTarget);
+        Assert.Empty(h.Uses);
+        Assert.False(h.Controller.IsTargetModeActive);
+        // The caller already knows the caster is wielded, so the use must not
+        // also run the classification that would strip it back into the pack.
+        Assert.Empty(h.BackpackPlacements);
+        Assert.Empty(h.Wields);
+    }
+
+    [Fact]
+    public void WieldedCaster_usedWithoutASelection_asksForATargetAndSendsNothing()
+    {
+        var h = new Harness();
+        AddWieldedCaster(h);
+        h.SelectedObject = 0u;
+
+        Assert.False(h.Controller.UseWithCurrentSelection(Caster));
+
+        Assert.Empty(h.UseWithTarget);
+        Assert.Empty(h.Uses);
+        Assert.False(h.Controller.IsTargetModeActive);
+        Assert.Empty(h.BackpackPlacements);
+        Assert.Contains(
+            h.InterfaceTexts,
+            entry => entry.Text
+                == "Select your target before using the Orb of the Ironsea");
+    }
+
+    [Fact]
+    public void WieldedCaster_repeatedUseInsideTheReuseWindow_sendsOnce()
+    {
+        var h = new Harness();
+        AddWieldedCaster(h);
+        h.SelectedObject = Monster;
+
+        Assert.True(h.Controller.UseWithCurrentSelection(Caster));
+        h.Now += 199;
+
+        // Inside the shared reuse window the second press is swallowed, so the
+        // second request never reaches the wire.
+        Assert.True(h.Controller.UseWithCurrentSelection(Caster));
+
+        Assert.Single(h.UseWithTarget);
+        Assert.Empty(h.BackpackPlacements);
+    }
+
+    [Fact]
+    public void WieldedCaster_theServerMarkedUnusable_isNotStrippedIntoThePack()
+    {
+        // Some casters are published with a useability that offers no use at
+        // all. Nothing can be sent for one, but the request must still not be
+        // answered by pulling the caster off the player and into a pack: the
+        // caller already knows it is wielded, so no classification runs.
+        var h = new Harness();
+        AddWieldedCaster(h);
+        h.Objects.AddOrUpdate(new ClientObject
+        {
+            ObjectId = Caster,
+            Name = "Orb of the Ironsea",
+            Type = ItemType.Caster,
+            WielderId = Player,
+            CurrentlyEquippedLocation = EquipMask.Held,
+            Useability = 0x00000001u,
+            TargetType = (uint)ItemType.Creature,
+            SpellId = 2670u,
+        });
+        h.SelectedObject = Monster;
+
+        h.Controller.UseWithCurrentSelection(Caster);
+
+        Assert.Empty(h.BackpackPlacements);
+        Assert.Empty(h.Wields);
+        Assert.Empty(h.Uses);
+        Assert.Empty(h.UseWithTarget);
     }
 
     [Fact]

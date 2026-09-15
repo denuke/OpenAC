@@ -27,7 +27,6 @@ internal sealed class LiveLocalPlayerFrameRuntime : ILocalPlayerFrameRuntime
     private readonly IRuntimeLocalPlayerControllerSource _controller;
     private readonly IChaseCameraSource _chase;
     private readonly DispatcherMovementInputSource _input;
-    private readonly IInputCaptureSource _capture;
     private readonly LiveEntityRuntime _liveEntities;
     private readonly ILocalPlayerIdentitySource _identity;
     private readonly ILocalPlayerPhysicsHostSource _physicsHost;
@@ -41,7 +40,6 @@ internal sealed class LiveLocalPlayerFrameRuntime : ILocalPlayerFrameRuntime
         IRuntimeLocalPlayerControllerSource controller,
         IChaseCameraSource chase,
         DispatcherMovementInputSource input,
-        IInputCaptureSource capture,
         LiveEntityRuntime liveEntities,
         ILocalPlayerIdentitySource identity,
         ILocalPlayerPhysicsHostSource physicsHost,
@@ -54,7 +52,6 @@ internal sealed class LiveLocalPlayerFrameRuntime : ILocalPlayerFrameRuntime
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
         _chase = chase ?? throw new ArgumentNullException(nameof(chase));
         _input = input ?? throw new ArgumentNullException(nameof(input));
-        _capture = capture ?? throw new ArgumentNullException(nameof(capture));
         _liveEntities = liveEntities ?? throw new ArgumentNullException(nameof(liveEntities));
         _identity = identity ?? throw new ArgumentNullException(nameof(identity));
         _physicsHost = physicsHost ?? throw new ArgumentNullException(nameof(physicsHost));
@@ -63,13 +60,16 @@ internal sealed class LiveLocalPlayerFrameRuntime : ILocalPlayerFrameRuntime
         _session = session ?? throw new ArgumentNullException(nameof(session));
     }
 
+    // The overlay holding the keyboard (a plugin window with focus) only
+    // takes the movement keys away - DispatcherMovementInputSource yields
+    // nothing while it does - it must not stop the player advancing, or the
+    // character stands frozen on screen while a bot's commands carry on.
     public bool CanPresentPlayer =>
         !_camera.IsFlyMode
         && _mode.IsPlayerMode
         && _controller.Controller is not null
         && _chase.Legacy is not null
-        && _input.IsAvailable
-        && !_capture.DevToolsWantCaptureKeyboard;
+        && _input.IsAvailable;
 
     public PlayerMovementController? Controller => _controller.Controller;
 

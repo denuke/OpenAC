@@ -116,6 +116,16 @@ A blocked shot names what's in the way, such as a closed door or a wall.
 `ILoginAutomation.Snapshot`, `EnterWorld`, `LogOut` — the same login and
 character-selection flow the Agent plugin uses, available to any plugin.
 
+## Staying in sync with upstream
+
+This fork follows [upstream OpenAC](https://github.com/eriknihlen/OpenAC), and
+keeping its `main` in sync with upstream `main` is a requirement of the repo.
+Upstream is merged into `main`, never rebased onto, so upstream's history stays
+whole and the fork's own changes sit on top of it. Each sync lands as a pull
+request of that merge, merged with a merge commit rather than squashed or
+rebased, so the fork's users get everything upstream ships and each feature
+here stays easy to offer upstream later.
+
 ## Status
 
 OpenAC is in **beta**: it is fully playable against an ACEmulator server, and

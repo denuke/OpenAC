@@ -365,7 +365,8 @@ public sealed class CursorFeedbackControllerTests
             new ShortcutStore(),
             iconIds: static (_, _, _, _, _) => 0u,
             useItem: static _ => { },
-            playerGuid: () => Player);
+            playerGuid: () => Player,
+            resolveAppropriateName: ItemTooltipCaptionNames.Resolve);
         var root = new UiRoot { Width = 800, Height = 600 };
         root.AddChild(toolbar.Root);
         var backpack = Assert.IsType<UiButton>(toolbar.FindElement(0x100001B1u));

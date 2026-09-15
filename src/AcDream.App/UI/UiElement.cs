@@ -177,7 +177,11 @@ public abstract class UiElement
 
     public bool CapturesPointerDrag { get; set; }
 
-    public virtual bool IsDragSource => false;
+    /// <summary>Set to make this element an interactive mask over an image map.
+    /// Null (the default) leaves every pointer message to the element itself.</summary>
+    public UiPointerRegion? PointerRegion { get; set; }
+
+    public virtual bool IsDragSource => PointerRegion?.DragPayloadAt is not null;
 
     public virtual bool HandlesClick => false;
 
@@ -308,11 +312,70 @@ public abstract class UiElement
     protected virtual bool OnHitTest(float localX, float localY)
         => localX >= 0f && localX < Width && localY >= 0f && localY < Height;
 
-    public virtual bool OnEvent(in UiEvent e) => false;
+    public virtual bool OnEvent(in UiEvent e) => DispatchToPointerRegion(in e);
 
-    public virtual object? GetDragPayload() => null;
+    /// <summary>Offer a pointer message to this element's image-map region.
+    /// Returns true when the region consumed it. A widget class that overrides
+    /// <see cref="OnEvent"/> offers the message here first, so a mask behaves the
+    /// same whichever class the layout authored it as.
+    /// <para>
+    /// Event coordinates belong to the event's own target and are not re-based as
+    /// the message bubbles, so only the target may read them. Recording a press
+    /// never consumes it: elements above still act on a bubbled press.
+    /// </para></summary>
+    private protected bool DispatchToPointerRegion(in UiEvent e)
+    {
+        if (PointerRegion is not { } region || !ReferenceEquals(e.Target, this))
+            return false;
 
-    public virtual (uint tex, int w, int h)? GetDragGhost() => null;
+        switch (e.Type)
+        {
+            case UiEventType.MouseDown:
+            case UiEventType.RightDown:
+                region.PressX = e.Data1;
+                region.PressY = e.Data2;
+                return false;
+
+            case UiEventType.Click:
+                if (region.Clicked is null) return false;
+                region.Clicked(e.Data1, e.Data2);
+                return true;
+
+            case UiEventType.RightClick:
+                if (region.RightClicked is null) return false;
+                region.RightClicked(e.Data1, e.Data2);
+                return true;
+
+            case UiEventType.DragBegin:
+                return region.DragPayloadAt is not null;
+
+            case UiEventType.DragEnter:
+                if (region.DragOverAt is null) return false;
+                region.DragOverAt(e.Payload, e.Data1, e.Data2);
+                return true;
+
+            case UiEventType.DragOver:              // the root fires this one on LEAVE
+                if (region.DragOverAt is null && region.DragLeft is null) return false;
+                region.DragLeft?.Invoke();
+                return true;
+
+            case UiEventType.DropReleased:
+                if (region.DropReleasedAt is null) return false;
+                region.DropReleasedAt(e.Payload, e.Data1, e.Data2);
+                return true;
+        }
+        return false;
+    }
+
+    public virtual object? GetDragPayload()
+        => PointerRegion is { DragPayloadAt: { } payload } region
+            ? payload(region.PressX, region.PressY)
+            : null;
+
+    public virtual (uint tex, int w, int h)? GetDragGhost()
+        => PointerRegion is { DragGhostAt: { } ghost } region
+            ? ghost(region.PressX, region.PressY)
+            : null;
 
     internal virtual void SetDragSourceActive(bool active, object? payload) { }
 

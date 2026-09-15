@@ -1429,6 +1429,43 @@ public sealed class GameEventWiringTests
             Assert.Single(lines));
     }
 
+    // OpenAC #88: the salvage line and an appraisal's weapon line name the
+    // skill from the same built-in list, so they can never disagree. The line
+    // leaves the name out for a skill that list does not have.
+    [Fact]
+    public void WireAll_SalvageOperationsResult_NamesTheSkillFromTheSharedList()
+    {
+        for (uint skillId = 1; skillId <= 54; skillId++)
+        {
+            var lines = new List<(string Text, RetailLogTextType Type)>();
+            var dispatcher = new GameEventDispatcher();
+            GameEventWiring.WireAll(
+                dispatcher,
+                new ClientObjectTable(),
+                new CombatState(),
+                new Spellbook(),
+                new ChatLog(),
+                onInterfaceText: (text, type) => lines.Add((text, type)));
+
+            byte[] payload = new AceWireWriter()
+                .Write(skillId)
+                .Write(0u)
+                .Write(1u)
+                .Write(63u).Write(unchecked((ulong)BitConverter.DoubleToInt64Bits(8d))).Write(1u)
+                .Write(0)
+                .ToArray();
+            dispatcher.Dispatch(GameEventEnvelope.TryParse(
+                WrapEnvelope(GameEventType.SalvageOperationsResult, payload))!.Value);
+
+            string expected = RetailSkillNames.TryGetName((int)skillId, out string? name)
+                ? name
+                : string.Empty;
+            Assert.Equal(
+                $"You obtain 1 Silver (ws 8.00) using your knowledge of {expected}.",
+                Assert.Single(lines).Text);
+        }
+    }
+
     [Fact]
     public void WireAll_SalvageOperationsResult_EmitsUnsuitableItemsInSalvagingLog()
     {

@@ -133,6 +133,7 @@ public sealed class VendorUiController : IRetainedPanelController, IItemListDrag
     private readonly VendorStagingList _sellStaging = new();
     private readonly RetailDialogFactory? _dialogs;
     private readonly Action<string>? _systemMessage;
+    private readonly Func<ClientObject, string> _resolveAppropriateName;
 
     private readonly List<(string Label, ItemType Mask)> _presentCategories = new();
     private int _selectedCategoryIndex = -1;
@@ -195,8 +196,11 @@ public sealed class VendorUiController : IRetainedPanelController, IItemListDrag
         Func<uint, (uint tex, int w, int h)> resolveSprite,
         uint emptySlotSprite,
         uint buyingEmptySlotSprite,
-        uint sellingEmptySlotSprite)
+        uint sellingEmptySlotSprite,
+        Func<ClientObject, string> resolveAppropriateName)
     {
+        ArgumentNullException.ThrowIfNull(resolveAppropriateName);
+        _resolveAppropriateName = resolveAppropriateName;
         _vendor = vendor;
         _window = window;
         _resolveIcon = resolveIcon;
@@ -379,6 +383,10 @@ public sealed class VendorUiController : IRetainedPanelController, IItemListDrag
         UiDatFont? datFont,
         BitmapFont? debugFont,
         Func<uint, (uint tex, int w, int h)> resolveSprite,
+        /// <summary>Composes an item's displayed name, material prefix
+        /// included. Required: without it a cell would quietly caption the
+        /// plain name and disagree with the selection caption.</summary>
+        Func<ClientObject, string> resolveAppropriateName,
         uint emptySlotSprite = 0u,
         uint buyingEmptySlotSprite = 0u,
         uint sellingEmptySlotSprite = 0u,
@@ -478,7 +486,8 @@ public sealed class VendorUiController : IRetainedPanelController, IItemListDrag
             resolveSprite,
             emptySlotSprite,
             buyingEmptySlotSprite,
-            sellingEmptySlotSprite);
+            sellingEmptySlotSprite,
+            resolveAppropriateName);
     }
 
     private enum VendorPanelTab { Items, Buying, Selling }
@@ -626,7 +635,8 @@ public sealed class VendorUiController : IRetainedPanelController, IItemListDrag
                         SpriteResolve = _itemList.SpriteResolve,
                         SlotIndex = _itemList.GetNumUIItems(),
                         AllowDragSource = false,
-                        TooltipTextResolve = g => _objects.Get(g)?.GetTooltipDisplayName(),
+                        TooltipTextResolve = g => ItemTooltipCaption.Resolve(
+                            _objects, g, _resolveAppropriateName),
                     };
                     cell.SetItem(item.ItemGuid, icon);
                     cell.Selected = item.ItemGuid == selectedGuid;
@@ -1349,7 +1359,8 @@ public sealed class VendorUiController : IRetainedPanelController, IItemListDrag
                     SpriteResolve = list.SpriteResolve,
                     SlotIndex = list.GetNumUIItems(),
                     AllowDragSource = false,
-                    TooltipTextResolve = g => _objects.Get(g)?.GetTooltipDisplayName(),
+                    TooltipTextResolve = g => ItemTooltipCaption.Resolve(
+                        _objects, g, _resolveAppropriateName),
                 };
                 cell.SetItem(shopItem.ItemGuid, icon);
                 cell.Selected = shopItem.ItemGuid == selectedGuid;
@@ -1420,7 +1431,8 @@ public sealed class VendorUiController : IRetainedPanelController, IItemListDrag
                     SlotIndex = list.GetNumUIItems(),
                     AllowDragSource = true,
                     SourceKind = ItemDragSource.Inventory,
-                    TooltipTextResolve = g => _objects.Get(g)?.GetTooltipDisplayName(),
+                    TooltipTextResolve = g => ItemTooltipCaption.Resolve(
+                        _objects, g, _resolveAppropriateName),
                 };
                 cell.SetItem(item.ObjectId, icon);
                 cell.ShowSellOverlay = true;

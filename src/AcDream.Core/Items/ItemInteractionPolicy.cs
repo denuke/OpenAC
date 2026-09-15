@@ -223,7 +223,7 @@ public static class ItemInteractionPolicy
             if (primary is >= ItemPrimaryUseResult.PlaceInBackpack
                 and <= ItemPrimaryUseResult.BeginGame)
                 return Consumed(BuildUsingItemActions(source, input.PlayerId,
-                    input.GroundObjectId, primary));
+                    input.GroundObjectId, primary, classify: true));
         }
 
         if (source.TradeState == 1)
@@ -249,7 +249,8 @@ public static class ItemInteractionPolicy
                 new(ItemPolicyActionKind.IncrementBusy),
             };
             actions.AddRange(BuildUsingItemActions(source, input.PlayerId,
-                input.GroundObjectId, DetermineUseResult(source, input.PlayerId, input.GroundObjectId)));
+                input.GroundObjectId, DetermineUseResult(source, input.PlayerId, input.GroundObjectId),
+                classify: !input.BypassClassification));
             return Consumed(actions);
         }
 
@@ -272,12 +273,14 @@ public static class ItemInteractionPolicy
                 new(ItemPolicyActionKind.IncrementBusy),
             };
             actions.AddRange(BuildUsingItemActions(source, input.PlayerId,
-                input.GroundObjectId, DetermineUseResult(source, input.PlayerId, input.GroundObjectId)));
+                input.GroundObjectId, DetermineUseResult(source, input.PlayerId, input.GroundObjectId),
+                classify: !input.BypassClassification));
             return Consumed(actions);
         }
 
         var fallback = BuildUsingItemActions(source, input.PlayerId,
-            input.GroundObjectId, DetermineUseResult(source, input.PlayerId, input.GroundObjectId));
+            input.GroundObjectId, DetermineUseResult(source, input.PlayerId, input.GroundObjectId),
+            classify: !input.BypassClassification);
         if (fallback.Count != 0)
             return Consumed(fallback);
         if (source.Id == input.PlayerId)
@@ -387,14 +390,23 @@ public static class ItemInteractionPolicy
             $"Cannot give {NameOf(input.Item)} to {NameOf(target)}"));
     }
 
+    /// <param name="classify">
+    /// False when the caller has already decided what this use means (it is
+    /// using an item it knows is wielded, say). The primary
+    /// backpack/wield/sort/trade/salvage/board action is then skipped -- it is
+    /// what would otherwise strip a wielded item off the player the moment it
+    /// is used. The contained-container and ground-object tails are not part
+    /// of that decision and always run.
+    /// </param>
     private static IReadOnlyList<ItemPolicyAction> BuildUsingItemActions(
         in ItemPolicyObject item,
         uint playerId,
         uint groundObjectId,
-        ItemPrimaryUseResult primary)
+        ItemPrimaryUseResult primary,
+        bool classify)
     {
         var actions = new List<ItemPolicyAction>(3);
-        ItemPolicyActionKind? primaryAction = primary switch
+        ItemPolicyActionKind? primaryAction = !classify ? null : primary switch
         {
             ItemPrimaryUseResult.PlaceInBackpack => ItemPolicyActionKind.PlaceInBackpack,
             ItemPrimaryUseResult.WieldRight => ItemPolicyActionKind.WieldRight,

@@ -819,6 +819,46 @@ public sealed class ItemInteractionController : IDisposable
     }
 
     /// <summary>
+    /// Primary use of an item the caller has already classified, with the
+    /// current world selection standing in as the target. This is the entry
+    /// the magic panel's wielded-caster slot uses: the caster is already
+    /// wielded, so the auto-wield / auto-sort / place-in-pack classification
+    /// step is skipped, and the item's own useability decides whether the
+    /// request carries the selected target or goes out bare. A caster that
+    /// carries a spell is authored source-wielded / target-remote, so this is
+    /// what turns the slot into a targeted request the server answers with the
+    /// caster's own spell, instead of a bare use it has no meaning for.
+    /// </summary>
+    public bool UseWithCurrentSelection(uint itemGuid)
+    {
+        if (itemGuid == 0u || _objects.Get(itemGuid) is not { } item)
+            return false;
+        if (!ConsumeUseThrottle())
+            return true;
+        if (!EnsureInventoryRequestReady())
+            return false;
+
+        uint selectedId = _selectedObjectId();
+        ItemPolicyObject? selected =
+            selectedId != 0u && _objects.Get(selectedId) is { } selectedItem
+                ? Snapshot(selectedItem)
+                : null;
+
+        var input = new ItemUsePolicyInput(
+            Snapshot(item),
+            _playerGuid(),
+            _groundObjectId(),
+            CanMakeInventoryRequest,
+            _activeVendorId(),
+            BypassClassification: true,
+            UseCurrentSelection: true,
+            SelectedTarget: selected,
+            ConfirmVolatileRareUses: true,
+            InNonCombatMode: _inNonCombatMode());
+        return ExecuteUseActions(ItemInteractionPolicy.DecideUse(input).Actions);
+    }
+
+    /// <summary>
     /// Picks up a world item into the inventory. The pack the request names
     /// is the one the player has open (or the main pack when asked); when it
     /// has no room the item goes to the main pack, then to the first side

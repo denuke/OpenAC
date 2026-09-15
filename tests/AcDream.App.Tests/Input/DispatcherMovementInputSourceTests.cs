@@ -86,11 +86,23 @@ public sealed class DispatcherMovementInputSourceTests
         Assert.True(source.Capture().Forward);
     }
 
+    [Fact]
+    public void DevToolsKeyboardCaptureDoesNotSilenceCommandInput()
+    {
+        using var movement = new RuntimeLocalPlayerMovementState();
+        var capture = new FakeCapture { DevToolsWantCaptureKeyboard = true };
+        var source = new DispatcherMovementInputSource(movement, capture);
+        movement.SetCommandInput(new MovementInput(Forward: true, Run: true));
+
+        MovementInput captured = source.Capture();
+
+        Assert.True(captured.Forward);
+        Assert.True(captured.IsPersistentCommand);
+    }
+
     [Theory]
     [InlineData(InputAction.MovementBackup)]
     [InlineData(InputAction.MovementStop)]
-    [InlineData(InputAction.MovementStrafeLeft)]
-    [InlineData(InputAction.MovementStrafeRight)]
     public void RetailCancelActionsClearAutorun(InputAction action)
     {
         var source = CreateSource();
@@ -99,6 +111,37 @@ public sealed class DispatcherMovementInputSourceTests
         Assert.False(source.HandlePressedAction(action));
 
         Assert.False(source.AutoRunActive);
+    }
+
+    /// <summary>
+    /// Retail keeps the run lock through a sidestep or a turn: only a
+    /// forward-list command or a posture ends it. A strafe pressed while
+    /// autorunning therefore steers the run sideways - the capture still
+    /// carries the locked forward and run bits next to the strafe.
+    /// </summary>
+    [Theory]
+    [InlineData(InputAction.MovementStrafeLeft)]
+    [InlineData(InputAction.MovementStrafeRight)]
+    [InlineData(InputAction.MovementTurnLeft)]
+    [InlineData(InputAction.MovementTurnRight)]
+    public void StrafeAndTurnKeepAutorun_SoTheRunIsSteered(InputAction action)
+    {
+        var (dispatcher, _, _) = CreateDispatcher();
+        var source = CreateSource();
+        source.Bind(dispatcher);
+        source.HandlePressedAction(InputAction.MovementRunLock);
+
+        Assert.False(source.HandlePressedAction(action));
+        Assert.True(dispatcher.TrySetAutomationActionHeld(action, held: true));
+
+        Assert.True(source.AutoRunActive);
+        MovementInput captured = source.Capture();
+        Assert.True(captured.Forward);
+        Assert.True(captured.Run);
+        Assert.Equal(action == InputAction.MovementStrafeLeft, captured.StrafeLeft);
+        Assert.Equal(action == InputAction.MovementStrafeRight, captured.StrafeRight);
+        Assert.Equal(action == InputAction.MovementTurnLeft, captured.TurnLeft);
+        Assert.Equal(action == InputAction.MovementTurnRight, captured.TurnRight);
     }
 
     [Fact]

@@ -20,6 +20,8 @@ public static class RetailPanelCatalog
 
     public const uint Journal = 25u;
 
+    public const uint Book = 2u;
+
     private static readonly (uint PanelId, string WindowName)[] Mounted =
     {
         (CharacterInformation, WindowNames.CharacterInformation),
@@ -35,6 +37,7 @@ public static class RetailPanelCatalog
         (SocialPanel, WindowNames.SocialPanel),
         (MapHouse, WindowNames.MapHouse),
         (Journal, WindowNames.Journal),
+        (Book, WindowNames.Book),
     };
 
     private static readonly (uint PanelId, string WindowName)[] Toolbar =

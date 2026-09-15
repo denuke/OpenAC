@@ -16,7 +16,8 @@ public sealed record VividTargetRuntimeBindings(
     Func<uint> PlayerGuid,
     Func<bool> Enabled,
     Func<uint, VividTargetInfo?> ResolveTarget,
-    Func<(Matrix4x4 View, Matrix4x4 Projection, Vector2 Viewport)> Camera);
+    Func<(Matrix4x4 View, Matrix4x4 Projection, Vector2 Viewport)> Camera,
+    Func<uint, RadarRelationshipTraits>? RelationshipFor = null);
 
 public sealed class VividTargetIndicatorController
 {
@@ -140,8 +141,8 @@ public sealed class VividTargetIndicatorController
             return;
         }
 
-        RadarBlipColors.Rgba color = RadarBlipColors.For(
-            target.ItemType, target.ObjectDescriptionFlags);
+        RadarBlipColors.Rgba color = ComputeTint(
+            target, _bindings.RelationshipFor?.Invoke(guid) ?? default);
         var tint = new Vector4(color.Red, color.Green, color.Blue, color.Alpha);
         if (projection.Status == VividTargetProjectionStatus.OnScreen)
         {
@@ -245,6 +246,13 @@ public sealed class VividTargetIndicatorController
             default,
             angle);
     }
+
+    internal static RadarBlipColors.Rgba ComputeTint(
+        VividTargetInfo target, RadarRelationshipTraits relationship)
+        => RadarBlipColors.For(
+            RadarObjectTraits.FromPublicWeenieDescription(
+                target.ItemType, target.ObjectDescriptionFlags),
+            relationship);
 
     internal static uint SelectOffScreenImageEnum(float angleDegrees)
     {

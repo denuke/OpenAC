@@ -34,6 +34,10 @@ public sealed class SecureTradeUiController : IRetainedPanelController
         Action DeclineTrade,
         Action ResetTrade,
         Action<bool> SetWindowVisible,
+        /// <summary>Composes an item's displayed name, material prefix
+        /// included. Required: without it a cell would quietly caption the
+        /// plain name and disagree with the selection caption.</summary>
+        Func<ClientObject, string> ResolveAppropriateName,
         uint SelfEmptySlotSprite = 0u,
         uint PartnerEmptySlotSprite = 0u,
         Func<int, string>? FormatTotalItems = null);
@@ -57,6 +61,7 @@ public sealed class SecureTradeUiController : IRetainedPanelController
         ImportedLayout layout,
         Bindings bindings)
     {
+        ArgumentNullException.ThrowIfNull(bindings.ResolveAppropriateName);
         _bindings = bindings;
         _partnerName = layout.FindElement(PartnerNameId) as UiText;
         _partnerStatus = layout.FindElement(PartnerStatusId);
@@ -228,7 +233,8 @@ public sealed class SecureTradeUiController : IRetainedPanelController
                     AllowDragSource = false,
                     ShowTradeOverlay = side == RuntimeTradeSide.Self,
                     TradeOverlaySprite = TradeOverlaySpriteId,
-                    TooltipTextResolve = g => _bindings.Objects.Get(g)?.GetTooltipDisplayName(),
+                    TooltipTextResolve = g => ItemTooltipCaption.Resolve(
+                        _bindings.Objects, g, _bindings.ResolveAppropriateName),
                 };
                 cell.SetItem(guid, icon);
                 list.AddItem(cell);

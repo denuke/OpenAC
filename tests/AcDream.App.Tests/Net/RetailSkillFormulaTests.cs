@@ -221,6 +221,7 @@ public sealed class RetailSkillFormulaTests
             {
                 [skillId] = new ChargenSkillDetail(
                     skillId,
+                    Name: "Mana Conversion",
                     MinLevel: 1u,
                     Description: string.Empty,
                     new ChargenSkillFormula(
