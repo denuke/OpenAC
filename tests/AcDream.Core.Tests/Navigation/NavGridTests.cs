@@ -59,6 +59,77 @@ public sealed class NavGridTests
     }
 
     [Fact]
+    public void ARoomsPlaceStandsClearOfThePillarInItsMiddle()
+    {
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 16f, 16f, 0f),
+            .. Wall(7f, 7f, 9f, 7f, 0f, 3f),
+            .. Wall(9f, 7f, 9f, 9f, 0f, 3f),
+            .. Wall(9f, 9f, 7f, 9f, 0f, 3f),
+            .. Wall(7f, 9f, 7f, 7f, 0f, 3f)]);
+        int start = grid.FindWalkableNode(new Vector3(2f, 8f, 0f), 1.5f, 1f);
+
+        NavPlace place = Assert.Single(NavPlaces.Find(grid, start));
+
+        Assert.Equal(NavPlaceKind.Room, place.Kind);
+        Assert.True(Vector2.Distance(new Vector2(place.Position.X, place.Position.Y), new Vector2(8f, 8f)) > 3.5f);
+        Assert.True(place.WidthMeters > 12f);
+    }
+
+    [Fact]
+    public void ACorridorsStretchesBetweenArchesAreStillAPassage()
+    {
+        var arches = new List<NavTriangle>();
+        foreach (float x in new[] { 20f, 28f, 36f })
+        {
+            arches.AddRange(Wall(x, 4f, x, 4.5f, 0f, 3f));
+            arches.AddRange(Wall(x, 7.5f, x, 8f, 0f, 3f));
+        }
+        NavGrid grid = Build([
+            .. Floor(0f, 0f, 12f, 12f, 0f),
+            .. Floor(12f, 4f, 44f, 8f, 0f),
+            .. Floor(44f, 0f, 56f, 12f, 0f),
+            .. arches], size: 64f);
+        int start = grid.FindWalkableNode(new Vector3(6f, 6f, 0f), 1.5f, 1f);
+
+        IReadOnlyList<NavPlace> places = NavPlaces.Find(grid, start);
+
+        Assert.Equal(2, places.Count(place => place.Kind == NavPlaceKind.Room));
+        Assert.All(
+            places.Where(place => place.Position.X > 13f && place.Position.X < 43f),
+            place => Assert.Equal(NavPlaceKind.Passage, place.Kind));
+    }
+
+    [Fact]
+    public void ARoomWhosePillarsLeaveGapsNoWiderThanItsCorridorsIsStillARoom()
+    {
+        var pillars = new List<NavTriangle>();
+        foreach (float x in new[] { 15.5f, 20.5f })
+        {
+            foreach (float y in new[] { 3.5f, 8.5f })
+            {
+                pillars.AddRange(Wall(x, y, x + 2f, y, 0f, 3f));
+                pillars.AddRange(Wall(x + 2f, y, x + 2f, y + 2f, 0f, 3f));
+                pillars.AddRange(Wall(x + 2f, y + 2f, x, y + 2f, 0f, 3f));
+                pillars.AddRange(Wall(x, y + 2f, x, y, 0f, 3f));
+            }
+        }
+        NavGrid grid = Build([
+            .. Floor(0f, 5f, 12f, 9f, 0f),
+            .. Floor(12f, 0f, 26f, 14f, 0f),
+            .. Floor(26f, 5f, 38f, 9f, 0f),
+            .. pillars], size: 48f);
+        int start = grid.FindWalkableNode(new Vector3(2f, 7f, 0f), 1.5f, 1f);
+
+        IReadOnlyList<NavPlace> places = NavPlaces.Find(grid, start);
+
+        NavPlace room = Assert.Single(places, place => place.Kind == NavPlaceKind.Room);
+        Assert.InRange(room.Position.X, 12f, 26f);
+        Assert.True(room.WidthMeters > 10f);
+        Assert.Equal(2, places.Count(place => place.Kind == NavPlaceKind.Passage));
+    }
+
+    [Fact]
     public void AWideCorridorOpeningStraightOntoARoomIsStillAPassage()
     {
         NavGrid grid = Build([
