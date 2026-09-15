@@ -1557,6 +1557,35 @@ public sealed class NavigationTests
         Assert.Equal("[MossTank] " + skipped.Message, Assert.Single(automation.PostedSystemMessages));
     }
 
+    [Fact]
+    public void ALegOfAOnceRouteTheClientCannotWalkIsPostedSkippedWithItsPlaceOnTheRoute()
+    {
+        var automation = new FakeAutomation { NavigationSnapshot = Snapshot(Meters(0d, 0d)) };
+        var host = new FakeHost(automation);
+        var settings = new NavigationSettings
+        {
+            Enabled = true,
+            Mode = RouteMode.Once,
+            MinimumDistanceMeters = 2d,
+            WalkLegsWithClient = true,
+        };
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Meters(0d, 0d)));
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Meters(30d, 60d)));
+        settings.Waypoints.Add(Waypoint(RouteWaypointType.Point, Meters(-30d, 90d)));
+        var controller = new NavigationController(host, settings);
+
+        controller.Tick(0.1d, canAct: true);
+        controller.Tick(0.1d, canAct: true);
+        automation.WalkIs(PluginGoToState.NoRoute, "no route joins the character to it");
+        controller.Tick(0.1d, canAct: true);
+
+        PluginNotice skipped = Assert.Single(host.FakeNotices.Posted, static notice => notice.Kind == "route-skipped");
+        Assert.Equal(
+            "Waypoint 2 could not be walked (no route joins the character to it); moving on to the next.",
+            skipped.Message);
+        Assert.Equal(1, Details(skipped).GetProperty("waypoint").GetInt32());
+    }
+
     private static JsonElement Details(PluginNotice notice) =>
         JsonDocument.Parse(notice.DetailsJson!).RootElement.Clone();
 

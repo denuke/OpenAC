@@ -1557,7 +1557,8 @@ internal sealed class NavigationController
             if (report.State is PluginGoToState.NoRoute or PluginGoToState.Blocked)
             {
                 _clientLegFailures++;
-                LastSkippedLeg = $"Waypoint {_index + 1} could not be walked ({report.Reason ?? report.State.ToString()})";
+                int skippedWaypoint = _settings.Mode == RouteMode.Once ? _onceDone + _index : _index;
+                LastSkippedLeg = $"Waypoint {skippedWaypoint + 1} could not be walked ({report.Reason ?? report.State.ToString()})";
                 MossTankNotices.Announce(
                     _host,
                     MossTankNotices.RouteSkipped,
@@ -1565,7 +1566,7 @@ internal sealed class NavigationController
                     $"{LastSkippedLeg}; moving on to the next.",
                     new JsonObject
                     {
-                        ["waypoint"] = _index,
+                        ["waypoint"] = skippedWaypoint,
                         ["reason"] = report.Reason ?? report.State.ToString(),
                     });
                 AdvanceWaypoint(skipped: true);

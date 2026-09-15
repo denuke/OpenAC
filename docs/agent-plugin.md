@@ -51,7 +51,7 @@ another plugin's settings. Every other tool only reads.
 | `capabilities` | Everything around the character in one answer, each object with the lines this client would take for it now and whether each would be taken; with `guid`, one object. |
 | `act` | Runs one command line and returns a handle with a status: `pending`, `done`, `refused` or `sent-as-chat`. |
 | `outcome` | How the line with a handle ended: its outcome word, its shared class, and every record it produced. |
-| `events` | Records after a cursor. With `waitSeconds`, up to 300, it waits for the next one, and `until` wakes it on a condition. |
+| `events` | Records after a cursor. With `waitSeconds`, up to 60, it waits for the next one, and `until` wakes it on a condition. |
 | `nearby` | Objects around the character, nearest first, with distance, bearing, kind and sight. |
 | `explore` | Rooms, passages and open ground the character can walk to, from the client's navigation mesh, and outdoors nearby buildings and the landblocks beside its own, unvisited first and nearest first, each with a line that walks there; or, with `tour`, one way through them all from the dungeon's entrance to the portal seen farthest from it or the far end, with a MossTank route that walks it. |
 | `inspect` | Everything the client holds about one object, with its sight. |
@@ -88,8 +88,11 @@ shown and how many the limit held back, so a short list never reads as a short i
 `act` and `outcome` take `waitSeconds`, up to 30, to answer once the action
 settles instead of at once. An accepted action is not a finished one: the server
 can still refuse a spell the client sent, so read `outcome` before relying on it.
-`events` takes `waitSeconds` up to 300, so a model can wait for something that
-takes minutes, such as a route reaching a waypoint.
+`events` takes `waitSeconds` up to 60, inside the time MCP clients allow a call,
+so a model waits for something that takes minutes, such as a route finishing, by
+calling again with `nextSeq`. A call with `until` answers only when a record meets
+a condition or the wait runs out, keeping the newest `limit` records meanwhile and
+counting the rest as `dropped`.
 
 An `events` condition names a record kind, optional exact field values, and one
 optional numeric comparison. This call returns when health falls below 100:
